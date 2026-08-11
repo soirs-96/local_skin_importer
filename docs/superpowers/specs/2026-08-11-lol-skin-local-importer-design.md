@@ -63,7 +63,7 @@ Build a lightweight Electron desktop helper that:
                                                 │  POST /skins/sync-      │
                                                 │    user-skins           │  (new)
                                                 │   ├─ JWT auth           │
-                                                │   ├─ PUID binding check │
+                                                │   ├─ PUID 绑定(JWT 一次性)│
                                                 │   ├─ Redis SETNX 锁     │
                                                 │   └─ t_user_skin UPSERT │
                                                 └─────────────────────────┘
@@ -180,12 +180,28 @@ Three execution contexts with strict boundaries: **LCU credentials** are confine
 
    Executed in a batch via `userSkinMapper.batchUpsert(userId, ownedSkinIds)`. The unique key `(user_id, skin_id)` makes this idempotent even if the Redis lock has somehow expired.
 
-5. **Compute counts** — after the UPSERT batch, issue two `SELECT COUNT(*)` round-trips:
-   - `result.added = userSkinMapper.countWhereFirstEqualsLast(userId)` — captures rows inserted this sync (the schema sets both timestamps to `NOW()` on INSERT, so `first_seen_at == last_seen_at` is true for new rows, false for re-seen rows because `last_seen_at` was updated by `NOW()` while `first_seen_at` retains the original).
-   - `result.totalOwned = userSkinMapper.countByUserId(userId)`.
-   - `result.updated = result.totalOwned - result.added` (computed in Java — saves a third round-trip).
-   (Do not rely on MySQL `ROW_COUNT()` semantics — it returns a single batch aggregate `1*inserts + 2*updates`, not a per-bucket split.)
-6. Return `Result.success(result)`.
+5. **Compute counts in Java** — diff the incoming list against the user's pre-existing set:
+
+   - Before the UPSERT, read the user's existing skin IDs into a `Set<Integer> dbSkinIds` via `userSkinMapper.listSkinIdsByUserId(userId)`.
+   - Convert the incoming `ownedSkinIds: List<Integer>` into a `Set<Integer> incoming`.
+   - `result.added  = incoming.size() - intersect(incoming, dbSkinIds).size()` — skins that weren't previously known for this user.
+   - `result.updated = intersect(incoming, dbSkinIds).size()` — skins that already existed (their `last_seen_at` was just bumped by the UPSERT).
+   - `result.totalOwned = incoming.size()` (the source of truth is the LCU client, not the DB; the DB now matches LCU after the UPSERT).
+   - If `result.added + result.updated != ownedSkinIds.size()`, something is off — log a WARN with both counts; do not throw.
+
+   **Why not SQL `COUNT(*)`:** avoids two extra round-trips and the `first_seen_at == last_seen_at` heuristic (which assumes both timestamps are set to `NOW()` on INSERT — true today, but fragile to future schema changes). MySQL `ROW_COUNT()` returns a single batch aggregate and does not separate added vs. updated, so it would also require post-hoc probing. The Java diff is exact, cheap, and reads the same way regardless of UPSERT implementation.
+
+**`mapper/UserSkinMapper.java`** (in `com.lolskin.mapper`) — methods:
+
+```java
+// Batch UPSERT — see schema above.
+int batchUpsert(@Param("userId") Long userId, @Param("skinIds") List<Integer> skinIds);
+
+// Read existing skin IDs as a Set-friendly list (Service layer wraps as Set<Integer>).
+List<Integer> listSkinIdsByUserId(@Param("userId") Long userId);
+```
+
+`UserSkinMapper.xml` contains the `<insert>` with `ON DUPLICATE KEY UPDATE` and a `<select id="listSkinIdsByUserId" resultType="java.lang.Integer">SELECT skin_id FROM t_user_skin WHERE user_id = #{userId}</select>`.
 
 **`mapper/UserAccountMapper.java`** (in `com.lolskin.mapper`) — adds:
 
@@ -198,6 +214,8 @@ int updatePuuid(@Param("userId") Long userId, @Param("puuid") String puuid);
 ```
 
 (Both bypass `BaseMapper` to avoid any future logic-delete complications. Existing `updatePasswordById` at `UserAccountMapper.java:39-40` is the established pattern.)
+
+**`vo/SyncResultVO.java`** — `{added: int, updated: int, totalOwned: int}`.
 
 **No new rate-limiter bean is created.** The new controller reuses the existing `inventorySyncLimiter` bean (10 s min interval, 5 / 60 s window) via `@Qualifier` on the manual constructor.
 
@@ -273,7 +291,7 @@ ALTER TABLE t_user_account
 - **Electron `auth.ts`** — `vitest` with mocked `safeStorage` (electron exposes a test helper).
 - **Electron `backend.ts`** — `vitest` with `nock` for HTTP mocks.
 - **Electron `ipc.ts`** — covered transitively via Playwright e2e (one happy-path test: login → fake LCU responses → sync → expect UI shows 245).
-- **Backend `SkinSyncService`** — `@MybatisTest` with H2/in-memory schema (note: H2 has limited MySQL `INSERT ... ON DUPLICATE KEY UPDATE` support; either use MySQL testcontainers, or split into `INSERT IGNORE` + `UPDATE` two-statement approach for tests, with the real `ON DUPLICATE KEY UPDATE` in production MySQL mapper XML). Cover: happy path, PUID mismatch (403), Redis lock collision (429), empty list (rejected by `@NotEmpty`), and idempotent re-sync (no duplicate rows).
+- **Backend `SkinSyncService`** — `@MybatisTest` with H2/in-memory schema (note: H2 has limited MySQL `INSERT ... ON DUPLICATE KEY UPDATE` support; either use MySQL testcontainers, or split into `INSERT IGNORE` + `UPDATE` two-statement approach for tests, with the real `ON DUPLICATE KEY UPDATE` in production MySQL mapper XML). The Java `Set` diff for added/updated counts is unit-testable without a DB at all — feed in mock lists and assert the diff. Cover: happy path, PUID mismatch (403), Redis lock collision (429), empty list (rejected by `@NotEmpty`), and idempotent re-sync (no duplicate rows), and the Set-diff arithmetic edge cases (empty existing set, fully-overlapping set, empty incoming list rejected by validator).
 - **Avoid full `@SpringBootTest`** — the project memory note flags redis stub as painful; follow the same pattern as existing tests.
 
 ---
@@ -370,4 +388,5 @@ src/test/java/com/lolskin/service/impl/
 | Redis lock TTL = 30 s | TTL is generous; UPSERT idempotency makes lock expiry non-fatal | DB unique key guarantees no duplicates even if the lock is bypassed. |
 | Reuse `inventorySyncLimiter` bean (not a new `skinSyncLimiter`) | Avoid "required a single bean, but 4 were found" startup error | The limiter is per-key (`"skin-sync:" + userId`) so two endpoints share the bean but track separately; mirrors the project pattern of one bean, many keys. |
 | Skip `BaseMapper.selectById` for `UserAccount` | Use custom `@Select` / `@Update` methods like the existing `updatePasswordById` | MyBatis-Plus global `logic-delete-field: deleted` could surprise us if `deleted` is later added to the entity; bypassing `BaseMapper` removes the risk. |
-| `added` count via `COUNT(*) WHERE first_seen_at = last_seen_at` | The schema sets both timestamps to `NOW()` on INSERT; `last_seen_at` is bumped on UPDATE | Avoids the MySQL `ROW_COUNT()` ambiguity (single batch aggregate, not a per-bucket split). |
+| `added` count via Java `Set` diff (`incoming − dbSkinIds`) | Read existing IDs before UPSERT; compute intersection in memory | Single extra round-trip; exact, cheap, and decoupled from UPSERT internals. |
+| PUID 归属校验改为"JWT 一次性绑定" | Backend never reads LCU; first sync binds PUID to user, later syncs must match | Backend runs at `101.34.210.254` with no LCU access; binding keeps the trust boundary inside JWT identity. |
