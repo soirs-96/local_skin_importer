@@ -3,31 +3,48 @@
     <header class="topbar">
       <span class="brand">LOL Skin Importer</span>
       <span class="spacer" />
-      <span class="version">v0.1.0 — scaffold</span>
+      <span v-if="loggedIn" class="auth-info" data-testid="auth-info">
+        {{ tokenPreview }}
+      </span>
+      <el-button
+        v-if="loggedIn"
+        size="small"
+        text
+        @click="onLogout"
+      >
+        Logout
+      </el-button>
+      <el-button v-else size="small" text @click="goLogin">Login</el-button>
     </header>
 
     <main class="main">
-      <el-card class="card" shadow="never">
-        <h2>Hello, {{ greeting }}!</h2>
-        <p class="muted">
-          This is the scaffold build. Real UI lands in Task 16.
-        </p>
-        <el-button type="primary" @click="onClick">Ping Element Plus</el-button>
-        <p v-if="lastPing" class="muted">Last ping: {{ lastPing }}</p>
-      </el-card>
+      <router-view />
     </main>
   </div>
 </template>
 
 <script setup lang="ts">
-import { ref } from 'vue';
+import { onMounted } from 'vue';
+import { useRouter } from 'vue-router';
+import { storeToRefs } from 'pinia';
+import { useAuthStore } from './stores/auth';
 
-const greeting = 'summoner';
-const lastPing = ref<string | null>(null);
+const router = useRouter();
+const auth = useAuthStore();
+const { loggedIn, tokenPreview } = storeToRefs(auth);
 
-function onClick() {
-  lastPing.value = new Date().toLocaleTimeString();
+function goLogin(): void {
+  void router.push('/login');
 }
+
+async function onLogout(): Promise<void> {
+  await auth.logout();
+  void router.push('/login');
+}
+
+onMounted(async () => {
+  await auth.refresh();
+});
 </script>
 
 <style scoped>
@@ -51,24 +68,13 @@ function onClick() {
 .spacer {
   flex: 1;
 }
-.version {
+.auth-info {
   color: var(--el-text-color-secondary);
   font-size: 12px;
+  font-family: monospace;
 }
 .main {
   flex: 1;
-  padding: 24px;
   overflow-y: auto;
-}
-.card {
-  max-width: 520px;
-  margin: 0 auto;
-}
-.muted {
-  color: var(--el-text-color-secondary);
-  font-size: 13px;
-}
-h2 {
-  margin-top: 0;
 }
 </style>

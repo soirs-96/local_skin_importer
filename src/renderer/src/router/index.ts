@@ -1,8 +1,11 @@
 import { createRouter, createWebHashHistory, type RouteRecordRaw } from 'vue-router';
-import App from '../App.vue';
+import Login from '../views/Login.vue';
+import Sync from '../views/Sync.vue';
 
 const routes: RouteRecordRaw[] = [
-  { path: '/', component: App }
+  { path: '/', redirect: '/sync' },
+  { path: '/login', name: 'login', component: Login },
+  { path: '/sync', name: 'sync', component: Sync }
 ];
 
 export const router = createRouter({
