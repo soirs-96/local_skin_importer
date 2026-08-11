@@ -243,7 +243,7 @@ ALTER TABLE t_user_account
 - **JWT encrypted at rest** via Electron `safeStorage` (DPAPI on Windows). Plain-text file is never written.
 - **Backend does not see any LCU credential.** The Electron app is the sole LCU client.
 - **PUID ownership check via JWT binding** — backend trusts JWT for `userId`, and binds the first-ever reported PUID to that user account. A stolen JWT can upload skins only for the user's bound LOL account; a different LOL account under the same JWT is rejected with 403. The binding is one-way in v1.
-- **Rate limit** — `skinSyncLimiter` per-user limit (10 s min interval, 5 / 60 s) prevents enumeration.
+- **Rate limit** — reuses `inventorySyncLimiter` (10 s min interval, 5 / 60 s) keyed per user (`"skin-sync:" + userId`); same SimpleRateLimiter that backs `LolInventoryController`, no new bean needed.
 - **Redis lock + DB unique key** — defense-in-depth: the Redis SETNX lock prevents two concurrent syncs from racing, and `uk_user_skin (user_id, skin_id)` guarantees the UPSERT is idempotent even if the lock somehow expires mid-write.
 - **LCU cert verification disabled only inside the Electron LCU axios instance** — all backend external calls (to `lol-skin-api`, Mini-Program, etc.) remain fully TLS-verified.
 - **No logging of LCU token or JWT** in production logs.
@@ -340,7 +340,8 @@ src/test/java/com/lolskin/service/impl/
 ```
 
 (No changes to `RateLimiterConfig.java` — the new controller reuses the existing `inventorySyncLimiter` bean.)
-```
+
+---
 
 ---
 
