@@ -47,8 +47,8 @@ export function parseLockfile(contents: string): LcuAuth {
   }
 
   const [, , portField, token] = fields;
-  const port = Number.parseInt(portField, 10);
-  if (!Number.isInteger(port) || port <= 0) {
+  const port = Number(portField);
+  if (!Number.isInteger(port) || port <= 0 || port > 65535) {
     throw new Error(`Malformed lockfile: invalid port "${portField}".`);
   }
   if (!token) {
@@ -79,7 +79,7 @@ export function readLockfile(lockfilePath: string = findLockfilePath()): LcuAuth
  * client serves a self-signed cert on 127.0.0.1 — this is scoped to this instance only.
  */
 export function createLcuClient(port: number, token: string): AxiosInstance {
-  const credentials = Buffer.from(`riot:${token}`).toString('base64');
+  const credentials = Buffer.from(`riot:${token}`, 'latin1').toString('base64');
   return axios.create({
     baseURL: `https://127.0.0.1:${port}`,
     httpsAgent: new https.Agent({ rejectUnauthorized: false }),

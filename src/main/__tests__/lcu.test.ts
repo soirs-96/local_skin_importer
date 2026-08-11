@@ -116,7 +116,7 @@ describe('readLockfile', () => {
 describe('createLcuClient', () => {
   it('sets the baseURL and riot Basic Auth header', () => {
     const client = createLcuClient(9999, 'tok');
-    const expected = `Basic ${Buffer.from('riot:tok').toString('base64')}`;
+    const expected = `Basic ${Buffer.from('riot:tok', 'latin1').toString('base64')}`;
 
     expect(client.defaults.baseURL).toBe('https://127.0.0.1:9999');
     expect(client.defaults.headers.Authorization).toBe(expected);
