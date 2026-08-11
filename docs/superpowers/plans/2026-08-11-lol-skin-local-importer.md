@@ -1345,22 +1345,23 @@ git commit -m "feat(lcu): lockfile reader, Basic Auth client, summoner + owned s
 
 - [ ] **Step 1: Write the failing test**
 
-`tests/main/auth.test.ts`:
+> **IMPORTANT — test mocking pattern override (added 2026-08-11).**
+> The `vi.mock('fs', () => mockFs)` pattern below does NOT work under Vitest ESM: the factory must return a module namespace object with a `default` export key, otherwise interop breaks. Likewise `vi.spyOn(fs, 'readFileSync')` is unusable because Vitest ESM module namespaces are non-configurable. **Use real temp files** via `mkdtempSync` + `writeFileSync` in tests instead, with `app.getPath` mocked to point at the temp dir. This is higher fidelity and matches the approach proven by Task 12 (`lcu.test.ts`). Tests live in `src/main/__tests__/auth.test.ts` (next to source), NOT `tests/main/auth.test.ts`.
+
+`src/main/__tests__/auth.test.ts`:
 
 ```typescript
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import axios from 'axios';
-import { login, saveToken, getStoredToken, clearStoredToken, getAuthStatus } from '../../src/main/auth';
+import { mkdtempSync, rmSync, writeFileSync, existsSync, readFileSync, unlinkSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { login, saveToken, getStoredToken, clearStoredToken, getAuthStatus } from '../auth';
 
-const mockFs = {
-  readFileSync: vi.fn(),
-  writeFileSync: vi.fn(),
-  unlinkSync: vi.fn(),
-  existsSync: vi.fn()
-};
-
-vi.mock('fs', () => mockFs);
 vi.mock('axios');
+
+let tmpDir: string;
+let tokenPath: string;
 
 const mockSafeStorage = {
   encryptString: vi.fn((s: string) => Buffer.from(`enc:${s}`)),
@@ -1368,25 +1369,30 @@ const mockSafeStorage = {
   isEncryptionAvailable: vi.fn(() => true)
 };
 
-const fakeApp = {
-  getPath: vi.fn(() => '/fake/userData')
-};
-
 vi.mock('electron', () => ({
-  app: fakeApp,
+  app: { getPath: vi.fn() },
   safeStorage: mockSafeStorage
 }));
 
-describe('auth', () => {
-  beforeEach(() => {
-    Object.values(mockFs).forEach((fn: any) => fn.mockReset());
-    Object.values(mockSafeStorage).forEach((fn: any) => fn.mockReset());
-    mockSafeStorage.encryptString.mockImplementation((s: string) => Buffer.from(`enc:${s}`));
-    mockSafeStorage.decryptString.mockImplementation((buf: Buffer) => buf.toString().replace(/^enc:/, ''));
-    mockSafeStorage.isEncryptionAvailable.mockReturnValue(true);
-    fakeApp.getPath.mockReturnValue('/fake/userData');
-  });
+// Get reference to the mocked getPath after the mock is in place
+import { app } from 'electron';
+const mockGetPath = vi.mocked(app.getPath);
 
+beforeEach(() => {
+  tmpDir = mkdtempSync(join(tmpdir(), 'auth-test-'));
+  tokenPath = join(tmpDir, 'auth.bin');
+  mockGetPath.mockReturnValue(tmpDir);
+  vi.mocked(axios.post).mockReset();
+  mockSafeStorage.encryptString.mockImplementation((s: string) => Buffer.from(`enc:${s}`));
+  mockSafeStorage.decryptString.mockImplementation((buf: Buffer) => buf.toString().replace(/^enc:/, ''));
+  mockSafeStorage.isEncryptionAvailable.mockReturnValue(true);
+});
+
+afterEach(() => {
+  rmSync(tmpDir, { recursive: true, force: true });
+});
+
+describe('auth', () => {
   it('login posts username/password and returns the JWT', async () => {
     vi.mocked(axios.post).mockResolvedValue({ data: { code: 200, data: { token: 'jwt-xyz' } } });
     const token = await login('alice', 'hunter2');
@@ -1401,31 +1407,27 @@ describe('auth', () => {
   it('saveToken encrypts and writes to userData/auth.bin', () => {
     saveToken('jwt-abc');
     expect(mockSafeStorage.encryptString).toHaveBeenCalledWith('jwt-abc');
-    expect(mockFs.writeFileSync).toHaveBeenCalledWith(
-      expect.stringContaining('auth.bin'),
-      expect.any(Buffer)
-    );
+    expect(existsSync(tokenPath)).toBe(true);
+    expect(readFileSync(tokenPath).toString()).toBe('enc:jwt-abc');
   });
 
   it('getStoredToken returns null when file does not exist', () => {
-    mockFs.existsSync.mockReturnValue(false);
     expect(getStoredToken()).toBeNull();
   });
 
   it('getStoredToken decrypts and returns the JWT', () => {
-    mockFs.existsSync.mockReturnValue(true);
-    mockFs.readFileSync.mockReturnValue(Buffer.from('enc:jwt-abc'));
+    writeFileSync(tokenPath, Buffer.from('enc:jwt-abc'));
     expect(getStoredToken()).toBe('jwt-abc');
   });
 
   it('clearStoredToken removes the file', () => {
+    writeFileSync(tokenPath, Buffer.from('enc:jwt-abc'));
     clearStoredToken();
-    expect(mockFs.unlinkSync).toHaveBeenCalledWith(expect.stringContaining('auth.bin'));
+    expect(existsSync(tokenPath)).toBe(false);
   });
 
   it('getAuthStatus returns truncated preview when logged in', () => {
-    mockFs.existsSync.mockReturnValue(true);
-    mockFs.readFileSync.mockReturnValue(Buffer.from('enc:jwt-abcdefghij1234567'));
+    writeFileSync(tokenPath, Buffer.from('enc:jwt-abcdefghij1234567'));
     expect(getAuthStatus()).toEqual({
       loggedIn: true,
       tokenPreview: 'jwt-abcdefghi...'
@@ -1433,7 +1435,6 @@ describe('auth', () => {
   });
 
   it('getAuthStatus returns loggedIn=false when no token', () => {
-    mockFs.existsSync.mockReturnValue(false);
     expect(getAuthStatus()).toEqual({ loggedIn: false, tokenPreview: null });
   });
 });
@@ -1442,7 +1443,7 @@ describe('auth', () => {
 - [ ] **Step 2: Run, expect failure**
 
 ```bash
-cd "D:/Front_Project/all/local_skin_importer" && npx vitest run tests/main/auth.test.ts
+cd "D:/Front_Project/all/local_skin_importer" && npx vitest run src/main/__tests__/auth.test.ts
 ```
 
 Expected: FAIL — module not found.
@@ -1513,7 +1514,7 @@ export function getAuthStatus(): { loggedIn: boolean; tokenPreview: string | nul
 - [ ] **Step 4: Run, expect pass**
 
 ```bash
-cd "D:/Front_Project/all/local_skin_importer" && npx vitest run tests/main/auth.test.ts
+cd "D:/Front_Project/all/local_skin_importer" && npx vitest run src/main/__tests__/auth.test.ts
 ```
 
 Expected: 7 tests pass.
@@ -1521,7 +1522,7 @@ Expected: 7 tests pass.
 - [ ] **Step 5: Commit**
 
 ```bash
-cd "D:/Front_Project/all/local_skin_importer" && git add src/main/auth.ts tests/main/auth.test.ts
+cd "D:/Front_Project/all/local_skin_importer" && git add src/main/auth.ts src/main/__tests__/auth.test.ts
 git commit -m "feat(auth): login, safeStorage-backed token persistence, auth status"
 ```
 
@@ -1535,18 +1536,19 @@ git commit -m "feat(auth): login, safeStorage-backed token persistence, auth sta
 
 - [ ] **Step 1: Write the failing test**
 
-`tests/main/backend.test.ts`:
+> **IMPORTANT — test mocking pattern override (added 2026-08-11).**
+> The `vi.mock('../../src/main/auth', () => ({ getStoredToken: vi.fn() }))` pattern below can fail under Vitest ESM with "Cannot find module" or factory-not-called errors because the factory lacks the proper ESM interop wrapper. **Instead, place the test in `src/main/__tests__/backend.test.ts`** and use **`vi.mock('../auth')`** — Vitest's auto-mock for relative paths works reliably with ESM. The `vi.mock('axios')` pattern is fine. Below is the corrected version; same test scenarios, same expectations.
+
+`src/main/__tests__/backend.test.ts`:
 
 ```typescript
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import axios from 'axios';
-import { syncOwnedSkins } from '../../src/main/backend';
-import { getStoredToken } from '../../src/main/auth';
+import { syncOwnedSkins } from '../backend';
+import { getStoredToken } from '../auth';
 
 vi.mock('axios');
-vi.mock('../../src/main/auth', () => ({
-  getStoredToken: vi.fn()
-}));
+vi.mock('../auth');
 
 describe('backend.syncOwnedSkins', () => {
   beforeEach(() => {
@@ -1606,7 +1608,7 @@ describe('backend.syncOwnedSkins', () => {
 - [ ] **Step 2: Run, expect failure**
 
 ```bash
-cd "D:/Front_Project/all/local_skin_importer" && npx vitest run tests/main/backend.test.ts
+cd "D:/Front_Project/all/local_skin_importer" && npx vitest run src/main/__tests__/backend.test.ts
 ```
 
 Expected: FAIL.
@@ -1684,7 +1686,7 @@ export async function syncOwnedSkins(
 - [ ] **Step 4: Run, expect pass**
 
 ```bash
-cd "D:/Front_Project/all/local_skin_importer" && npx vitest run tests/main/backend.test.ts
+cd "D:/Front_Project/all/local_skin_importer" && npx vitest run src/main/__tests__/backend.test.ts
 ```
 
 Expected: 4 tests pass.
@@ -1692,7 +1694,7 @@ Expected: 4 tests pass.
 - [ ] **Step 5: Commit**
 
 ```bash
-cd "D:/Front_Project/all/local_skin_importer" && git add src/main/backend.ts tests/main/backend.test.ts
+cd "D:/Front_Project/all/local_skin_importer" && git add src/main/backend.ts src/main/__tests__/backend.test.ts
 git commit -m "feat(backend): sync POST with Bearer JWT, exponential-backoff retry on network errors"
 ```
 
