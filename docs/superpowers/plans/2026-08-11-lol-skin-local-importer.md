@@ -28,6 +28,7 @@
 - **Constructor injection for `SimpleRateLimiter`** — manual constructor with `@Qualifier("inventorySyncLimiter")` on the parameter. Lombok `@RequiredArgsConstructor` does not propagate `@Qualifier`. See `LolInventoryController.java:33-44`.
 - **Avoid `BaseMapper` on `UserAccount`** — entity lacks a `deleted` field today, but `application.yml:80` globally sets `logic-delete-field: deleted`. Use `@Select` / `@Update` annotated methods to bypass the inheritance (mirror `updatePasswordById` at `UserAccountMapper.java:39-40`).
 - **PUID format** — Riot PUUID is 32-char lowercase hex. `@Size(min=32, max=64)` validates the wire format.
+- **MySQL migration convention** — project uses `INFORMATION_SCHEMA` + prepared statement pattern (see `migration_mortgage_2026_06_add_principal_updated_at.sql`), NOT `IF NOT EXISTS`. The latter requires MySQL 8.0.29+. Dev MySQL version is unknown, so follow the project's portable idiom.
 
 ---
 
@@ -62,28 +63,50 @@
 **Files:**
 - Create: `D:\Front_Project\all\all_function_api\src\main\resources\db\migration_user_skin_2026_08.sql`
 
-- [ ] **Step 1: Create the migration file with the exact SQL**
+- [ ] **Step 1: Create the migration file**
+
+Use the project's portable `INFORMATION_SCHEMA` + prepared-statement idiom (NOT `IF NOT EXISTS`, which requires MySQL 8.0.29+). See `migration_mortgage_2026_06_add_principal_updated_at.sql` for the canonical example.
 
 ```sql
 -- migration_user_skin_2026_08.sql
 -- Created 2026-08-11 for LOL Skin Local Importer.
+--
+-- Portable pattern: INFORMATION_SCHEMA + prepared statement. Project convention;
+-- MySQL 8.0.29+ `IF NOT EXISTS` syntax is NOT used here because the target
+-- deployment's MySQL version is unknown.
 
-CREATE TABLE IF NOT EXISTS t_user_skin (
-  id            BIGINT       NOT NULL AUTO_INCREMENT,
-  user_id       BIGINT       NOT NULL,
-  skin_id       INT          NOT NULL,
-  first_seen_at DATETIME     NOT NULL,
-  last_seen_at  DATETIME     NOT NULL,
-  PRIMARY KEY (id),
-  UNIQUE KEY uk_user_skin (user_id, skin_id)
+-- 1) Create t_user_skin if missing.
+SET @sql := IF(
+  (SELECT COUNT(*) FROM INFORMATION_SCHEMA.TABLES
+     WHERE TABLE_SCHEMA=DATABASE()
+       AND TABLE_NAME='t_user_skin') = 0,
+  'CREATE TABLE t_user_skin (
+     id            BIGINT       NOT NULL AUTO_INCREMENT,
+     user_id       BIGINT       NOT NULL,
+     skin_id       INT          NOT NULL,
+     first_seen_at DATETIME     NOT NULL,
+     last_seen_at  DATETIME     NOT NULL,
+     PRIMARY KEY (id),
+     UNIQUE KEY uk_user_skin (user_id, skin_id)
+   )',
+  'SELECT 1'
 );
+PREPARE stmt FROM @sql; EXECUTE stmt; DEALLOCATE PREPARE stmt;
 
--- One-way bind: first sync's PUUID wins.
--- Do NOT add `deleted` to UserAccount; yml:80 globally enables logic-delete-field,
--- and adding the column would silently inject WHERE deleted=0 into every BaseMapper
--- query on this entity.
-ALTER TABLE t_user_account
-  ADD COLUMN IF NOT EXISTS puuid VARCHAR(64) NULL AFTER id;
+-- 2) Add t_user_account.puuid if missing.
+-- One-way bind: first sync''s PUUID wins.
+-- Do NOT add `deleted` to UserAccount; yml globally enables logic-delete-field,
+-- and adding the column would silently inject WHERE deleted=0 into every
+-- BaseMapper query on this entity.
+SET @sql := IF(
+  (SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS
+     WHERE TABLE_SCHEMA=DATABASE()
+       AND TABLE_NAME='t_user_account'
+       AND COLUMN_NAME='puuid') = 0,
+  'ALTER TABLE t_user_account ADD COLUMN puuid VARCHAR(64) NULL AFTER id',
+  'SELECT 1'
+);
+PREPARE stmt FROM @sql; EXECUTE stmt; DEALLOCATE PREPARE stmt;
 ```
 
 - [ ] **Step 2: Confirm the file lands in the right location**
@@ -159,10 +182,67 @@ Tell the user the file is ready. They will commit on `all_function_api`.
 ## Task 3: `UserSkinMapper` + XML
 
 **Files:**
+- Create: `D:\Front_Project\all\all_function_api\src\main\java\com\lolskin\entity\UserSkin.java`
 - Create: `D:\Front_Project\all\all_function_api\src\main\java\com\lolskin\mapper\UserSkinMapper.java`
 - Create: `D:\Front_Project\all\all_function_api\src\main\resources\mapper\UserSkinMapper.xml`
 
-- [ ] **Step 1: Create the mapper Java file**
+- [ ] **Step 1: Create the entity**
+
+`D:\Front_Project\all\all_function_api\src\main\java\com\lolskin\entity\UserSkin.java`:
+
+```java
+package com.lolskin.entity;
+
+import com.baomidou.mybatisplus.annotation.IdType;
+import com.baomidou.mybatisplus.annotation.TableId;
+import com.baomidou.mybatisplus.annotation.TableName;
+import lombok.Data;
+
+import java.time.LocalDateTime;
+
+@Data
+@TableName("t_user_skin")
+public class UserSkin {
+
+    @TableId(type = IdType.AUTO)
+    private Long id;
+
+    private Long userId;
+    private Integer skinId;
+    private LocalDateTime firstSeenAt;
+    private LocalDateTime lastSeenAt;
+}
+```
+
+- [ ] **Step 2: Create the XML mapper file**
+
+`D:\Front_Project\all\all_function_api\src\main\resources\mapper\UserSkinMapper.xml`:
+
+```xml
+<?xml version="1.0" encoding="UTF-8"? ?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+        "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.lolskin.mapper.UserSkinMapper">
+
+    <insert id="batchUpsert" useGeneratedKeys="false">
+        INSERT INTO t_user_skin (user_id, skin_id, first_seen_at, last_seen_at)
+        VALUES
+        <foreach collection="skinIds" item="skinId" separator=",">
+            (#{userId}, #{skinId}, NOW(), NOW())
+        </foreach>
+        ON DUPLICATE KEY UPDATE last_seen_at = NOW()
+    </insert>
+
+    <select id="listSkinIdsByUserId" resultType="java.lang.Integer">
+        SELECT skin_id FROM t_user_skin WHERE user_id = #{userId}
+    </select>
+
+</mapper>
+```
+
+- [ ] **Step 3: Create the mapper Java file**
+
+`D:\Front_Project\all\all_function_api\src\main\java\com\lolskin\mapper\UserSkinMapper.java`:
 
 ```java
 package com.lolskin.mapper;
@@ -189,60 +269,6 @@ public interface UserSkinMapper extends BaseMapper<UserSkin> {
      * wraps as Set<Integer> for diff arithmetic.
      */
     List<Integer> listSkinIdsByUserId(@Param("userId") Long userId);
-}
-```
-
-- [ ] **Step 2: Create the corresponding XML file**
-
-`D:\Front_Project\all\all_function_api\src\main\resources\mapper\UserSkinMapper.xml`:
-
-```xml
-<?xml version="1.0" encoding="UTF-8"? ?>
-<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
-        "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
-<mapper namespace="com.lolskin.mapper.UserSkinMapper">
-
-    <insert id="batchUpsert" useGeneratedKeys="false">
-        INSERT INTO t_user_skin (user_id, skin_id, first_seen_at, last_seen_at)
-        VALUES
-        <foreach collection="skinIds" item="skinId" separator=",">
-            (#{userId}, #{skinId}, NOW(), NOW())
-        </foreach>
-        ON DUPLICATE KEY UPDATE last_seen_at = NOW()
-    </insert>
-
-    <select id="listSkinIdsByUserId" resultType="java.lang.Integer">
-        SELECT skin_id FROM t_user_skin WHERE user_id = #{userId}
-    </select>
-
-</mapper>
-```
-
-- [ ] **Step 3: Create the entity**
-
-`D:\Front_Project\all\all_function_api\src\main\java\com\lolskin\entity\UserSkin.java`:
-
-```java
-package com.lolskin.entity;
-
-import com.baomidou.mybatisplus.annotation.IdType;
-import com.baomidou.mybatisplus.annotation.TableId;
-import com.baomidou.mybatisplus.annotation.TableName;
-import lombok.Data;
-
-import java.time.LocalDateTime;
-
-@Data
-@TableName("t_user_skin")
-public class UserSkin {
-
-    @TableId(type = IdType.AUTO)
-    private Long id;
-
-    private Long userId;
-    private Integer skinId;
-    private LocalDateTime firstSeenAt;
-    private LocalDateTime lastSeenAt;
 }
 ```
 
@@ -485,80 +511,6 @@ package com.lolskin.controller;
 import com.lolskin.common.Result;
 import com.lolskin.dto.SyncUserSkinsDTO;
 import com.lolskin.exception.UnauthorizedException;
-import com.lolskin.ratelimit.SimpleRateLimiter;
-import com.lolskin.service.JwtService;
-import com.lolskin.service.SkinSyncService;
-import com.lolskin.vo.SyncResultVO;
-import io.swagger.v3.oas.annotations.Operation;
-import io.swagger.v3.oas.annotations.tags.Tag;
-import jakarta.servlet.http.HttpServletRequest;
-import jakarta.validation.Valid;
-import lombok.extern.slf4j.Slf4j;
-import org.springframework.beans.factory.annotation.Qualifier;
-import org.springframework.web.bind.annotation.PostMapping;
-import org.springframework.web.bind.annotation.RequestBody;
-import org.springframework.web.bind.annotation.RequestMapping;
-import org.springframework.web.bind.annotation.RestController;
-
-/**
- * Player skin sync — Electron importer uploads PUUID + skin IDs.
- * Real URL: context-path /api + /skins/sync-user-skins.
- * No @RequiresRole — RoleInterceptor passes through (interceptor only acts on annotated methods).
- */
-@Slf4j
-@Tag(name = "玩家皮肤同步", description = "Electron 桌面端上传本地已拥有皮肤")
-@RestController
-@RequestMapping("/skins")
-public class SkinSyncController {
-
-    // Manual constructor — Lombok @RequiredArgsConstructor does not copy @Qualifier
-    // to generated params (existing pattern at LolInventoryController.java:33-44).
-    private final SkinSyncService skinSyncService;
-    private final JwtService jwtService;
-
-    public SkinSyncController(SkinSyncService skinSyncService,
-                              JwtService jwtService,
-                              @Qualifier("inventorySyncLimiter") SimpleRateLimiter ignored) {
-        // The rate limiter is consumed inside SkinSyncServiceImpl; this parameter
-        // exists only to make Spring resolve the bean wiring at construction time.
-        this.skinSyncService = skinSyncService;
-        this.jwtService = jwtService;
-    }
-
-    @Operation(summary = "同步用户已拥有皮肤(PUID 一次性绑定)")
-    @PostMapping("/sync-user-skins")
-    public Result<SyncResultVO> sync(
-            @Valid @RequestBody SyncUserSkinsDTO dto,
-            HttpServletRequest request) {
-        Long userId = extractUserId(request);
-        return Result.success(skinSyncService.sync(dto, userId));
-    }
-
-    private Long extractUserId(HttpServletRequest request) {
-        String auth = request.getHeader("Authorization");
-        if (auth == null || !auth.startsWith("Bearer ")) {
-            throw new UnauthorizedException("未登录");
-        }
-        try {
-            return jwtService.getUserId(auth.substring(7));
-        } catch (Exception e) {
-            throw new UnauthorizedException("token 无效");
-        }
-    }
-}
-```
-
-> **Implementation note on the rate-limiter parameter:**
-> The controller does not call `acquireOrThrow` directly; the service does. The constructor still takes the `SimpleRateLimiter` bean so Spring's bean wiring is verified at startup. If you prefer not to take it, drop the parameter — but then a missing bean no longer fails fast at startup, only at first request. Keep the parameter for clarity. Spring will accept an unused constructor argument; the field is not stored.
-
-**Actually — simpler version that drops the unused bean parameter (preferred):**
-
-```java
-package com.lolskin.controller;
-
-import com.lolskin.common.Result;
-import com.lolskin.dto.SyncUserSkinsDTO;
-import com.lolskin.exception.UnauthorizedException;
 import com.lolskin.service.JwtService;
 import com.lolskin.service.SkinSyncService;
 import com.lolskin.vo.SyncResultVO;
@@ -611,7 +563,7 @@ public class SkinSyncController {
 }
 ```
 
-Use the second version. Lombok `@RequiredArgsConstructor` is fine here because we don't need `@Qualifier` — the only `SkinSyncService` and `JwtService` beans are unambiguous.
+> **Why `@RequiredArgsConstructor` is fine here** — no `@Qualifier` needed because the only `SkinSyncService` and `JwtService` beans are unambiguous. If the rate limiter were injected at the controller layer, you'd need the manual constructor pattern from `LolInventoryController.java:33-44` (Lombok's `@RequiredArgsConstructor` does not copy `@Qualifier`). The rate limiter is consumed inside `SkinSyncServiceImpl`, so this controller stays simple.
 
 - [ ] **Step 2: Compile**
 
@@ -1903,6 +1855,7 @@ git commit -m "feat(ipc): wire preload contextBridge and main-process handlers"
 - Create: `src/renderer/src/components/StatusDot.vue`
 - Create: `src/renderer/src/components/LogPanel.vue`
 - Create: `src/renderer/src/composables/useLcuStatus.ts`
+- Create: `src/renderer/src/global.d.ts`
 
 - [ ] **Step 1: Theme styles**
 
@@ -1957,7 +1910,7 @@ createApp(App).use(ElementPlus).mount('#app');
   <span class="dot" :class="`dot--${state}`" :title="label" />
 </template>
 
-<script setup lang="let">
+<script setup lang="ts">
 defineProps<{ state: 'ok' | 'warn' | 'err'; label: string }>();
 </script>
 
@@ -1975,8 +1928,6 @@ defineProps<{ state: 'ok' | 'warn' | 'err'; label: string }>();
 .dot--err  { background: var(--color-error);   box-shadow: 0 0 6px var(--color-error); }
 </style>
 ```
-
-> **Note:** use `lang="ts"` not `lang="let"` — that's a typo. Correct version uses `lang="ts"`.
 
 - [ ] **Step 4: LogPanel component**
 
@@ -2348,13 +2299,9 @@ main { flex: 1; overflow-y: auto; }
 </style>
 ```
 
-- [ ] **Step 9: Compile and commit**
+- [ ] **Step 8: Declare `window.api` for TS**
 
-```bash
-cd "D:/Front_Project/all/local_skin_importer" && npx vue-tsc --noEmit -p tsconfig.web.json
-```
-
-Expected: no errors. If you see `cannot find name 'window'` — add a `src/renderer/src/global.d.ts` declaring `window.api` (use the `ExposedApi` type from `src/preload/index.ts`):
+`src/renderer/src/global.d.ts`:
 
 ```typescript
 import type { ExposedApi } from '../preload/index';
@@ -2363,6 +2310,16 @@ declare global {
 }
 export {};
 ```
+
+Without this, `vue-tsc` errors with "cannot find name 'window'" in any `.vue` file that uses `window.api`.
+
+- [ ] **Step 9: Compile and commit**
+
+```bash
+cd "D:/Front_Project/all/local_skin_importer" && npx vue-tsc --noEmit -p tsconfig.web.json
+```
+
+Expected: no errors.
 
 ```bash
 cd "D:/Front_Project/all/local_skin_importer" && git add src/renderer/
