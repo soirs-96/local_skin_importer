@@ -179,6 +179,17 @@ describe('Task 15 IPC wiring', () => {
     expect(mocks.getOwnedSkinIds).toHaveBeenCalledWith(client);
   });
 
+  it('lcu:fetch-skins propagates lockfile-missing error', async () => {
+    mocks.readLockfile.mockImplementation(() => {
+      throw new mocks.LcuNotRunningError();
+    });
+
+    await expect(invoke('lcu:fetch-skins')).rejects.toMatchObject({
+      name: 'LcuNotRunningError',
+      message: 'League client is not running'
+    });
+  });
+
   it('auth:login saves the token and returns the refreshed auth status', async () => {
     const status = { loggedIn: true, tokenPreview: 'jwt-preview...' };
     mocks.login.mockResolvedValue('jwt-token');
@@ -204,9 +215,53 @@ describe('Task 15 IPC wiring', () => {
   it('backend:sync delegates the payload and returns its result', async () => {
     const result = { added: 2, updated: 1, totalOwned: 3 };
     mocks.syncOwnedSkins.mockResolvedValue(result);
-    const payload = { puuid: 'p', summonerName: 'Alice', ownedSkinIds: [1, 2, 3] };
+    const payload = {
+      puuid: 'p'.padEnd(32, 'x'),
+      summonerName: 'Alice',
+      ownedSkinIds: [1, 2, 3]
+    };
 
     await expect(invoke('backend:sync', {}, payload)).resolves.toBe(result);
-    expect(mocks.syncOwnedSkins).toHaveBeenCalledWith('p', 'Alice', [1, 2, 3]);
+    expect(mocks.syncOwnedSkins).toHaveBeenCalledWith(
+      payload.puuid,
+      'Alice',
+      [1, 2, 3]
+    );
+  });
+
+  it('backend:sync preserves axios error status code in thrown payload', async () => {
+    const axiosError = Object.assign(new Error('Request failed with status code 500'), {
+      isAxiosError: true,
+      name: 'AxiosError',
+      response: { status: 500, data: { message: 'oops' } },
+      code: 'ERR_BAD_RESPONSE'
+    });
+    mocks.syncOwnedSkins.mockRejectedValue(axiosError);
+
+    await expect(
+      invoke('backend:sync', {}, {
+        puuid: 'p'.padEnd(32, 'x'),
+        summonerName: 'Alice',
+        ownedSkinIds: [1, 2]
+      })
+    ).rejects.toMatchObject({
+      status: 500,
+      code: 'ERR_BAD_RESPONSE',
+      name: 'AxiosError'
+    });
+  });
+
+  it('backend:sync rejects invalid payload with TypeError', async () => {
+    await expect(
+      invoke('backend:sync', {}, { puuid: 'too-short', summonerName: 'Alice', ownedSkinIds: [1] })
+    ).rejects.toMatchObject({ message: 'invalid puuid' });
+    expect(mocks.syncOwnedSkins).not.toHaveBeenCalled();
+  });
+
+  it('auth:login rejects missing username', async () => {
+    await expect(invoke('auth:login', {}, { username: '', password: 'pw' })).rejects.toMatchObject(
+      { message: 'invalid username' }
+    );
+    expect(mocks.login).not.toHaveBeenCalled();
   });
 });

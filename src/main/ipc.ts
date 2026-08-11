@@ -15,6 +15,59 @@ interface SyncPayload {
   ownedSkinIds: number[];
 }
 
+/**
+ * JSON-safe shape of an error thrown across the IPC boundary. Electron serializes
+ * thrown values via the structured-clone algorithm, which strips axios-specific
+ * fields like `isAxiosError`, `code`, and `response.status`. Normalizing before
+ * throwing preserves them so the renderer can distinguish 4xx / 5xx / network /
+ * lockfile-missing / unknown via `{ status, code, name }`.
+ */
+interface NormalizedSyncError {
+  status?: number;
+  code?: string;
+  message: string;
+  name: string;
+}
+
+function normalizeSyncError(e: unknown): NormalizedSyncError {
+  if (axios.isAxiosError(e)) {
+    return {
+      status: e.response?.status,
+      code: (e as { code?: string }).code,
+      message: e.message,
+      name: e.name
+    };
+  }
+  if (e instanceof Error) {
+    return { message: e.message, name: e.name };
+  }
+  return { message: String(e), name: 'UnknownError' };
+}
+
+function assertSyncPayload(p: unknown): asserts p is SyncPayload {
+  if (typeof p !== 'object' || p === null) throw new Error('invalid payload');
+  const obj = p as Record<string, unknown>;
+  if (typeof obj.puuid !== 'string' || obj.puuid.length < 32) throw new Error('invalid puuid');
+  if (typeof obj.summonerName !== 'string') throw new Error('invalid summonerName');
+  if (!Array.isArray(obj.ownedSkinIds)) throw new Error('invalid ownedSkinIds');
+  if (!(obj.ownedSkinIds as unknown[]).every((n) => typeof n === 'number')) {
+    throw new Error('invalid ownedSkinIds');
+  }
+}
+
+function assertLoginPayload(
+  p: unknown
+): asserts p is { username: string; password: string } {
+  if (typeof p !== 'object' || p === null) throw new Error('invalid payload');
+  const obj = p as Record<string, unknown>;
+  if (typeof obj.username !== 'string' || obj.username.length === 0) {
+    throw new Error('invalid username');
+  }
+  if (typeof obj.password !== 'string' || obj.password.length === 0) {
+    throw new Error('invalid password');
+  }
+}
+
 function errorMessage(error: unknown): string {
   if (axios.isAxiosError(error)) {
     return error.message;
@@ -42,14 +95,19 @@ export function registerIpcHandlers(): void {
   });
 
   ipcMain.handle('lcu:fetch-skins', async () => {
-    const lockfileAuth = lcu.readLockfile();
-    const client = lcu.createLcuClient(lockfileAuth.port, lockfileAuth.token);
-    const summoner = await lcu.getCurrentSummoner(client);
-    const ownedSkinIds = await lcu.getOwnedSkinIds(client);
-    return { summoner, ownedSkinIds };
+    try {
+      const lockfileAuth = lcu.readLockfile();
+      const client = lcu.createLcuClient(lockfileAuth.port, lockfileAuth.token);
+      const summoner = await lcu.getCurrentSummoner(client);
+      const ownedSkinIds = await lcu.getOwnedSkinIds(client);
+      return { summoner, ownedSkinIds };
+    } catch (e) {
+      throw normalizeSyncError(e);
+    }
   });
 
   ipcMain.handle('auth:login', async (_event, credentials: AuthCredentials) => {
+    assertLoginPayload(credentials);
     const token = await auth.login(credentials.username, credentials.password);
     auth.saveToken(token);
     return auth.getAuthStatus();
@@ -62,7 +120,12 @@ export function registerIpcHandlers(): void {
 
   ipcMain.handle('auth:get-status', async () => auth.getAuthStatus());
 
-  ipcMain.handle('backend:sync', async (_event, payload: SyncPayload) =>
-    syncOwnedSkins(payload.puuid, payload.summonerName, payload.ownedSkinIds)
-  );
+  ipcMain.handle('backend:sync', async (_event, payload: SyncPayload) => {
+    try {
+      assertSyncPayload(payload);
+      return await syncOwnedSkins(payload.puuid, payload.summonerName, payload.ownedSkinIds);
+    } catch (e) {
+      throw normalizeSyncError(e);
+    }
+  });
 }
