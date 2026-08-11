@@ -1,7 +1,10 @@
-import axios, { AxiosError } from 'axios';
+import axios from 'axios';
 import { getStoredToken } from './auth';
 
 const BACKEND_BASE_URL = 'http://124.223.102.20:8080';
+const AXIOS_TIMEOUT_MS = 10_000;
+const MAX_ATTEMPTS = 3;
+const RETRY_BACKOFF_MS: readonly number[] = [200, 800];
 
 export interface SyncResult {
   added: number;
@@ -19,6 +22,10 @@ const RETRYABLE_NETWORK_CODES = new Set(['ECONNRESET', 'ETIMEDOUT', 'ENOTFOUND',
 
 const sleep = (ms: number) => new Promise(res => setTimeout(res, ms));
 
+function isNodeNetworkError(e: unknown): e is { code: string } {
+  return typeof e === 'object' && e !== null && 'code' in e && typeof (e as { code: unknown }).code === 'string';
+}
+
 export async function syncOwnedSkins(
   puuid: string,
   summonerName: string,
@@ -30,10 +37,10 @@ export async function syncOwnedSkins(
   const url = `${BACKEND_BASE_URL}/api/skins/sync-user-skins`;
   const body = { puuid, summonerName, ownedSkinIds };
 
-  let lastErr: unknown;
-  for (let attempt = 0; attempt < 3; attempt++) {
+  for (let attempt = 0; attempt < MAX_ATTEMPTS; attempt++) {
     try {
       const { data } = await axios.post<BackendEnvelope<SyncResult>>(url, body, {
+        timeout: AXIOS_TIMEOUT_MS,
         headers: {
           'Content-Type': 'application/json',
           Authorization: `Bearer ${token}`
@@ -44,20 +51,16 @@ export async function syncOwnedSkins(
       }
       return data.data;
     } catch (e) {
-      lastErr = e;
-      const err = e as AxiosError;
-      if (err.response) {
-        // 4xx/5xx — pass through, do not retry.
-        throw e;
-      }
-      const code = (e as any).code;
+      if (axios.isAxiosError(e)) throw e; // 4xx/5xx — pass through, do not retry.
+      if (!isNodeNetworkError(e)) throw e; // non-network, non-axios — also throw.
+      const code = e.code;
       if (!RETRYABLE_NETWORK_CODES.has(code)) throw e;
-      if (attempt < 2) {
-        await sleep([200, 800, 3200][attempt]);
+      if (attempt < MAX_ATTEMPTS - 1) {
+        await sleep(RETRY_BACKOFF_MS[attempt]);
         continue;
       }
       throw e;
     }
   }
-  throw lastErr;
+  throw new Error('unreachable: retry loop exited without resolving or throwing');
 }

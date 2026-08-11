@@ -68,4 +68,12 @@ describe('backend.syncOwnedSkins', () => {
     await expect(syncOwnedSkins('p', 's', [1])).rejects.toMatchObject({ response: { status: 403 } });
     expect(axios.post).toHaveBeenCalledTimes(1);
   });
+
+  it('throws last error after 3 ECONNRESET attempts', async () => {
+    vi.mocked(getStoredToken).mockReturnValue('jwt');
+    const err = { code: 'ECONNRESET' };
+    vi.mocked(axios.post).mockRejectedValue(err);
+    await expect(syncOwnedSkins('p', 's', [1])).rejects.toMatchObject({ code: 'ECONNRESET' });
+    expect(axios.post).toHaveBeenCalledTimes(3);
+  });
 });
