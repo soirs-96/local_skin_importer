@@ -1,9 +1,54 @@
-import { contextBridge } from 'electron';
+import { contextBridge, ipcRenderer } from 'electron';
 
-// Placeholder preload. Tasks 12-15 will fill in the real API surface
-// (lcu:check-status, auth:login, backend:sync, etc.). Exposing an empty
-// `api` object now so the renderer can guard on `window.api` without
-// crashing during Task 11 smoke-builds.
-contextBridge.exposeInMainWorld('api', {});
+export interface LcuStatus {
+  running: boolean;
+  port?: number;
+  summoner?: {
+    displayName: string;
+    puuid: string;
+  };
+  error?: string;
+}
 
-export type ExposedApi = Record<string, never>;
+export interface FetchSkinsResult {
+  summoner: {
+    displayName: string;
+    puuid: string;
+  };
+  ownedSkinIds: number[];
+}
+
+export interface AuthStatus {
+  loggedIn: boolean;
+  tokenPreview: string | null;
+}
+
+export interface SyncPayload {
+  puuid: string;
+  summonerName: string;
+  ownedSkinIds: number[];
+}
+
+export interface SyncResult {
+  added: number;
+  updated: number;
+  totalOwned: number;
+}
+
+function invoke<T>(channel: string, ...args: unknown[]): Promise<T> {
+  return ipcRenderer.invoke(channel, ...args) as Promise<T>;
+}
+
+const api = {
+  checkLcu: (): Promise<LcuStatus> => invoke('lcu:check-status'),
+  fetchSkins: (): Promise<FetchSkinsResult> => invoke('lcu:fetch-skins'),
+  login: (username: string, password: string): Promise<AuthStatus> =>
+    invoke('auth:login', { username, password }),
+  logout: (): Promise<{ ok: true }> => invoke('auth:logout'),
+  getAuthStatus: (): Promise<AuthStatus> => invoke('auth:get-status'),
+  sync: (payload: SyncPayload): Promise<SyncResult> => invoke('backend:sync', payload)
+};
+
+contextBridge.exposeInMainWorld('api', api);
+
+export type ExposedApi = typeof api;
