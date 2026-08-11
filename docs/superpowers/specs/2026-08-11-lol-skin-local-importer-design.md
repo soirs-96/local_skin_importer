@@ -152,13 +152,13 @@ Three execution contexts with strict boundaries: **LCU credentials** are confine
 - `@RestController @RequestMapping("/skins")`
 - `@PostMapping("/sync-user-skins") public Result<SyncResultVO> sync(@Valid @RequestBody SyncUserSkinsDTO dto, HttpServletRequest request)`
 - Extracts `userId` from `Authorization: Bearer <jwt>` via the same pattern as `LolInventoryController.extractUserId` (no new `@AuthUser` annotation).
-- Injects `SimpleRateLimiter` named `skinSyncLimiter` (per-key `"skin-sync:" + userId`).
-- **No `@RequiresRole` annotation** — `RoleInterceptor` only enforces roles on annotated methods, so the new endpoint is authenticated via JWT but not role-gated.
+- Injects `SimpleRateLimiter` via **manual constructor with `@Qualifier("inventorySyncLimiter")`** — reuses the existing bean (10 s min interval, 5 / 60 s window) because adding a fourth `SimpleRateLimiter` bean risks the same "required a single bean, but 4 were found" startup failure that `LolInventoryController` already works around at `LolInventoryController.java:33-44`. The limiter is per-keyed (`acquireOrThrow("skin-sync:" + userId)`) so it shares the bean but tracks separately. **Do NOT use `@RequiredArgsConstructor`** — Lombok does not propagate `@Qualifier` to generated constructor params.
+- **No `@RequiresRole` annotation** — `RoleInterceptor` only enforces roles on annotated methods (verified `RoleInterceptor.java:28-29: if (rr == null) return true;`), so the new endpoint is authenticated via JWT but not role-gated.
 
 **`dto/SyncUserSkinsDTO.java`**
 
 ```java
-@NotBlank private String puuid;
+@NotBlank @Size(min = 32, max = 64) private String puuid; // 32-char hex; PUUID canonical form
 @Size(max = 64) private String summonerName; // optional, for display + logs
 @NotEmpty @Size(max = 2000) private List<Integer> ownedSkinIds;
 ```
@@ -167,9 +167,9 @@ Three execution contexts with strict boundaries: **LCU credentials** are confine
 
 **`service/SkinSyncService.java` + `impl/SkinSyncServiceImpl.java`** — orchestration:
 
-1. `skinSyncLimiter.acquireOrThrow("skin-sync:" + userId)`.
+1. `syncRateLimiter.acquireOrThrow("skin-sync:" + userId)` (reuses the `inventorySyncLimiter` bean, keyed per-user).
 2. **Acquire Redis lock** via `StringRedisTemplate.opsForValue().setIfAbsent("skin:sync:locked:" + userId, "1", Duration.ofSeconds(30))`; reject 429 on collision. Wrap the entire body in `try { ... } finally { redis.delete(lockKey) }` so the lock is always released.
-3. **PUID binding** — `userAccountMapper.selectById(userId)`, then `puuid` field. If null → set `userAccountMapper.updatePuuid(userId, dto.puuid)` (first-time bind). If non-null and `!existing.equals(dto.puuid)` → throw `ForbiddenException("PUUID mismatch — this account is bound to a different LOL account")`.
+3. **PUID binding** — call `userAccountMapper.selectPuuidById(userId)` (a custom `@Select("SELECT puuid FROM t_user_account WHERE id = #{userId}")` method — **do not use `BaseMapper.selectById`** because MyBatis-Plus globally enables `logic-delete-field: deleted` per `application.yml:80-82`, and even though `UserAccount` lacks a `deleted` field, the safest path is to bypass `BaseMapper` entirely for this entity). If the returned `puuid` is null → bind via `userAccountMapper.updatePuuid(userId, dto.puuid)` (a custom `@Update("UPDATE t_user_account SET puuid = #{puuid}, updated_at = NOW() WHERE id = #{userId}")` method, mirroring the existing `updatePasswordById` pattern at `UserAccountMapper.java:39-40`). If non-null and `!existing.equals(dto.puuid)` → throw `ForbiddenException("PUUID mismatch — this account is bound to a different LOL account")`.
 4. **UPSERT** — single statement, MySQL native:
 
    ```sql
@@ -180,22 +180,26 @@ Three execution contexts with strict boundaries: **LCU credentials** are confine
 
    Executed in a batch via `userSkinMapper.batchUpsert(userId, ownedSkinIds)`. The unique key `(user_id, skin_id)` makes this idempotent even if the Redis lock has somehow expired.
 
-5. `result.added` = rows where `first_seen_at == last_seen_at` (heuristic — return both counts from the SQL via `ROW_COUNT()` semantics; details in plan).
-6. `result.totalOwned = userSkinMapper.countByUserId(userId)`.
-7. Return `Result.success(result)`.
+5. **Compute counts** — after the UPSERT batch, issue two `SELECT COUNT(*)` round-trips:
+   - `result.added = userSkinMapper.countWhereFirstEqualsLast(userId)` — captures rows inserted this sync (the schema sets both timestamps to `NOW()` on INSERT, so `first_seen_at == last_seen_at` is true for new rows, false for re-seen rows because `last_seen_at` was updated by `NOW()` while `first_seen_at` retains the original).
+   - `result.totalOwned = userSkinMapper.countByUserId(userId)`.
+   - `result.updated = result.totalOwned - result.added` (computed in Java — saves a third round-trip).
+   (Do not rely on MySQL `ROW_COUNT()` semantics — it returns a single batch aggregate `1*inserts + 2*updates`, not a per-bucket split.)
+6. Return `Result.success(result)`.
 
-**`mapper/UserAccountMapper.java`** (in `com.lolskin.mapper`) — adds `updatePuuid(userId, puuid)` method.
-
-**`config/RateLimiterConfig.java`** — add new bean:
+**`mapper/UserAccountMapper.java`** (in `com.lolskin.mapper`) — adds:
 
 ```java
-@Bean("skinSyncLimiter")
-public SimpleRateLimiter skinSyncLimiter() {
-    return new SimpleRateLimiter(Duration.ofSeconds(10), Duration.ofSeconds(60), 5);
-}
+@Select("SELECT puuid FROM t_user_account WHERE id = #{userId}")
+String selectPuuidById(@Param("userId") Long userId);
+
+@Update("UPDATE t_user_account SET puuid = #{puuid}, updated_at = NOW() WHERE id = #{userId}")
+int updatePuuid(@Param("userId") Long userId, @Param("puuid") String puuid);
 ```
 
-(Mirrors `inventorySyncLimiter` — 10 s min interval, 5 per 60 s window. Per-key via `acquireOrThrow("skin-sync:" + userId)`.)
+(Both bypass `BaseMapper` to avoid any future logic-delete complications. Existing `updatePasswordById` at `UserAccountMapper.java:39-40` is the established pattern.)
+
+**No new rate-limiter bean is created.** The new controller reuses the existing `inventorySyncLimiter` bean (10 s min interval, 5 / 60 s window) via `@Qualifier` on the manual constructor.
 
 **No new LCU client bean is created in the backend.** The backend does not need to talk to LCU.
 
@@ -212,19 +216,22 @@ CREATE TABLE IF NOT EXISTS t_user_skin (
   first_seen_at DATETIME     NOT NULL,
   last_seen_at  DATETIME     NOT NULL,
   PRIMARY KEY (id),
-  UNIQUE KEY uk_user_skin (user_id, skin_id),
-  KEY idx_puuid (skin_id)
+  UNIQUE KEY uk_user_skin (user_id, skin_id)
 );
 
 -- t_user_account.puuid: one-way bind to the first LOL PUID this account reports.
 -- Existing column added via ALTER TABLE; backfill existing rows with NULL.
+-- Do NOT add a `deleted` column to UserAccount — application.yml:80 already sets
+-- logic-delete-field globally, and adding the column would silently inject
+-- WHERE deleted=0 into every BaseMapper query on this entity (existing pattern:
+-- UserAccount has no deleted field, all queries are unfiltered today).
 ALTER TABLE t_user_account
   ADD COLUMN IF NOT EXISTS puuid VARCHAR(64) NULL AFTER id;
 ```
 
 **Notes on schema choices:**
 
-- `idx_puuid (skin_id)` supports "how many users own skin X" queries; drop it if no such query exists in v1.
+- No `idx_skin_id (skin_id)` — no "how many users own skin X" query is needed in v1.
 - No `idx_user (user_id)` — `uk_user_skin (user_id, skin_id)` already serves `WHERE user_id = ?` via leftmost-prefix rule.
 - `t_user_account.puuid` is single-valued per user. A user wishing to rebind must be done out-of-band for v1 (out of scope).
 
@@ -314,15 +321,15 @@ Backend changes (separate repo `all_function_api`):
 
 ```
 src/main/java/com/lolskin/
-├── controller/SkinSyncController.java          # new
+├── controller/SkinSyncController.java          # new (manual constructor + @Qualifier)
 ├── dto/SyncUserSkinsDTO.java                   # new
 ├── vo/SyncResultVO.java                        # new
 ├── service/SkinSyncService.java                # new (interface)
 ├── service/impl/SkinSyncServiceImpl.java       # new
-├── mapper/UserSkinMapper.java                  # new
-├── mapper/UserAccountMapper.java               # add updatePuuid(...)
+├── mapper/UserSkinMapper.java                  # new (batchUpsert, count methods)
+├── mapper/UserAccountMapper.java               # add selectPuuidById + updatePuuid
 ├── entity/UserSkin.java                        # new
-└── entity/UserAccount.java                     # add puuid field
+└── entity/UserAccount.java                     # unchanged (puuid column accessed via mapper only)
 src/main/resources/
 ├── mapper/UserSkinMapper.xml                   # new (ON DUPLICATE KEY UPDATE)
 ├── mapper/UserAccountMapper.xml                # add updatePuuid
@@ -330,19 +337,19 @@ src/main/resources/
     └── migration_user_skin_2026_08.sql         # new (flat name, project convention)
 src/test/java/com/lolskin/service/impl/
 └── SkinSyncServiceImplTest.java                # new (@MybatisTest)
-src/main/java/com/lolskin/config/
-└── RateLimiterConfig.java                      # add @Bean("skinSyncLimiter")
+```
+
+(No changes to `RateLimiterConfig.java` — the new controller reuses the existing `inventorySyncLimiter` bean.)
 ```
 
 ---
 
 ## 10. Open Questions (to resolve in plan phase)
 
-1. Existing migration tool used by `all_function_api` (verify whether files in `src/main/resources/db/` are auto-loaded or require manual execution).
-2. Confirm `t_user_account` currently has no `puuid` column (the spec assumes the migration is needed; verify by reading the entity).
-3. H2 vs MySQL testcontainers for the `ON DUPLICATE KEY UPDATE` mapper test.
-4. Final list of rate-limit thresholds — currently mirroring `inventorySyncLimiter`; confirm acceptable.
-6. Whether to ship a code-signing certificate for the Windows installer (out of scope for v1, but flagged for release).
+1. Confirm whether `UserAccount.puuid` will be added as a Java field (mapper XML can target the column even without an entity field via `resultMap` or a `@Select`/`@Update` method — preferred path is the latter, no entity change).
+2. Verify `inventoryRedisTemplate` bean is reachable from `SkinSyncService` for the Redis lock, or fall back to `StringRedisTemplate` (the existing `LolInventoryServiceImpl:88-90` pattern uses `inventoryRedisTemplate`).
+3. Migration execution path — the project has ~36 `.sql` files in `src/main/resources/db/` but no Flyway/Liquibase. Plan must specify manual execution via `lol_skin_api.sql` master script (to be confirmed) or a new boot-time loader.
+4. Whether to ship a code-signing certificate for the Windows installer (out of scope for v1, but flagged for release).
 
 ---
 
@@ -360,3 +367,6 @@ src/main/java/com/lolskin/config/
 | PUID binding one-way | First-seen wins; rebinding out of scope for v1 | Simpler implementation; full rebind flow can be added later without breaking existing users. |
 | No Redis cache for `skin:owned:<userId>` | MySQL `t_user_skin` is the authoritative store | Avoids divergence with existing `lol:inv:owned:<cookieHash>` cache and the Jackson-roundtrip pitfalls noted in project memory. |
 | Redis lock TTL = 30 s | TTL is generous; UPSERT idempotency makes lock expiry non-fatal | DB unique key guarantees no duplicates even if the lock is bypassed. |
+| Reuse `inventorySyncLimiter` bean (not a new `skinSyncLimiter`) | Avoid "required a single bean, but 4 were found" startup error | The limiter is per-key (`"skin-sync:" + userId`) so two endpoints share the bean but track separately; mirrors the project pattern of one bean, many keys. |
+| Skip `BaseMapper.selectById` for `UserAccount` | Use custom `@Select` / `@Update` methods like the existing `updatePasswordById` | MyBatis-Plus global `logic-delete-field: deleted` could surprise us if `deleted` is later added to the entity; bypassing `BaseMapper` removes the risk. |
+| `added` count via `COUNT(*) WHERE first_seen_at = last_seen_at` | The schema sets both timestamps to `NOW()` on INSERT; `last_seen_at` is bumped on UPDATE | Avoids the MySQL `ROW_COUNT()` ambiguity (single batch aggregate, not a per-bucket split). |
