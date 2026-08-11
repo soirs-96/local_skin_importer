@@ -1,0 +1,14 @@
+# Visual Companion / brainstorm temp files
+.superpowers/
+
+# Node / Electron
+node_modules/
+dist/
+out/
+release/
+
+# Editor / OS
+.DS_Store
+.vscode/
+.idea/
+*.log
