@@ -85,7 +85,7 @@ import { ElNotification } from 'element-plus';
 import { storeToRefs } from 'pinia';
 import StatusDot from '../components/StatusDot.vue';
 import { useAuthStore } from '../stores/auth';
-import type { LcuStatus, SyncResult } from '../../../preload/index';
+import type { FetchSkinsResult, LcuStatus, SyncResult } from '../../../preload/index';
 
 type LcuState = 'disconnected' | 'running' | 'error';
 type LogLevel = 'INFO' | 'WARN' | 'ERROR';
@@ -106,6 +106,7 @@ const syncing = ref<boolean>(false);
 
 const skinCount = ref<number>(0);
 const lastFetchError = ref<Error | null>(null);
+const lastFetchedSkins = ref<FetchSkinsResult | null>(null);
 
 const lastSyncResult = ref<SyncResult | null>(null);
 const logs = ref<LogLine[]>([]);
@@ -181,6 +182,7 @@ async function onFetchSkins(): Promise<void> {
       summoner: result.summoner
     };
     skinCount.value = result.ownedSkinIds.length;
+    lastFetchedSkins.value = result;
     pushLog('INFO', `Fetched ${skinCount.value} owned skins for ${result.summoner.displayName}`);
   } catch (e: unknown) {
     const msg = describeError(e);
@@ -192,17 +194,22 @@ async function onFetchSkins(): Promise<void> {
 }
 
 async function onSync(): Promise<void> {
-  if (!lcuStatus.value.summoner) {
-    notifyError('Cannot sync', 'No summoner detected — check the League client first.');
+  if (!lastFetchedSkins.value) {
+    ElNotification({
+      title: 'Cannot sync',
+      message: '请先获取皮肤列表',
+      type: 'warning',
+      duration: 4000
+    });
     return;
   }
   syncing.value = true;
   try {
-    const result = await window.api.fetchSkins();
+    const { summoner, ownedSkinIds } = lastFetchedSkins.value;
     const r: SyncResult = await window.api.sync({
-      puuid: result.summoner.puuid,
-      summonerName: result.summoner.displayName,
-      ownedSkinIds: result.ownedSkinIds
+      puuid: summoner.puuid,
+      summonerName: summoner.displayName,
+      ownedSkinIds
     });
     lastSyncResult.value = r;
     skinCount.value = r.totalOwned;

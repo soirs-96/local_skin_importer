@@ -36,4 +36,16 @@ describe('StatusDot', () => {
     const dot = wrapper.find('.status-dot');
     expect(dot.attributes('aria-label')).toBe('error');
   });
+
+  it('falls back to state name "running" when label omitted', () => {
+    const wrapper = mount(StatusDot, { props: { state: 'running' } });
+    const dot = wrapper.find('.status-dot');
+    expect(dot.attributes('aria-label')).toBe('running');
+  });
+
+  it('falls back to state name "disconnected" when label omitted', () => {
+    const wrapper = mount(StatusDot, { props: { state: 'disconnected' } });
+    const dot = wrapper.find('.status-dot');
+    expect(dot.attributes('aria-label')).toBe('disconnected');
+  });
 });

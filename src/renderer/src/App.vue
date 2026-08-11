@@ -38,8 +38,14 @@ function goLogin(): void {
 }
 
 async function onLogout(): Promise<void> {
-  await auth.logout();
-  void router.push('/login');
+  try {
+    await auth.logout();
+  } catch (e) {
+    // still navigate away even on failure
+    console.warn('logout failed', e);
+  } finally {
+    void router.push('/login');
+  }
 }
 
 onMounted(async () => {

@@ -9,17 +9,20 @@ interface AuthStatus {
 export const useAuthStore = defineStore('auth', () => {
   const loggedIn = ref<boolean>(false);
   const tokenPreview = ref<string | null>(null);
+  const initialized = ref<boolean>(false);
 
   async function refresh(): Promise<void> {
     const status: AuthStatus = await window.api.getAuthStatus();
     loggedIn.value = status.loggedIn;
     tokenPreview.value = status.tokenPreview;
+    initialized.value = true;
   }
 
   async function login(username: string, password: string): Promise<void> {
     const status: AuthStatus = await window.api.login(username, password);
     loggedIn.value = status.loggedIn;
     tokenPreview.value = status.tokenPreview;
+    initialized.value = true;
   }
 
   async function logout(): Promise<void> {
@@ -28,5 +31,5 @@ export const useAuthStore = defineStore('auth', () => {
     tokenPreview.value = null;
   }
 
-  return { loggedIn, tokenPreview, refresh, login, logout };
+  return { loggedIn, tokenPreview, initialized, refresh, login, logout };
 });
