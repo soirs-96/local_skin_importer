@@ -29,6 +29,7 @@
 - **Avoid `BaseMapper` on `UserAccount`** — entity lacks a `deleted` field today, but `application.yml:80` globally sets `logic-delete-field: deleted`. Use `@Select` / `@Update` annotated methods to bypass the inheritance (mirror `updatePasswordById` at `UserAccountMapper.java:39-40`).
 - **PUID format** — Riot PUUID is 32-char lowercase hex. `@Size(min=32, max=64)` validates the wire format.
 - **MySQL migration convention** — project uses `INFORMATION_SCHEMA` + prepared statement pattern (see `migration_mortgage_2026_06_add_principal_updated_at.sql`), NOT `IF NOT EXISTS`. The latter requires MySQL 8.0.29+. Dev MySQL version is unknown, so follow the project's portable idiom.
+- **`SkinSyncService` is taken — use `PlayerSkinSyncService`** — an admin-side `SkinSyncService` (Tencent inventory sync, used by `SkinSyncTask`'s 4 AM cron + admin manual trigger, plus `HeroSyncServiceImpl`) already exists in `com.lolskin.service` and `com.lolskin.task`. The new Local Importer sync uses `PlayerSkinSyncService` / `PlayerSkinSyncServiceImpl` to avoid collision. The controller stays named `SkinSyncController` (no admin controller of that name exists, and `/skins/sync-user-skins` is a fresh URL).
 
 ---
 
@@ -39,10 +40,10 @@
 2. `UserAccountMapper` additions: `selectPuuidById`, `updatePuuid`.
 3. `UserSkinMapper` + XML: `batchUpsert`, `listSkinIdsByUserId`.
 4. `SyncUserSkinsDTO`, `SyncResultVO`.
-5. `SkinSyncService` interface + `SkinSyncServiceImpl` (rate limit + Redis lock + PUID binding + UPSERT + Java Set diff).
+5. `PlayerSkinSyncService` interface + `PlayerSkinSyncServiceImpl` (rate limit + Redis lock + PUID binding + UPSERT + Java Set diff).
 6. `SkinSyncController` (manual constructor + `@Qualifier("inventorySyncLimiter")`, `extractUserId`, `@PostMapping("/sync-user-skins")`).
 7. `SkinSyncControllerTest` (MockMvc standaloneSetup; cover 200, 401, 403, 429, validation 400).
-8. `SkinSyncServiceImplTest` (Mockito unit; cover PUID bind/verify, Redis lock collision, Set diff arithmetic).
+8. `PlayerSkinSyncServiceImplTest` (Mockito unit; cover PUID bind/verify, Redis lock collision, Set diff arithmetic).
 10. Manual backend smoke test against dev MySQL.
 
 **Electron (`D:\Front_Project\all\local_skin_importer`)**
@@ -357,11 +358,11 @@ Expected: BUILD SUCCESS.
 
 ---
 
-## Task 5: `SkinSyncService` interface + impl
+## Task 5: `PlayerSkinSyncService` interface + impl
 
 **Files:**
-- Create: `D:\Front_Project\all\all_function_api\src\main\java\com\lolskin\service\SkinSyncService.java`
-- Create: `D:\Front_Project\all\all_function_api\src\main\java\com\lolskin\service\impl\SkinSyncServiceImpl.java`
+- Create: `D:\Front_Project\all\all_function_api\src\main\java\com\lolskin\service\PlayerSkinSyncService.java`
+- Create: `D:\Front_Project\all\all_function_api\src\main\java\com\lolskin\service\impl\PlayerSkinSyncServiceImpl.java`
 
 - [ ] **Step 1: Create the interface**
 
@@ -371,7 +372,7 @@ package com.lolskin.service;
 import com.lolskin.dto.SyncUserSkinsDTO;
 import com.lolskin.vo.SyncResultVO;
 
-public interface SkinSyncService {
+public interface PlayerSkinSyncService {
     SyncResultVO sync(SyncUserSkinsDTO dto, Long userId);
 }
 ```
@@ -387,7 +388,7 @@ import com.lolskin.exception.RateLimitedException;
 import com.lolskin.mapper.UserAccountMapper;
 import com.lolskin.mapper.UserSkinMapper;
 import com.lolskin.ratelimit.SimpleRateLimiter;
-import com.lolskin.service.SkinSyncService;
+import com.lolskin.service.PlayerSkinSyncService;
 import com.lolskin.vo.SyncResultVO;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Qualifier;
@@ -409,7 +410,7 @@ import java.util.Set;
  */
 @Slf4j
 @Service
-public class SkinSyncServiceImpl implements SkinSyncService {
+public class PlayerSkinSyncServiceImpl implements PlayerSkinSyncService {
 
     private static final Duration LOCK_TTL = Duration.ofSeconds(30);
     private static final String LOCK_KEY_PREFIX = "skin:sync:locked:";
@@ -424,7 +425,7 @@ public class SkinSyncServiceImpl implements SkinSyncService {
     private final UserAccountMapper userAccountMapper;
     private final UserSkinMapper userSkinMapper;
 
-    public SkinSyncServiceImpl(@Qualifier("inventorySyncLimiter") SimpleRateLimiter rateLimiter,
+    public PlayerSkinSyncServiceImpl(@Qualifier("inventorySyncLimiter") SimpleRateLimiter rateLimiter,
                                 StringRedisTemplate redis,
                                 UserAccountMapper userAccountMapper,
                                 UserSkinMapper userSkinMapper) {
@@ -512,7 +513,7 @@ import com.lolskin.common.Result;
 import com.lolskin.dto.SyncUserSkinsDTO;
 import com.lolskin.exception.UnauthorizedException;
 import com.lolskin.service.JwtService;
-import com.lolskin.service.SkinSyncService;
+import com.lolskin.service.PlayerSkinSyncService;
 import com.lolskin.vo.SyncResultVO;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
@@ -537,7 +538,7 @@ import org.springframework.web.bind.annotation.RestController;
 @RequiredArgsConstructor
 public class SkinSyncController {
 
-    private final SkinSyncService skinSyncService;
+    private final PlayerSkinSyncService skinSyncService;
     private final JwtService jwtService;
 
     @Operation(summary = "同步用户已拥有皮肤(PUID 一次性绑定)")
@@ -563,7 +564,7 @@ public class SkinSyncController {
 }
 ```
 
-> **Why `@RequiredArgsConstructor` is fine here** — no `@Qualifier` needed because the only `SkinSyncService` and `JwtService` beans are unambiguous. If the rate limiter were injected at the controller layer, you'd need the manual constructor pattern from `LolInventoryController.java:33-44` (Lombok's `@RequiredArgsConstructor` does not copy `@Qualifier`). The rate limiter is consumed inside `SkinSyncServiceImpl`, so this controller stays simple.
+> **Why `@RequiredArgsConstructor` is fine here** — no `@Qualifier` needed because the only `PlayerSkinSyncService` and `JwtService` beans are unambiguous. If the rate limiter were injected at the controller layer, you'd need the manual constructor pattern from `LolInventoryController.java:33-44` (Lombok's `@RequiredArgsConstructor` does not copy `@Qualifier`). The rate limiter is consumed inside `PlayerSkinSyncServiceImpl`, so this controller stays simple.
 
 - [ ] **Step 2: Compile**
 
@@ -599,7 +600,7 @@ import com.lolskin.exception.GlobalExceptionHandler;
 import com.lolskin.exception.RateLimitedException;
 import com.lolskin.exception.UnauthorizedException;
 import com.lolskin.service.JwtService;
-import com.lolskin.service.SkinSyncService;
+import com.lolskin.service.PlayerSkinSyncService;
 import com.lolskin.vo.SyncResultVO;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -627,13 +628,13 @@ class SkinSyncControllerTest {
 
     private MockMvc mvc;
     private ObjectMapper mapper;
-    private SkinSyncService skinSyncService;
+    private PlayerSkinSyncService skinSyncService;
     private JwtService jwtService;
 
     @BeforeEach
     void setUp() {
         mapper = new ObjectMapper().registerModule(new JavaTimeModule());
-        skinSyncService = mock(SkinSyncService.class);
+        skinSyncService = mock(PlayerSkinSyncService.class);
         jwtService = mock(JwtService.class);
 
         SkinSyncController controller = new SkinSyncController(skinSyncService, jwtService);
@@ -759,10 +760,10 @@ Expected: BUILD SUCCESS, 7 tests pass.
 
 ---
 
-## Task 8: `SkinSyncServiceImplTest` (Mockito unit)
+## Task 8: `PlayerSkinSyncServiceImplTest` (Mockito unit)
 
 **Files:**
-- Create: `D:\Front_Project\all\all_function_api\src\test\java\com\lolskin\service\impl\SkinSyncServiceImplTest.java`
+- Create: `D:\Front_Project\all\all_function_api\src\test\java\com\lolskin\service\impl\PlayerSkinSyncServiceImplTest.java`
 
 - [ ] **Step 1: Create the test file**
 
@@ -790,14 +791,14 @@ import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.*;
 
-class SkinSyncServiceImplTest {
+class PlayerSkinSyncServiceImplTest {
 
     private SimpleRateLimiter rateLimiter;
     private StringRedisTemplate redis;
     private ValueOperations<String, String> ops;
     private UserAccountMapper userAccountMapper;
     private UserSkinMapper userSkinMapper;
-    private SkinSyncServiceImpl service;
+    private PlayerSkinSyncServiceImpl service;
 
     @BeforeEach
     void setUp() {
@@ -808,7 +809,7 @@ class SkinSyncServiceImplTest {
         userAccountMapper = mock(UserAccountMapper.class);
         userSkinMapper = mock(UserSkinMapper.class);
 
-        service = new SkinSyncServiceImpl(rateLimiter, redis, userAccountMapper, userSkinMapper);
+        service = new PlayerSkinSyncServiceImpl(rateLimiter, redis, userAccountMapper, userSkinMapper);
     }
 
     private SyncUserSkinsDTO dto(List<Integer> skins) {
@@ -902,7 +903,7 @@ class SkinSyncServiceImplTest {
 - [ ] **Step 2: Run the tests**
 
 ```bash
-cd "D:/Front_Project/all/all_function_api" && mvn -q -Dmaven.test.skip=false -Dtest=SkinSyncServiceImplTest test
+cd "D:/Front_Project/all/all_function_api" && mvn -q -Dmaven.test.skip=false -Dtest=PlayerSkinSyncServiceImplTest test
 ```
 
 Expected: BUILD SUCCESS, 6 tests pass.
