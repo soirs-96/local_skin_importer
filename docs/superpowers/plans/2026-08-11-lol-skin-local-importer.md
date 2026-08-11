@@ -1458,7 +1458,7 @@ import { app, safeStorage } from 'electron';
 import * as fs from 'fs';
 import * as path from 'path';
 
-const BACKEND_BASE_URL = 'http://124.223.102.20:8080';
+const BACKEND_BASE_URL = 'http://101.34.210.254:8080';
 const TOKEN_FILENAME = 'auth.bin';
 
 function tokenFilePath(): string {
@@ -1621,7 +1621,7 @@ Expected: FAIL.
 import axios, { AxiosError } from 'axios';
 import { getStoredToken } from './auth';
 
-const BACKEND_BASE_URL = 'http://124.223.102.20:8080';
+const BACKEND_BASE_URL = 'http://101.34.210.254:8080';
 
 export interface SyncResult {
   added: number;

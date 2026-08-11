@@ -3,7 +3,7 @@ import { app, safeStorage } from 'electron';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 
-const BACKEND_BASE_URL = 'http://124.223.102.20:8080';
+const BACKEND_BASE_URL = 'http://101.34.210.254:8080';
 const TOKEN_FILENAME = 'auth.bin';
 
 interface LoginEnvelope { code: number; data?: { token?: string }; message?: string }

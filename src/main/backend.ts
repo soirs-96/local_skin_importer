@@ -1,7 +1,7 @@
 import axios from 'axios';
 import { getStoredToken } from './auth';
 
-const BACKEND_BASE_URL = 'http://124.223.102.20:8080';
+const BACKEND_BASE_URL = 'http://101.34.210.254:8080';
 const AXIOS_TIMEOUT_MS = 10_000;
 const MAX_ATTEMPTS = 3;
 const RETRY_BACKOFF_MS: readonly number[] = [200, 800];
