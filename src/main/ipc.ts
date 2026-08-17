@@ -4,9 +4,8 @@ import * as lcu from './lcu';
 import * as auth from './auth';
 import { syncOwnedSkins } from './backend';
 
-interface AuthCredentials {
-  username: string;
-  password: string;
+interface RedeemPayload {
+  code: string;
 }
 
 interface SyncPayload {
@@ -55,16 +54,11 @@ function assertSyncPayload(p: unknown): asserts p is SyncPayload {
   }
 }
 
-function assertLoginPayload(
-  p: unknown
-): asserts p is { username: string; password: string } {
+function assertRedeemPayload(p: unknown): asserts p is RedeemPayload {
   if (typeof p !== 'object' || p === null) throw new Error('invalid payload');
   const obj = p as Record<string, unknown>;
-  if (typeof obj.username !== 'string' || obj.username.length === 0) {
-    throw new Error('invalid username');
-  }
-  if (typeof obj.password !== 'string' || obj.password.length === 0) {
-    throw new Error('invalid password');
+  if (typeof obj.code !== 'string' || !/^\d{6}$/.test(obj.code)) {
+    throw new Error('invalid code (must be 6 digits)');
   }
 }
 
@@ -106,9 +100,9 @@ export function registerIpcHandlers(): void {
     }
   });
 
-  ipcMain.handle('auth:login', async (_event, credentials: AuthCredentials) => {
-    assertLoginPayload(credentials);
-    const token = await auth.login(credentials.username, credentials.password);
+  ipcMain.handle('auth:login', async (_event, payload: RedeemPayload) => {
+    assertRedeemPayload(payload);
+    const token = await auth.redeemSyncCode(payload.code);
     auth.saveToken(token);
     return auth.getAuthStatus();
   });

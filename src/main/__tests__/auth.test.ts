@@ -3,7 +3,7 @@ import axios from 'axios';
 import { mkdtempSync, rmSync, writeFileSync, existsSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { login, saveToken, getStoredToken, clearStoredToken, getAuthStatus } from '../auth';
+import { redeemSyncCode, saveToken, getStoredToken, clearStoredToken, getAuthStatus } from '../auth';
 import { app } from 'electron';
 
 vi.mock('axios');
@@ -54,14 +54,18 @@ afterEach(() => {
 });
 
 describe('auth', () => {
-  it('login posts username/password and returns the JWT', async () => {
-    vi.mocked(axios.post).mockResolvedValue({ data: { code: 200, data: { token: 'jwt-xyz' } } });
-    const token = await login('alice', 'hunter2');
+  it('redeemSyncCode posts the 6-digit code and returns the JWT', async () => {
+    vi.mocked(axios.post).mockResolvedValue({
+      data: { code: 200, data: { token: 'jwt-xyz', userId: 1, nickname: 'Soirs' }, message: 'ok' }
+    });
+    const token = await redeemSyncCode('482931');
     expect(token).toBe('jwt-xyz');
     expect(axios.post).toHaveBeenCalledWith(
-      expect.stringContaining('/api/user/login'),
-      { username: 'alice', password: 'hunter2' },
-      expect.any(Object)
+      expect.stringContaining('/api/sync-code/redeem'),
+      { code: '482931' },
+      expect.objectContaining({
+        headers: expect.objectContaining({ 'Content-Type': 'application/json' })
+      })
     );
   });
 

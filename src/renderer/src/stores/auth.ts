@@ -18,8 +18,8 @@ export const useAuthStore = defineStore('auth', () => {
     initialized.value = true;
   }
 
-  async function login(username: string, password: string): Promise<void> {
-    const status: AuthStatus = await window.api.login(username, password);
+  async function redeemCode(code: string): Promise<void> {
+    const status: AuthStatus = await window.api.redeemCode(code);
     loggedIn.value = status.loggedIn;
     tokenPreview.value = status.tokenPreview;
     initialized.value = true;
@@ -31,5 +31,5 @@ export const useAuthStore = defineStore('auth', () => {
     tokenPreview.value = null;
   }
 
-  return { loggedIn, tokenPreview, initialized, refresh, login, logout };
+  return { loggedIn, tokenPreview, initialized, refresh, redeemCode, logout };
 });

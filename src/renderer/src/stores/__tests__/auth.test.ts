@@ -4,20 +4,14 @@ import { useAuthStore } from '../auth';
 
 interface MockApi {
   getAuthStatus: ReturnType<typeof vi.fn>;
-  login: ReturnType<typeof vi.fn>;
+  redeemCode: ReturnType<typeof vi.fn>;
   logout: ReturnType<typeof vi.fn>;
-  checkLcu: ReturnType<typeof vi.fn>;
-  fetchSkins: ReturnType<typeof vi.fn>;
-  sync: ReturnType<typeof vi.fn>;
 }
 
 const mockApi: MockApi = {
   getAuthStatus: vi.fn(),
-  login: vi.fn(),
-  logout: vi.fn(),
-  checkLcu: vi.fn(),
-  fetchSkins: vi.fn(),
-  sync: vi.fn()
+  redeemCode: vi.fn(),
+  logout: vi.fn()
 };
 
 beforeEach(() => {
@@ -26,7 +20,7 @@ beforeEach(() => {
     api: mockApi
   };
   mockApi.getAuthStatus.mockReset();
-  mockApi.login.mockReset();
+  mockApi.redeemCode.mockReset();
   mockApi.logout.mockReset();
 });
 
@@ -51,19 +45,19 @@ describe('auth store', () => {
     expect(store.tokenPreview).toBeNull();
   });
 
-  it('login() calls window.api.login and updates state', async () => {
-    mockApi.login.mockResolvedValue({ loggedIn: true, tokenPreview: 'jwt-new...' });
+  it('redeemCode() calls window.api.redeemCode and updates state', async () => {
+    mockApi.redeemCode.mockResolvedValue({ loggedIn: true, tokenPreview: 'jwt-new...' });
     const store = useAuthStore();
-    await store.login('alice', 'pw');
-    expect(mockApi.login).toHaveBeenCalledWith('alice', 'pw');
+    await store.redeemCode('482931');
+    expect(mockApi.redeemCode).toHaveBeenCalledWith('482931');
     expect(store.loggedIn).toBe(true);
     expect(store.tokenPreview).toBe('jwt-new...');
   });
 
-  it('login() does not mutate state when backend reports failure', async () => {
-    mockApi.login.mockResolvedValue({ loggedIn: false, tokenPreview: null });
+  it('redeemCode() does not mutate state when backend reports failure', async () => {
+    mockApi.redeemCode.mockResolvedValue({ loggedIn: false, tokenPreview: null });
     const store = useAuthStore();
-    await store.login('alice', 'wrong');
+    await store.redeemCode('000000');
     expect(store.loggedIn).toBe(false);
     expect(store.tokenPreview).toBeNull();
   });

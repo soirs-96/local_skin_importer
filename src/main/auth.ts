@@ -3,25 +3,29 @@ import { app, safeStorage } from 'electron';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 
-const BACKEND_BASE_URL = 'http://101.34.210.254:8080';
+const BACKEND_BASE_URL = 'http://101.34.210.254';
 const TOKEN_FILENAME = 'auth.bin';
 
-interface LoginEnvelope { code: number; data?: { token?: string }; message?: string }
+interface RedeemEnvelope { code: number; data?: { token?: string }; message?: string }
 
 const TOKEN_PREVIEW_LENGTH = 12;
+const SYNC_CODE_PATTERN = /^\d{6}$/;
 
 function tokenFilePath(): string {
   return path.join(app.getPath('userData'), TOKEN_FILENAME);
 }
 
-export async function login(username: string, password: string): Promise<string> {
-  const { data } = await axios.post<LoginEnvelope>(
-    `${BACKEND_BASE_URL}/api/user/login`,
-    { username, password },
+export async function redeemSyncCode(code: string): Promise<string> {
+  if (!SYNC_CODE_PATTERN.test(code)) {
+    throw new Error('码格式无效');
+  }
+  const { data } = await axios.post<RedeemEnvelope>(
+    `${BACKEND_BASE_URL}/api/sync-code/redeem`,
+    { code },
     { headers: { 'Content-Type': 'application/json' } }
   );
   if (data.code !== 200 || !data.data?.token) {
-    throw new Error(data.message ?? '登录失败');
+    throw new Error(data.message ?? '兑换失败');
   }
   return data.data.token;
 }

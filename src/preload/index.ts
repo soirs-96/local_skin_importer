@@ -42,8 +42,8 @@ function invoke<T>(channel: string, ...args: unknown[]): Promise<T> {
 const api = {
   checkLcu: (): Promise<LcuStatus> => invoke('lcu:check-status'),
   fetchSkins: (): Promise<FetchSkinsResult> => invoke('lcu:fetch-skins'),
-  login: (username: string, password: string): Promise<AuthStatus> =>
-    invoke('auth:login', { username, password }),
+  redeemCode: (code: string): Promise<AuthStatus> =>
+    invoke('auth:login', { code }),
   logout: (): Promise<{ ok: true }> => invoke('auth:logout'),
   getAuthStatus: (): Promise<AuthStatus> => invoke('auth:get-status'),
   sync: (payload: SyncPayload): Promise<SyncResult> => invoke('backend:sync', payload)

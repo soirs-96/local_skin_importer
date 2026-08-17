@@ -22,7 +22,7 @@ const mocks = vi.hoisted(() => {
     getCurrentSummoner: vi.fn(),
     getOwnedSkinIds: vi.fn(),
     LcuNotRunningError: MockLcuNotRunningError,
-    login: vi.fn(),
+    redeemSyncCode: vi.fn(),
     saveToken: vi.fn(),
     getAuthStatus: vi.fn(),
     clearStoredToken: vi.fn(),
@@ -45,7 +45,7 @@ vi.mock('../lcu', () => ({
 }));
 
 vi.mock('../auth', () => ({
-  login: mocks.login,
+  redeemSyncCode: mocks.redeemSyncCode,
   saveToken: mocks.saveToken,
   getAuthStatus: mocks.getAuthStatus,
   clearStoredToken: mocks.clearStoredToken
@@ -61,7 +61,7 @@ type Handler = (...args: unknown[]) => Promise<unknown>;
 type ExposedApi = {
   checkLcu: () => unknown;
   fetchSkins: () => unknown;
-  login: (username: string, password: string) => unknown;
+  redeemCode: (code: string) => unknown;
   logout: () => unknown;
   getAuthStatus: () => unknown;
   sync: (payload: { puuid: string; summonerName: string; ownedSkinIds: number[] }) => unknown;
@@ -77,7 +77,7 @@ async function invoke(channel: string, ...args: unknown[]): Promise<unknown> {
   return handlerFor(channel)(...args);
 }
 
-describe('Task 15 IPC wiring', () => {
+describe('IPC wiring', () => {
   beforeEach(() => {
     mocks.ipcMainHandle.mockReset();
     mocks.ipcRendererInvoke.mockReset();
@@ -85,7 +85,7 @@ describe('Task 15 IPC wiring', () => {
     mocks.createLcuClient.mockReset();
     mocks.getCurrentSummoner.mockReset();
     mocks.getOwnedSkinIds.mockReset();
-    mocks.login.mockReset();
+    mocks.redeemSyncCode.mockReset();
     mocks.saveToken.mockReset();
     mocks.getAuthStatus.mockReset();
     mocks.clearStoredToken.mockReset();
@@ -100,7 +100,7 @@ describe('Task 15 IPC wiring', () => {
 
     api.checkLcu();
     api.fetchSkins();
-    api.login('alice', 'password');
+    api.redeemCode('482931');
     api.logout();
     api.getAuthStatus();
     api.sync({ puuid: 'p', summonerName: 'Alice', ownedSkinIds: [1, 2] });
@@ -108,7 +108,7 @@ describe('Task 15 IPC wiring', () => {
     expect(mocks.ipcRendererInvoke.mock.calls).toEqual([
       ['lcu:check-status'],
       ['lcu:fetch-skins'],
-      ['auth:login', { username: 'alice', password: 'password' }],
+      ['auth:login', { code: '482931' }],
       ['auth:logout'],
       ['auth:get-status'],
       ['backend:sync', { puuid: 'p', summonerName: 'Alice', ownedSkinIds: [1, 2] }]
@@ -190,13 +190,13 @@ describe('Task 15 IPC wiring', () => {
     });
   });
 
-  it('auth:login saves the token and returns the refreshed auth status', async () => {
+  it('auth:login redeems the code, saves the token and returns the refreshed auth status', async () => {
     const status = { loggedIn: true, tokenPreview: 'jwt-preview...' };
-    mocks.login.mockResolvedValue('jwt-token');
+    mocks.redeemSyncCode.mockResolvedValue('jwt-token');
     mocks.getAuthStatus.mockReturnValue(status);
 
-    await expect(invoke('auth:login', {}, { username: 'alice', password: 'password' })).resolves.toBe(status);
-    expect(mocks.login).toHaveBeenCalledWith('alice', 'password');
+    await expect(invoke('auth:login', {}, { code: '482931' })).resolves.toBe(status);
+    expect(mocks.redeemSyncCode).toHaveBeenCalledWith('482931');
     expect(mocks.saveToken).toHaveBeenCalledWith('jwt-token');
     expect(mocks.getAuthStatus).toHaveBeenCalledOnce();
   });
@@ -258,10 +258,10 @@ describe('Task 15 IPC wiring', () => {
     expect(mocks.syncOwnedSkins).not.toHaveBeenCalled();
   });
 
-  it('auth:login rejects missing username', async () => {
-    await expect(invoke('auth:login', {}, { username: '', password: 'pw' })).rejects.toMatchObject(
-      { message: 'invalid username' }
+  it('auth:login rejects non-6-digit code', async () => {
+    await expect(invoke('auth:login', {}, { code: 'abc' })).rejects.toMatchObject(
+      { message: 'invalid code (must be 6 digits)' }
     );
-    expect(mocks.login).not.toHaveBeenCalled();
+    expect(mocks.redeemSyncCode).not.toHaveBeenCalled();
   });
 });

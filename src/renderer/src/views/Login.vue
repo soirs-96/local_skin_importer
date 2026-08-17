@@ -10,22 +10,14 @@
     </template>
 
     <el-form v-if="!loggedIn" class="login-form" @submit.prevent="onSubmit">
-      <el-form-item label="Username">
+      <el-form-item label="6 位同步码">
         <el-input
-          v-model="username"
-          placeholder="Enter your username"
-          autocomplete="username"
-          :disabled="submitting"
-        />
-      </el-form-item>
-
-      <el-form-item label="Password">
-        <el-input
-          v-model="password"
-          type="password"
-          placeholder="Enter your password"
-          autocomplete="current-password"
-          show-password
+          v-model="code"
+          placeholder="从小程序获取的 6 位数字"
+          autocomplete="off"
+          inputmode="numeric"
+          pattern="[0-9]{6}"
+          maxlength="6"
           :disabled="submitting"
           @keyup.enter="onSubmit"
         />
@@ -42,8 +34,12 @@
           :loading="submitting"
           @click="onSubmit"
         >
-          Sign in
+          登录
         </el-button>
+      </el-form-item>
+
+      <el-form-item>
+        <p class="hint">在微信小程序"个人中心 → 获取桌面同步码"获取</p>
       </el-form-item>
     </el-form>
 
@@ -62,8 +58,7 @@ import { useAuthStore } from '../stores/auth';
 const auth = useAuthStore();
 const { loggedIn, tokenPreview } = storeToRefs(auth);
 
-const username = ref<string>('');
-const password = ref<string>('');
+const code = ref<string>('');
 const submitting = ref<boolean>(false);
 const errorMessage = ref<string | null>(null);
 
@@ -71,20 +66,19 @@ async function onSubmit(): Promise<void> {
   if (submitting.value) return;
   errorMessage.value = null;
 
-  const u = username.value.trim();
-  if (!u || !password.value) {
-    errorMessage.value = 'Username and password are required.';
+  const c = code.value.trim();
+  if (!/^\d{6}$/.test(c)) {
+    errorMessage.value = '请输入 6 位数字同步码';
     return;
   }
 
   submitting.value = true;
   try {
-    await auth.login(u, password.value);
-    username.value = '';
-    password.value = '';
+    await auth.redeemCode(c);
+    code.value = '';
   } catch (e: unknown) {
     const err = e as { message?: string };
-    errorMessage.value = err.message ?? 'Login failed.';
+    errorMessage.value = err.message ?? '兑换失败';
   } finally {
     submitting.value = false;
   }
