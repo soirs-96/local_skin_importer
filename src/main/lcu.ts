@@ -85,16 +85,22 @@ export function readLockfile(lockfilePath: string = findLockfilePath()): LcuAuth
  *   --riotclient-app-port=<port>
  *   --riotclient-auth-token=<token>
  * regardless of whether it also writes a lockfile.
+ *
+ * Uses Get-CimInstance via PowerShell because wmic was removed in Windows 11 24H2.
  */
 export function readLcuAuthFromProcess(): LcuAuth {
+  const psScript =
+    "Get-CimInstance Win32_Process -Filter \"Name='LeagueClientUx.exe'\" | " +
+    'Select-Object -ExpandProperty CommandLine';
+
   let out: string;
   try {
     out = execSync(
-      `wmic process where "name='LeagueClientUx.exe'" get CommandLine /format:list`,
-      { encoding: 'utf8', timeout: 3000, windowsHide: true }
+      `powershell.exe -NoProfile -NonInteractive -Command "${psScript}"`,
+      { encoding: 'utf8', timeout: 5000, windowsHide: true }
     );
   } catch {
-    throw new LcuNotRunningError('LeagueClientUx.exe not found (wmic query failed).');
+    throw new LcuNotRunningError('LeagueClientUx.exe not found (PowerShell query failed).');
   }
 
   const portMatch = out.match(/--riotclient-app-port=(\d+)/);
