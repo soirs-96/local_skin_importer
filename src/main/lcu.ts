@@ -121,18 +121,8 @@ export function readLcuAuthFromProcess(): LcuAuth {
     );
   }
 
-  // eslint-disable-next-line no-console
-  console.log(`[lcu] raw CommandLine (${out.length} chars):`, out);
-
   const remotingTokenMatch = out.match(/--remoting-auth-token=([\w-]+)/);
   const appPortMatch = out.match(/--app-port=(\d+)/);
-
-  // eslint-disable-next-line no-console
-  console.log(
-    `[lcu] parsed: appPort=${appPortMatch?.[1] ?? 'NONE'} remotingToken=${
-      remotingTokenMatch?.[1]?.slice(0, 4) ?? 'NONE'
-    }...`
-  );
 
   if (remotingTokenMatch && appPortMatch) {
     return { port: Number(appPortMatch[1]), token: remotingTokenMatch[1] };
@@ -168,44 +158,15 @@ export function readLcuAuth(): LcuAuth {
 /**
  * Axios instance bound to the local LCU. Certificate verification is disabled because the
  * client serves a self-signed cert on 127.0.0.1 — this is scoped to this instance only.
- *
- * Notes from debugging WeGame LOL:
- * - `keepAlive: false` is required. The default keep-alive socket gets reused across
- *   requests, but LCU's HTTP/1.1 server closes the socket on every response. The reuse
- *   races with the server's close and the second request on the same socket returns 404.
- * - `User-Agent: ''` is also required. axios defaults to `axios/1.7.7`, which LCU's
- *   WeGame fork rejects with 404 for game endpoints (returns 200 only with curl-style
- *   "no UA" requests).
  */
 export function createLcuClient(port: number, token: string): AxiosInstance {
   const credentials = Buffer.from(`riot:${token}`, 'latin1').toString('base64');
-  const client = axios.create({
+  return axios.create({
     baseURL: `https://127.0.0.1:${port}`,
-    httpsAgent: new https.Agent({ rejectUnauthorized: false, keepAlive: false }),
-    headers: {
-      Authorization: `Basic ${credentials}`,
-      'User-Agent': ''
-    },
+    httpsAgent: new https.Agent({ rejectUnauthorized: false }),
+    headers: { Authorization: `Basic ${credentials}` },
     timeout: 5000
   });
-
-  client.interceptors.response.use(
-    (r) => r,
-    (err: unknown) => {
-      if (axios.isAxiosError(err)) {
-        const req = err.config;
-        // eslint-disable-next-line no-console
-        console.log(
-          `[lcu] ${req?.method?.toUpperCase()} ${req?.url} -> ${err.response?.status} ` +
-            `(UA=${req?.headers?.['User-Agent'] ?? 'unset'}, ` +
-            `Auth=${typeof req?.headers?.Authorization === 'string' ? req.headers.Authorization.slice(0, 12) : 'unset'}...)`
-        );
-      }
-      return Promise.reject(err);
-    }
-  );
-
-  return client;
 }
 
 export async function getCurrentSummoner(client: AxiosInstance): Promise<CurrentSummoner> {
@@ -219,21 +180,30 @@ export async function getCurrentSummoner(client: AxiosInstance): Promise<Current
   };
 }
 
-/** Owned skin IDs for the local player, filtered to entries the summoner actually owns. */
+/** Owned skin IDs for the local player.
+ *
+ * WeGame-installed LOL does not expose the standard Riot endpoint
+ * `/lol-champions/v1/inventories/local-player/skin-minimal` (returns 404 with
+ * "Invalid URI format"). The WeGame LCU fork exposes the same data through the
+ * store catalog: `/lol-store/v1/skins` returns every champion and skin in the
+ * game, each annotated with an `owned` flag and an `inventoryType` discriminator.
+ * We keep only `CHAMPION_SKIN` entries with `owned === true` and return their
+ * numeric `itemId` (which follows the `<championId>000+<skinIndex>` convention,
+ * e.g. `161013` = champion 161 skin 13).
+ */
 export async function getOwnedSkinIds(client: AxiosInstance): Promise<number[]> {
-  const { data } = await client.get('/lol-champions/v1/inventories/local-player/skin-minimal');
+  const { data } = await client.get('/lol-store/v1/skins');
   if (!Array.isArray(data)) return [];
 
   return data
-    .filter((entry: unknown): entry is Record<string, unknown> => isOwned(entry))
-    .map((entry) => Number(entry.id))
+    .filter((entry: unknown): entry is Record<string, unknown> => isOwnedSkin(entry))
+    .map((entry) => Number(entry.itemId))
     .filter((id) => Number.isFinite(id));
 }
 
-function isOwned(entry: unknown): boolean {
+function isOwnedSkin(entry: unknown): boolean {
   if (!isRecord(entry)) return false;
-  const { ownership } = entry;
-  return isRecord(ownership) && ownership.owned === true;
+  return entry.inventoryType === 'CHAMPION_SKIN' && entry.owned === true;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
