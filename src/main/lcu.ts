@@ -185,34 +185,17 @@ export async function getCurrentSummoner(client: AxiosInstance): Promise<Current
  * WeGame-installed LOL does not expose the standard Riot endpoint
  * `/lol-champions/v1/inventories/local-player/skin-minimal` (returns 404 with
  * "Invalid URI format"). The WeGame LCU fork exposes the same data through the
- * store catalog: `/lol-store/v1/skins` returns every champion and skin in the
- * game, each annotated with an `owned` flag and an `inventoryType` discriminator.
- * We keep only `CHAMPION_SKIN` entries with `owned === true` and return their
- * numeric `itemId` (which follows the `<championId>000+<skinIndex>` convention,
- * e.g. `161013` = champion 161 skin 13).
+ * store catalog: `/lol-store/v1/skins` returns a `{ catalog, groupOrder, itemGroups, player }`
+ * envelope where `catalog` holds every champion and skin (each annotated with
+ * `inventoryType` and `owned`). We keep only `CHAMPION_SKIN` entries with
+ * `owned === true` and return their numeric `itemId` (which follows the
+ * `<championId>000+<skinIndex>` convention, e.g. `161013` = champion 161 skin 13).
  */
 export async function getOwnedSkinIds(client: AxiosInstance): Promise<number[]> {
   const { data } = await client.get('/lol-store/v1/skins');
+  if (!isRecord(data) || !Array.isArray(data.catalog)) return [];
 
-  // TEMP DEBUG — remove after we know the real structure.
-  // eslint-disable-next-line no-console
-  console.log('[lcu] /lol-store/v1/skins response shape:', {
-    isArray: Array.isArray(data),
-    type: typeof data,
-    keys: isRecord(data) ? Object.keys(data) : null,
-    length: Array.isArray(data) ? data.length : null,
-    sample: Array.isArray(data)
-      ? data.slice(0, 2)
-      : isRecord(data)
-        ? Object.fromEntries(
-            Object.entries(data).slice(0, 3).map(([k, v]) => [k, Array.isArray(v) ? `array(len=${v.length})` : typeof v])
-          )
-        : null
-  });
-
-  if (!Array.isArray(data)) return [];
-
-  return data
+  return data.catalog
     .filter((entry: unknown): entry is Record<string, unknown> => isOwnedSkin(entry))
     .map((entry) => Number(entry.itemId))
     .filter((id) => Number.isFinite(id));

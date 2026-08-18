@@ -257,35 +257,54 @@ describe('getOwnedSkinIds', () => {
   it('keeps only CHAMPION_SKIN entries with owned=true and returns numeric itemIds', async () => {
     const client = stubClient();
     vi.spyOn(client, 'get').mockResolvedValue({
-      data: [
-        { itemId: 161013, inventoryType: 'CHAMPION_SKIN', owned: true },
-        { itemId: 1002, inventoryType: 'CHAMPION_SKIN', owned: false },
-        { itemId: 2005, inventoryType: 'CHAMPION_SKIN', owned: true },
-        { itemId: 57, inventoryType: 'CHAMPION', owned: true },
-        { itemId: 13003, inventoryType: 'CHAMPION_SKIN' }
-      ]
+      data: {
+        catalog: [
+          { itemId: 161013, inventoryType: 'CHAMPION_SKIN', owned: true },
+          { itemId: 1002, inventoryType: 'CHAMPION_SKIN', owned: false },
+          { itemId: 2005, inventoryType: 'CHAMPION_SKIN', owned: true },
+          { itemId: 57, inventoryType: 'CHAMPION', owned: true },
+          { itemId: 13003, inventoryType: 'CHAMPION_SKIN' }
+        ],
+        groupOrder: [],
+        itemGroups: {},
+        player: {}
+      }
     });
 
     await expect(getOwnedSkinIds(client)).resolves.toEqual([161013, 2005]);
     expect(client.get).toHaveBeenCalledWith('/lol-store/v1/skins');
   });
 
-  it('returns an empty array for an empty catalog', async () => {
+  it('returns an empty array when the catalog is empty', async () => {
     const client = stubClient();
-    vi.spyOn(client, 'get').mockResolvedValue({ data: [] });
+    vi.spyOn(client, 'get').mockResolvedValue({
+      data: { catalog: [], groupOrder: [], itemGroups: {}, player: {} }
+    });
     await expect(getOwnedSkinIds(client)).resolves.toEqual([]);
   });
 
-  it('returns an empty array when the payload is not an array', async () => {
+  it('returns an empty array when the envelope has no catalog array', async () => {
     const client = stubClient();
     vi.spyOn(client, 'get').mockResolvedValue({ data: { message: 'unauthorized' } });
     await expect(getOwnedSkinIds(client)).resolves.toEqual([]);
   });
 
-  it('skips malformed entries', async () => {
+  it('returns an empty array when the payload is not an object', async () => {
+    const client = stubClient();
+    vi.spyOn(client, 'get').mockResolvedValue({ data: 'oops' });
+    await expect(getOwnedSkinIds(client)).resolves.toEqual([]);
+  });
+
+  it('skips malformed entries in catalog', async () => {
     const client = stubClient();
     vi.spyOn(client, 'get').mockResolvedValue({
-      data: [{ itemId: 1001 }, null, { itemId: 2005, inventoryType: 'CHAMPION_SKIN', owned: true }]
+      data: {
+        catalog: [
+          { itemId: 1001 },
+          null,
+          { itemId: 2005, inventoryType: 'CHAMPION_SKIN', owned: true }
+        ]
+      }
     });
     await expect(getOwnedSkinIds(client)).resolves.toEqual([2005]);
   });
