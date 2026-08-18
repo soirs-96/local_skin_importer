@@ -52,11 +52,13 @@
 
 <script setup lang="ts">
 import { ref } from 'vue';
+import { useRouter } from 'vue-router';
 import { storeToRefs } from 'pinia';
 import { useAuthStore } from '../stores/auth';
 
 const auth = useAuthStore();
 const { loggedIn, tokenPreview } = storeToRefs(auth);
+const router = useRouter();
 
 const code = ref<string>('');
 const submitting = ref<boolean>(false);
@@ -76,6 +78,9 @@ async function onSubmit(): Promise<void> {
   try {
     await auth.redeemCode(c);
     code.value = '';
+    if (auth.loggedIn) {
+      void router.push('/sync');
+    }
   } catch (e: unknown) {
     const err = e as { message?: string };
     errorMessage.value = err.message ?? '兑换失败';
