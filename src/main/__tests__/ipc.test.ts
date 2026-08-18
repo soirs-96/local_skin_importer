@@ -17,7 +17,7 @@ const mocks = vi.hoisted(() => {
     ipcMainHandle: vi.fn(),
     ipcRendererInvoke: vi.fn(),
     exposeInMainWorld: vi.fn(),
-    readLockfile: vi.fn(),
+    readLcuAuth: vi.fn(),
     createLcuClient: vi.fn(),
     getCurrentSummoner: vi.fn(),
     getOwnedSkinIds: vi.fn(),
@@ -37,7 +37,7 @@ vi.mock('electron', () => ({
 }));
 
 vi.mock('../lcu', () => ({
-  readLockfile: mocks.readLockfile,
+  readLcuAuth: mocks.readLcuAuth,
   createLcuClient: mocks.createLcuClient,
   getCurrentSummoner: mocks.getCurrentSummoner,
   getOwnedSkinIds: mocks.getOwnedSkinIds,
@@ -81,7 +81,7 @@ describe('IPC wiring', () => {
   beforeEach(() => {
     mocks.ipcMainHandle.mockReset();
     mocks.ipcRendererInvoke.mockReset();
-    mocks.readLockfile.mockReset();
+    mocks.readLcuAuth.mockReset();
     mocks.createLcuClient.mockReset();
     mocks.getCurrentSummoner.mockReset();
     mocks.getOwnedSkinIds.mockReset();
@@ -126,8 +126,8 @@ describe('IPC wiring', () => {
     ]);
   });
 
-  it('lcu:check-status returns running false when lockfile is missing', async () => {
-    mocks.readLockfile.mockImplementation(() => {
+  it('lcu:check-status returns running false when LCU is not detected', async () => {
+    mocks.readLcuAuth.mockImplementation(() => {
       throw new mocks.LcuNotRunningError();
     });
 
@@ -138,7 +138,7 @@ describe('IPC wiring', () => {
     const lcuAuth = { port: 1234, token: 'secret' };
     const summoner = { displayName: 'Alice', puuid: 'puuid-1' };
     const client = {} as AxiosInstance;
-    mocks.readLockfile.mockReturnValue(lcuAuth);
+    mocks.readLcuAuth.mockReturnValue(lcuAuth);
     mocks.createLcuClient.mockReturnValue(client);
     mocks.getCurrentSummoner.mockResolvedValue(summoner);
 
@@ -152,7 +152,7 @@ describe('IPC wiring', () => {
   });
 
   it('lcu:check-status reports axios failures without hiding the message', async () => {
-    mocks.readLockfile.mockReturnValue({ port: 1234, token: 'secret' });
+    mocks.readLcuAuth.mockReturnValue({ port: 1234, token: 'secret' });
     mocks.createLcuClient.mockReturnValue({} as AxiosInstance);
     mocks.getCurrentSummoner.mockRejectedValue(
       Object.assign(new Error('connect ECONNREFUSED'), { isAxiosError: true })
@@ -167,7 +167,7 @@ describe('IPC wiring', () => {
   it('lcu:fetch-skins returns the summoner and owned skin IDs', async () => {
     const client = {} as AxiosInstance;
     const summoner = { displayName: 'Alice', puuid: 'puuid-1' };
-    mocks.readLockfile.mockReturnValue({ port: 1234, token: 'secret' });
+    mocks.readLcuAuth.mockReturnValue({ port: 1234, token: 'secret' });
     mocks.createLcuClient.mockReturnValue(client);
     mocks.getCurrentSummoner.mockResolvedValue(summoner);
     mocks.getOwnedSkinIds.mockResolvedValue([1001, 2005]);
@@ -179,15 +179,33 @@ describe('IPC wiring', () => {
     expect(mocks.getOwnedSkinIds).toHaveBeenCalledWith(client);
   });
 
-  it('lcu:fetch-skins propagates lockfile-missing error', async () => {
-    mocks.readLockfile.mockImplementation(() => {
+  it('lcu:fetch-skins propagates LCU-not-detected error as a real Error', async () => {
+    mocks.readLcuAuth.mockImplementation(() => {
       throw new mocks.LcuNotRunningError();
     });
 
-    await expect(invoke('lcu:fetch-skins')).rejects.toMatchObject({
-      name: 'LcuNotRunningError',
-      message: 'League client is not running'
+    const err = await invoke('lcu:fetch-skins').catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(Error);
+    expect((err as Error).message).toBe('League client is not running');
+    expect((err as Error).name).toBe('LcuNotRunningError');
+  });
+
+  it('lcu:fetch-skins throws a real Error (not a plain object) on axios failures', async () => {
+    const axiosError = Object.assign(new Error('Request failed with status code 500'), {
+      isAxiosError: true,
+      name: 'AxiosError',
+      response: { status: 500, data: { message: 'oops' } },
+      code: 'ERR_BAD_RESPONSE'
     });
+    mocks.readLcuAuth.mockReturnValue({ port: 1234, token: 'secret' });
+    mocks.createLcuClient.mockReturnValue({} as AxiosInstance);
+    mocks.getCurrentSummoner.mockRejectedValue(axiosError);
+
+    const err = await invoke('lcu:fetch-skins').catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(Error);
+    expect((err as Error).message).toBe('Request failed with status code 500');
+    expect((err as Error & { status?: number }).status).toBe(500);
+    expect((err as Error & { code?: string }).code).toBe('ERR_BAD_RESPONSE');
   });
 
   it('auth:login redeems the code, saves the token and returns the refreshed auth status', async () => {

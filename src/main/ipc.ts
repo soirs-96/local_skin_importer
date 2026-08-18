@@ -15,32 +15,32 @@ interface SyncPayload {
 }
 
 /**
- * JSON-safe shape of an error thrown across the IPC boundary. Electron serializes
+ * JSON-safe Error shape thrown across the IPC boundary. Electron serializes
  * thrown values via the structured-clone algorithm, which strips axios-specific
- * fields like `isAxiosError`, `code`, and `response.status`. Normalizing before
- * throwing preserves them so the renderer can distinguish 4xx / 5xx / network /
- * lockfile-missing / unknown via `{ status, code, name }`.
+ * fields like `isAxiosError`, `code`, and `response.status`. Wrapping as a real
+ * Error (not a plain object) is what lets the renderer keep `error.message`,
+ * `error.name`, and `error.stack`; throwing a bare `{...}` from an IPC handler
+ * surfaces as `[object Object]` in the renderer.
  */
-interface NormalizedSyncError {
+interface NormalizedSyncError extends Error {
   status?: number;
   code?: string;
-  message: string;
-  name: string;
 }
 
 function normalizeSyncError(e: unknown): NormalizedSyncError {
   if (axios.isAxiosError(e)) {
-    return {
-      status: e.response?.status,
-      code: (e as { code?: string }).code,
-      message: e.message,
-      name: e.name
-    };
+    const err = new Error(e.message) as NormalizedSyncError;
+    err.name = e.name;
+    err.status = e.response?.status;
+    err.code = (e as { code?: string }).code;
+    return err;
   }
   if (e instanceof Error) {
-    return { message: e.message, name: e.name };
+    return e as NormalizedSyncError;
   }
-  return { message: String(e), name: 'UnknownError' };
+  const err = new Error(String(e)) as NormalizedSyncError;
+  err.name = 'UnknownError';
+  return err;
 }
 
 function assertSyncPayload(p: unknown): asserts p is SyncPayload {
