@@ -193,6 +193,23 @@ export async function getCurrentSummoner(client: AxiosInstance): Promise<Current
  */
 export async function getOwnedSkinIds(client: AxiosInstance): Promise<number[]> {
   const { data } = await client.get('/lol-store/v1/skins');
+
+  // TEMP DEBUG — remove after we know the real structure.
+  // eslint-disable-next-line no-console
+  console.log('[lcu] /lol-store/v1/skins response shape:', {
+    isArray: Array.isArray(data),
+    type: typeof data,
+    keys: isRecord(data) ? Object.keys(data) : null,
+    length: Array.isArray(data) ? data.length : null,
+    sample: Array.isArray(data)
+      ? data.slice(0, 2)
+      : isRecord(data)
+        ? Object.fromEntries(
+            Object.entries(data).slice(0, 3).map(([k, v]) => [k, Array.isArray(v) ? `array(len=${v.length})` : typeof v])
+          )
+        : null
+  });
+
   if (!Array.isArray(data)) return [];
 
   return data
