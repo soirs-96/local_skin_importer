@@ -121,8 +121,18 @@ export function readLcuAuthFromProcess(): LcuAuth {
     );
   }
 
+  // eslint-disable-next-line no-console
+  console.log(`[lcu] raw CommandLine (${out.length} chars):`, out);
+
   const remotingTokenMatch = out.match(/--remoting-auth-token=([\w-]+)/);
   const appPortMatch = out.match(/--app-port=(\d+)/);
+
+  // eslint-disable-next-line no-console
+  console.log(
+    `[lcu] parsed: appPort=${appPortMatch?.[1] ?? 'NONE'} remotingToken=${
+      remotingTokenMatch?.[1]?.slice(0, 4) ?? 'NONE'
+    }...`
+  );
 
   if (remotingTokenMatch && appPortMatch) {
     return { port: Number(appPortMatch[1]), token: remotingTokenMatch[1] };
