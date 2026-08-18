@@ -168,15 +168,44 @@ export function readLcuAuth(): LcuAuth {
 /**
  * Axios instance bound to the local LCU. Certificate verification is disabled because the
  * client serves a self-signed cert on 127.0.0.1 — this is scoped to this instance only.
+ *
+ * Notes from debugging WeGame LOL:
+ * - `keepAlive: false` is required. The default keep-alive socket gets reused across
+ *   requests, but LCU's HTTP/1.1 server closes the socket on every response. The reuse
+ *   races with the server's close and the second request on the same socket returns 404.
+ * - `User-Agent: ''` is also required. axios defaults to `axios/1.7.7`, which LCU's
+ *   WeGame fork rejects with 404 for game endpoints (returns 200 only with curl-style
+ *   "no UA" requests).
  */
 export function createLcuClient(port: number, token: string): AxiosInstance {
   const credentials = Buffer.from(`riot:${token}`, 'latin1').toString('base64');
-  return axios.create({
+  const client = axios.create({
     baseURL: `https://127.0.0.1:${port}`,
-    httpsAgent: new https.Agent({ rejectUnauthorized: false }),
-    headers: { Authorization: `Basic ${credentials}` },
+    httpsAgent: new https.Agent({ rejectUnauthorized: false, keepAlive: false }),
+    headers: {
+      Authorization: `Basic ${credentials}`,
+      'User-Agent': ''
+    },
     timeout: 5000
   });
+
+  client.interceptors.response.use(
+    (r) => r,
+    (err: unknown) => {
+      if (axios.isAxiosError(err)) {
+        const req = err.config;
+        // eslint-disable-next-line no-console
+        console.log(
+          `[lcu] ${req?.method?.toUpperCase()} ${req?.url} -> ${err.response?.status} ` +
+            `(UA=${req?.headers?.['User-Agent'] ?? 'unset'}, ` +
+            `Auth=${typeof req?.headers?.Authorization === 'string' ? req.headers.Authorization.slice(0, 12) : 'unset'}...)`
+        );
+      }
+      return Promise.reject(err);
+    }
+  );
+
+  return client;
 }
 
 export async function getCurrentSummoner(client: AxiosInstance): Promise<CurrentSummoner> {
