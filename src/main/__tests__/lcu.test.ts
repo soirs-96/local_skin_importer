@@ -3,15 +3,22 @@ import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
 import type { AxiosInstance } from 'axios';
+import { execSync } from 'node:child_process';
 import {
   parseLockfile,
   findLockfilePath,
   readLockfile,
+  readLcuAuth,
+  readLcuAuthFromProcess,
   createLcuClient,
   getCurrentSummoner,
   getOwnedSkinIds,
   LcuNotRunningError
 } from '../lcu';
+
+vi.mock('node:child_process', () => ({
+  execSync: vi.fn()
+}));
 
 const VALID_LOCKFILE = 'LeagueClientUx:12345:9999:secret-token-here:https';
 
@@ -110,6 +117,88 @@ describe('readLockfile', () => {
     fs.writeFileSync(lockfile, 'garbage', 'utf8');
 
     expect(() => readLockfile(lockfile)).toThrow(/expected 5 colon-separated fields/);
+  });
+});
+
+describe('readLcuAuthFromProcess', () => {
+  beforeEach(() => {
+    vi.mocked(execSync).mockReset();
+  });
+
+  it('extracts port and token from a WeGame-style command line', () => {
+    vi.mocked(execSync).mockReturnValue(
+      [
+        'CommandLine=e:/wegameapps/英雄联盟/LeagueClient/LeagueClientUx.exe ',
+        '"--riotclient-auth-token=JbU8prmPo7j-J06fEElKYQ" ',
+        '"--riotclient-app-port=52222" ',
+        '"--riotclient-tencent" ',
+        '"--no-rads" ',
+        '"--region=TENCENT"'
+      ].join('')
+    );
+
+    expect(readLcuAuthFromProcess()).toEqual({
+      port: 52222,
+      token: 'JbU8prmPo7j-J06fEElKYQ'
+    });
+  });
+
+  it('extracts port and token from a standard Riot command line', () => {
+    vi.mocked(execSync).mockReturnValue(
+      '"C:\\Riot Games\\League of Legends\\LeagueClientUx.exe" ' +
+        '"--riotclient-auth-token=abc123def" ' +
+        '"--riotclient-app-port=12345"'
+    );
+
+    expect(readLcuAuthFromProcess()).toEqual({ port: 12345, token: 'abc123def' });
+  });
+
+  it('throws LcuNotRunningError when wmic fails', () => {
+    vi.mocked(execSync).mockImplementation(() => {
+      throw new Error('wmic not found');
+    });
+    expect(() => readLcuAuthFromProcess()).toThrow(LcuNotRunningError);
+  });
+
+  it('throws LcuNotRunningError when --riotclient-app-port is missing', () => {
+    vi.mocked(execSync).mockReturnValue('LeagueClientUx.exe "--no-port-here"');
+    expect(() => readLcuAuthFromProcess()).toThrow(/--riotclient-app-port/);
+  });
+
+  it('throws LcuNotRunningError when --riotclient-auth-token is missing', () => {
+    vi.mocked(execSync).mockReturnValue('LeagueClientUx.exe "--riotclient-app-port=1234"');
+    expect(() => readLcuAuthFromProcess()).toThrow(/--riotclient-auth-token/);
+  });
+});
+
+describe('readLcuAuth', () => {
+  beforeEach(() => {
+    vi.mocked(execSync).mockReset();
+  });
+
+  it('prefers the process command line when available', () => {
+    vi.mocked(execSync).mockReturnValue(
+      'LeagueClientUx.exe "--riotclient-auth-token=fromProcess" "--riotclient-app-port=11111"'
+    );
+
+    expect(readLcuAuth()).toEqual({ port: 11111, token: 'fromProcess' });
+  });
+
+  it('falls back to the lockfile when the process query fails', () => {
+    vi.mocked(execSync).mockImplementation(() => {
+      throw new Error('wmic not available');
+    });
+
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'lcu-fallback-'));
+    const lockfile = path.join(tmpDir, 'lockfile');
+    fs.writeFileSync(lockfile, VALID_LOCKFILE, 'utf8');
+    process.env.LOL_LOCKFILE_PATH = lockfile;
+
+    try {
+      expect(readLcuAuth()).toEqual({ port: 9999, token: 'secret-token-here' });
+    } finally {
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
   });
 });
 

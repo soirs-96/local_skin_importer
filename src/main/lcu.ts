@@ -3,6 +3,7 @@ import * as https from 'node:https';
 import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
+import { execSync } from 'node:child_process';
 
 /** Credentials scraped from the League client lockfile. Never leaves the main process. */
 export interface LcuAuth {
@@ -72,6 +73,59 @@ export function readLockfile(lockfilePath: string = findLockfilePath()): LcuAuth
     throw err;
   }
   return parseLockfile(raw);
+}
+
+/**
+ * Reads the auth directly from the LeagueClientUx.exe process command line.
+ * Used as a fallback because WeGame-installed LOL writes a lockfile that does not
+ * track the current LOL PID (the lockfile is captured by the Riot Client launcher
+ * at start, then never refreshed across LOL restarts).
+ *
+ * WeGame always passes:
+ *   --riotclient-app-port=<port>
+ *   --riotclient-auth-token=<token>
+ * regardless of whether it also writes a lockfile.
+ */
+export function readLcuAuthFromProcess(): LcuAuth {
+  let out: string;
+  try {
+    out = execSync(
+      `wmic process where "name='LeagueClientUx.exe'" get CommandLine /format:list`,
+      { encoding: 'utf8', timeout: 3000, windowsHide: true }
+    );
+  } catch {
+    throw new LcuNotRunningError('LeagueClientUx.exe not found (wmic query failed).');
+  }
+
+  const portMatch = out.match(/--riotclient-app-port=(\d+)/);
+  const tokenMatch = out.match(/--riotclient-auth-token=([\w-]+)/);
+
+  if (!portMatch) {
+    throw new LcuNotRunningError(
+      'LeagueClientUx.exe is running but did not expose --riotclient-app-port.'
+    );
+  }
+  if (!tokenMatch) {
+    throw new LcuNotRunningError(
+      'LeagueClientUx.exe is running but did not expose --riotclient-auth-token.'
+    );
+  }
+
+  return { port: Number(portMatch[1]), token: tokenMatch[1] };
+}
+
+/**
+ * Resolves LCU auth. Prefers the process command line (works for both standard
+ * Riot installs and WeGame). Falls back to the lockfile if wmic is unavailable
+ * or the process is not running for the expected user.
+ */
+export function readLcuAuth(): LcuAuth {
+  try {
+    return readLcuAuthFromProcess();
+  } catch {
+    // fall through to lockfile
+  }
+  return readLockfile(findLockfilePath());
 }
 
 /**

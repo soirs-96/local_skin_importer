@@ -72,12 +72,12 @@ function errorMessage(error: unknown): string {
 export function registerIpcHandlers(): void {
   ipcMain.handle('lcu:check-status', async () => {
     try {
-      const lockfileAuth = lcu.readLockfile();
-      const client = lcu.createLcuClient(lockfileAuth.port, lockfileAuth.token);
+      const lcuAuth = lcu.readLcuAuth();
+      const client = lcu.createLcuClient(lcuAuth.port, lcuAuth.token);
       const summoner = await lcu.getCurrentSummoner(client);
       return {
         running: true,
-        port: lockfileAuth.port,
+        port: lcuAuth.port,
         summoner
       };
     } catch (error: unknown) {
@@ -90,8 +90,8 @@ export function registerIpcHandlers(): void {
 
   ipcMain.handle('lcu:fetch-skins', async () => {
     try {
-      const lockfileAuth = lcu.readLockfile();
-      const client = lcu.createLcuClient(lockfileAuth.port, lockfileAuth.token);
+      const lcuAuth = lcu.readLcuAuth();
+      const client = lcu.createLcuClient(lcuAuth.port, lcuAuth.token);
       const summoner = await lcu.getCurrentSummoner(client);
       const ownedSkinIds = await lcu.getOwnedSkinIds(client);
       return { summoner, ownedSkinIds };
