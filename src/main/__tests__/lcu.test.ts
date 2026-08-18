@@ -128,18 +128,18 @@ describe('readLcuAuthFromProcess', () => {
   it('extracts port and token from a WeGame-style command line', () => {
     vi.mocked(execSync).mockReturnValue(
       [
-        'CommandLine=e:/wegameapps/英雄联盟/LeagueClient/LeagueClientUx.exe ',
-        '"--riotclient-auth-token=JbU8prmPo7j-J06fEElKYQ" ',
-        '"--riotclient-app-port=52222" ',
-        '"--riotclient-tencent" ',
-        '"--no-rads" ',
+        'e:/wegameapps/英雄联盟/LeagueClient/LeagueClientUx.exe ',
+        '"--riotclient-auth-token=Uk9_XmZf6hNKS3WH5gTLww" ',
+        '"--riotclient-app-port=56063" ',
+        '"--remoting-auth-token=JzjQHtV7o9hUwQZXDykoqw" ',
+        '"--app-port=51077"',
         '"--region=TENCENT"'
       ].join('')
     );
 
     expect(readLcuAuthFromProcess()).toEqual({
-      port: 52222,
-      token: 'JbU8prmPo7j-J06fEElKYQ'
+      port: 51077,
+      token: 'JzjQHtV7o9hUwQZXDykoqw'
     });
   });
 
@@ -153,21 +153,33 @@ describe('readLcuAuthFromProcess', () => {
     expect(readLcuAuthFromProcess()).toEqual({ port: 12345, token: 'abc123def' });
   });
 
-  it('throws LcuNotRunningError when wmic fails', () => {
+  it('prefers WeGame pair over standard pair when both are present', () => {
+    vi.mocked(execSync).mockReturnValue(
+      'LeagueClientUx.exe ' +
+        '"--riotclient-auth-token=wrongToken" ' +
+        '"--riotclient-app-port=11111" ' +
+        '"--remoting-auth-token=rightToken" ' +
+        '"--app-port=22222"'
+    );
+
+    expect(readLcuAuthFromProcess()).toEqual({ port: 22222, token: 'rightToken' });
+  });
+
+  it('throws LcuNotRunningError when PowerShell query fails', () => {
     vi.mocked(execSync).mockImplementation(() => {
-      throw new Error('wmic not found');
+      throw new Error('powershell not found');
     });
     expect(() => readLcuAuthFromProcess()).toThrow(LcuNotRunningError);
   });
 
-  it('throws LcuNotRunningError when --riotclient-app-port is missing', () => {
-    vi.mocked(execSync).mockReturnValue('LeagueClientUx.exe "--no-port-here"');
-    expect(() => readLcuAuthFromProcess()).toThrow(/--riotclient-app-port/);
+  it('throws when no recognizable port/token pair is present', () => {
+    vi.mocked(execSync).mockReturnValue('LeagueClientUx.exe "--some-other-arg=value"');
+    expect(() => readLcuAuthFromProcess()).toThrow(/did not expose recognizable LCU port/);
   });
 
-  it('throws LcuNotRunningError when --riotclient-auth-token is missing', () => {
-    vi.mocked(execSync).mockReturnValue('LeagueClientUx.exe "--riotclient-app-port=1234"');
-    expect(() => readLcuAuthFromProcess()).toThrow(/--riotclient-auth-token/);
+  it('throws when only one half of a pair is present', () => {
+    vi.mocked(execSync).mockReturnValue('LeagueClientUx.exe "--app-port=1234"');
+    expect(() => readLcuAuthFromProcess()).toThrow(LcuNotRunningError);
   });
 });
 

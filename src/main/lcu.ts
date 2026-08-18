@@ -81,10 +81,21 @@ export function readLockfile(lockfilePath: string = findLockfilePath()): LcuAuth
  * track the current LOL PID (the lockfile is captured by the Riot Client launcher
  * at start, then never refreshed across LOL restarts).
  *
- * WeGame always passes:
- *   --riotclient-app-port=<port>
- *   --riotclient-auth-token=<token>
- * regardless of whether it also writes a lockfile.
+ * Two command-line shapes exist in the wild:
+ *   1. Standard Riot install:
+ *        --riotclient-app-port=<port>
+ *        --riotclient-auth-token=<token>
+ *   2. WeGame install (or any Tencent launcher that proxies LOL):
+ *        --app-port=<port>
+ *        --remoting-auth-token=<token>
+ *
+ * WeGame's LeagueClientUx.exe carries BOTH pairs. The LCU game API
+ * (e.g. /lol-summoner/v1/current-summoner) is served on --app-port with
+ * --remoting-auth-token; --riotclient-app-port serves the Riot Client API
+ * (e.g. /rso-auth/v1/...) and returns 404 for game endpoints.
+ *
+ * Detection: if --remoting-auth-token is present, prefer the WeGame pair.
+ * Otherwise fall back to the standard Riot pair.
  *
  * Uses Get-CimInstance via PowerShell because wmic was removed in Windows 11 24H2.
  * The script is piped via stdin (`-Command -`) to avoid cmd.exe quote-escaping pitfalls.
@@ -110,21 +121,24 @@ export function readLcuAuthFromProcess(): LcuAuth {
     );
   }
 
-  const portMatch = out.match(/--riotclient-app-port=(\d+)/);
-  const tokenMatch = out.match(/--riotclient-auth-token=([\w-]+)/);
+  const remotingTokenMatch = out.match(/--remoting-auth-token=([\w-]+)/);
+  const appPortMatch = out.match(/--app-port=(\d+)/);
 
-  if (!portMatch) {
-    throw new LcuNotRunningError(
-      'LeagueClientUx.exe is running but did not expose --riotclient-app-port.'
-    );
-  }
-  if (!tokenMatch) {
-    throw new LcuNotRunningError(
-      'LeagueClientUx.exe is running but did not expose --riotclient-auth-token.'
-    );
+  if (remotingTokenMatch && appPortMatch) {
+    return { port: Number(appPortMatch[1]), token: remotingTokenMatch[1] };
   }
 
-  return { port: Number(portMatch[1]), token: tokenMatch[1] };
+  const rcPortMatch = out.match(/--riotclient-app-port=(\d+)/);
+  const rcTokenMatch = out.match(/--riotclient-auth-token=([\w-]+)/);
+
+  if (rcPortMatch && rcTokenMatch) {
+    return { port: Number(rcPortMatch[1]), token: rcTokenMatch[1] };
+  }
+
+  throw new LcuNotRunningError(
+    'LeagueClientUx.exe is running but did not expose recognizable LCU port/token ' +
+      '(expected --app-port + --remoting-auth-token, or --riotclient-app-port + --riotclient-auth-token).'
+  );
 }
 
 /**
