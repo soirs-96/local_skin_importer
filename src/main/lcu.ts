@@ -87,20 +87,27 @@ export function readLockfile(lockfilePath: string = findLockfilePath()): LcuAuth
  * regardless of whether it also writes a lockfile.
  *
  * Uses Get-CimInstance via PowerShell because wmic was removed in Windows 11 24H2.
+ * The script is piped via stdin (`-Command -`) to avoid cmd.exe quote-escaping pitfalls.
  */
 export function readLcuAuthFromProcess(): LcuAuth {
   const psScript =
+    '[Console]::OutputEncoding = [System.Text.Encoding]::UTF8; ' +
     "Get-CimInstance Win32_Process -Filter \"Name='LeagueClientUx.exe'\" | " +
     'Select-Object -ExpandProperty CommandLine';
 
   let out: string;
   try {
-    out = execSync(
-      `powershell.exe -NoProfile -NonInteractive -Command "${psScript}"`,
-      { encoding: 'utf8', timeout: 5000, windowsHide: true }
+    out = execSync(`powershell.exe -NoProfile -NonInteractive -Command -`, {
+      encoding: 'utf8',
+      timeout: 10000,
+      windowsHide: true,
+      input: psScript
+    });
+  } catch (e: unknown) {
+    const detail = e instanceof Error ? e.message : 'unknown';
+    throw new LcuNotRunningError(
+      `LeagueClientUx.exe not found (PowerShell query failed: ${detail}).`
     );
-  } catch {
-    throw new LcuNotRunningError('LeagueClientUx.exe not found (PowerShell query failed).');
   }
 
   const portMatch = out.match(/--riotclient-app-port=(\d+)/);
