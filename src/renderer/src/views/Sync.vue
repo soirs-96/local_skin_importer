@@ -80,7 +80,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onMounted, ref } from 'vue';
+import { computed, onMounted, ref, shallowRef } from 'vue';
 import { ElNotification } from 'element-plus';
 import { storeToRefs } from 'pinia';
 import StatusDot from '../components/StatusDot.vue';
@@ -106,7 +106,10 @@ const syncing = ref<boolean>(false);
 
 const skinCount = ref<number>(0);
 const lastFetchError = ref<Error | null>(null);
-const lastFetchedSkins = ref<FetchSkinsResult | null>(null);
+// shallowRef: we hand this object straight to IPC. Vue's deep `reactive()` proxy
+// is not always structured-cloneable and produces "An object could not be cloned"
+// when the array is forwarded to the main process.
+const lastFetchedSkins = shallowRef<FetchSkinsResult | null>(null);
 
 const lastSyncResult = ref<SyncResult | null>(null);
 const logs = ref<LogLine[]>([]);
