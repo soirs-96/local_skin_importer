@@ -51,9 +51,32 @@ export async function syncOwnedSkins(
       }
       return data.data;
     } catch (e) {
-      if (axios.isAxiosError(e)) throw e; // 4xx/5xx — pass through, do not retry.
-      if (!isNodeNetworkError(e)) throw e; // non-network, non-axios — also throw.
-      const code = e.code;
+      // 4xx/5xx — pass through, do not retry. Hoist the backend's Result.message
+      // out so the renderer doesn't just see "status code 403".
+      // Note: we check `isAxiosError === true` directly because in tests we mock
+      // `axios` and the `axios.isAxiosError` helper becomes a no-op mock function.
+      const looksLikeAxiosError =
+        typeof e === 'object' && e !== null && (e as { isAxiosError?: unknown }).isAxiosError === true;
+      if (looksLikeAxiosError) {
+        const axiosErr = e as {
+          name: string;
+          message: string;
+          code?: string;
+          response?: { status?: number; data?: { message?: unknown } };
+        };
+        const backendMsg = axiosErr.response?.data?.message;
+        const msg =
+          typeof backendMsg === 'string'
+            ? `${backendMsg} (HTTP ${axiosErr.response?.status})`
+            : axiosErr.message;
+        const err = new Error(msg) as Error & { status?: number; code?: string };
+        err.name = axiosErr.name;
+        err.status = axiosErr.response?.status;
+        err.code = axiosErr.code;
+        throw err;
+      }
+      if (!isNodeNetworkError(e)) throw e;
+      const code = (e as { code?: string }).code!;
       if (!RETRYABLE_NETWORK_CODES.has(code)) throw e;
       if (attempt < MAX_ATTEMPTS - 1) {
         await sleep(RETRY_BACKOFF_MS[attempt]);

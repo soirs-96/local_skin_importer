@@ -61,11 +61,21 @@ describe('backend.syncOwnedSkins', () => {
     expect(axios.post).toHaveBeenCalledTimes(3);
   });
 
-  it('does NOT retry on 4xx — passes through the error', async () => {
+  it('does NOT retry on 4xx — passes through and hoists the backend message', async () => {
     vi.mocked(getStoredToken).mockReturnValue('jwt');
-    vi.mocked(axios.post).mockRejectedValue({ response: { status: 403, data: { message: 'PUID mismatch' } } });
+    const axiosErr = Object.assign(new Error('Request failed with status code 403'), {
+      isAxiosError: true,
+      name: 'AxiosError',
+      response: { status: 403, data: { code: 403, message: '账号已绑定其他 LOL 账号' } },
+      code: 'ERR_BAD_REQUEST'
+    });
+    vi.mocked(axios.post).mockRejectedValue(axiosErr);
 
-    await expect(syncOwnedSkins('p', 's', [1])).rejects.toMatchObject({ response: { status: 403 } });
+    await expect(syncOwnedSkins('p', 's', [1])).rejects.toMatchObject({
+      message: '账号已绑定其他 LOL 账号 (HTTP 403)',
+      status: 403,
+      name: 'AxiosError'
+    });
     expect(axios.post).toHaveBeenCalledTimes(1);
   });
 
