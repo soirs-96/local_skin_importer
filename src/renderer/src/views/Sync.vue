@@ -34,6 +34,18 @@
       </div>
     </el-card>
 
+    <el-card class="overview-card" shadow="never">
+      <div class="overview-row">
+        <div class="overview-info">
+          <span class="overview-label">皮肤总览</span>
+          <span class="overview-meta">查看全量皮肤目录，已拥有的高亮显示，未拥有的置灰</span>
+        </div>
+        <div class="overview-actions">
+          <el-button type="primary" plain @click="openOverview">打开皮肤总览</el-button>
+        </div>
+      </div>
+    </el-card>
+
     <el-card v-if="loggedIn" class="sync-card" shadow="never">
       <div class="sync-row">
         <div class="sync-info">
@@ -76,6 +88,8 @@
         </div>
       </div>
     </el-card>
+
+    <SkinOverviewDialog ref="overviewRef" />
   </div>
 </template>
 
@@ -84,6 +98,7 @@ import { computed, onMounted, ref, shallowRef } from 'vue';
 import { ElNotification } from 'element-plus';
 import { storeToRefs } from 'pinia';
 import StatusDot from '../components/StatusDot.vue';
+import SkinOverviewDialog from '../components/SkinOverviewDialog.vue';
 import { useAuthStore } from '../stores/auth';
 import type { FetchSkinsResult, LcuStatus, SyncResult } from '../../../preload/index';
 
@@ -113,6 +128,13 @@ const lastFetchedSkins = shallowRef<FetchSkinsResult | null>(null);
 
 const lastSyncResult = ref<SyncResult | null>(null);
 const logs = ref<LogLine[]>([]);
+
+// 皮肤总览弹窗自己管 visible,通过 ref 调 open()
+const overviewRef = ref<InstanceType<typeof SkinOverviewDialog> | null>(null);
+
+function openOverview(): void {
+  overviewRef.value?.open();
+}
 
 const lcuState = computed<LcuState>(() => {
   if (lastFetchError.value) return 'error';
@@ -249,7 +271,8 @@ onMounted(async () => {
 }
 .status-row,
 .skins-row,
-.sync-row {
+.sync-row,
+.overview-row {
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -286,13 +309,15 @@ onMounted(async () => {
   font-size: 12px;
 }
 .skins-info,
-.sync-info {
+.sync-info,
+.overview-info {
   display: flex;
   flex-direction: column;
   gap: 2px;
 }
 .skins-label,
-.sync-label {
+.sync-label,
+.overview-label {
   font-size: 12px;
   color: var(--el-text-color-secondary);
 }
@@ -303,6 +328,9 @@ onMounted(async () => {
 .sync-meta {
   font-size: 11px;
   color: var(--el-text-color-secondary);
+}
+.overview-meta {
+  font-size: 14px;
 }
 .sync-result {
   margin-top: 12px;

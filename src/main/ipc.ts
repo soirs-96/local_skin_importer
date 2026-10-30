@@ -3,6 +3,7 @@ import { ipcMain } from 'electron';
 import * as lcu from './lcu';
 import * as auth from './auth';
 import { syncOwnedSkins } from './backend';
+import { fetchCatalog, fetchMyOwned } from './catalog';
 
 interface RedeemPayload {
   code: string;
@@ -118,6 +119,22 @@ export function registerIpcHandlers(): void {
     try {
       assertSyncPayload(payload);
       return await syncOwnedSkins(payload.puuid, payload.summonerName, payload.ownedSkinIds);
+    } catch (e) {
+      throw normalizeSyncError(e);
+    }
+  });
+
+  ipcMain.handle('catalog:fetch-all', async () => {
+    try {
+      return await fetchCatalog();
+    } catch (e) {
+      throw normalizeSyncError(e);
+    }
+  });
+
+  ipcMain.handle('catalog:fetch-owned', async () => {
+    try {
+      return await fetchMyOwned();
     } catch (e) {
       throw normalizeSyncError(e);
     }

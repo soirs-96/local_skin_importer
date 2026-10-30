@@ -3,9 +3,11 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width,initial-scale=1.0" />
+    <!-- 皮肤图标是后端返回的远程 URL(腾讯 CDN / 自建站 / 图片服务器,主机不固定),
+         所以 img-src 必须放开 http(s);script-src 仍然锁死 'self'。 -->
     <meta
       http-equiv="Content-Security-Policy"
-      content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:;"
+      content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: http: https:;"
     />
     <title>LOL Skin Importer</title>
   </head>

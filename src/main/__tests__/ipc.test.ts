@@ -26,7 +26,9 @@ const mocks = vi.hoisted(() => {
     saveToken: vi.fn(),
     getAuthStatus: vi.fn(),
     clearStoredToken: vi.fn(),
-    syncOwnedSkins: vi.fn()
+    syncOwnedSkins: vi.fn(),
+    fetchCatalog: vi.fn(),
+    fetchMyOwned: vi.fn()
   };
 });
 
@@ -53,6 +55,11 @@ vi.mock('../auth', () => ({
 
 vi.mock('../backend', () => ({ syncOwnedSkins: mocks.syncOwnedSkins }));
 
+vi.mock('../catalog', () => ({
+  fetchCatalog: mocks.fetchCatalog,
+  fetchMyOwned: mocks.fetchMyOwned
+}));
+
 // Importing the preload module is itself the behavior under test: it exposes the bridge.
 await import('../../preload/index');
 
@@ -65,6 +72,8 @@ type ExposedApi = {
   logout: () => unknown;
   getAuthStatus: () => unknown;
   sync: (payload: { puuid: string; summonerName: string; ownedSkinIds: number[] }) => unknown;
+  fetchCatalog: () => unknown;
+  fetchMyOwned: () => unknown;
 };
 
 function handlerFor(channel: string): Handler {
@@ -90,6 +99,8 @@ describe('IPC wiring', () => {
     mocks.getAuthStatus.mockReset();
     mocks.clearStoredToken.mockReset();
     mocks.syncOwnedSkins.mockReset();
+    mocks.fetchCatalog.mockReset();
+    mocks.fetchMyOwned.mockReset();
     registerIpcHandlers();
   });
 
@@ -104,6 +115,8 @@ describe('IPC wiring', () => {
     api.logout();
     api.getAuthStatus();
     api.sync({ puuid: 'p', summonerName: 'Alice', ownedSkinIds: [1, 2] });
+    api.fetchCatalog();
+    api.fetchMyOwned();
 
     expect(mocks.ipcRendererInvoke.mock.calls).toEqual([
       ['lcu:check-status'],
@@ -111,18 +124,22 @@ describe('IPC wiring', () => {
       ['auth:login', { code: '482931' }],
       ['auth:logout'],
       ['auth:get-status'],
-      ['backend:sync', { puuid: 'p', summonerName: 'Alice', ownedSkinIds: [1, 2] }]
+      ['backend:sync', { puuid: 'p', summonerName: 'Alice', ownedSkinIds: [1, 2] }],
+      ['catalog:fetch-all'],
+      ['catalog:fetch-owned']
     ]);
   });
 
-  it('registers all 6 ipc channels on call to registerIpcHandlers', () => {
+  it('registers all 8 ipc channels on call to registerIpcHandlers', () => {
     expect(mocks.ipcMainHandle.mock.calls.map(([channel]) => channel)).toEqual([
       'lcu:check-status',
       'lcu:fetch-skins',
       'auth:login',
       'auth:logout',
       'auth:get-status',
-      'backend:sync'
+      'backend:sync',
+      'catalog:fetch-all',
+      'catalog:fetch-owned'
     ]);
   });
 
@@ -281,5 +298,29 @@ describe('IPC wiring', () => {
       { message: 'invalid code (must be 6 digits)' }
     );
     expect(mocks.redeemSyncCode).not.toHaveBeenCalled();
+  });
+
+  it('catalog:fetch-all delegates to fetchCatalog', async () => {
+    const result = { total: 1, records: [], skinIdFieldPresent: true };
+    mocks.fetchCatalog.mockResolvedValue(result);
+
+    await expect(invoke('catalog:fetch-all')).resolves.toBe(result);
+    expect(mocks.fetchCatalog).toHaveBeenCalledOnce();
+  });
+
+  it('catalog:fetch-owned delegates to fetchMyOwned', async () => {
+    const result = { totalOwnedCount: 87, ownedSkinIds: [1, 2] };
+    mocks.fetchMyOwned.mockResolvedValue(result);
+
+    await expect(invoke('catalog:fetch-owned')).resolves.toBe(result);
+    expect(mocks.fetchMyOwned).toHaveBeenCalledOnce();
+  });
+
+  it('catalog:fetch-all surfaces failures as a real Error', async () => {
+    mocks.fetchCatalog.mockRejectedValue(new Error('服务端响应超时'));
+
+    const err = await invoke('catalog:fetch-all').catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(Error);
+    expect((err as Error).message).toBe('服务端响应超时');
   });
 });
