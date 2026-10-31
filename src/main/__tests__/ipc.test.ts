@@ -25,6 +25,7 @@ const mocks = vi.hoisted(() => {
     ipcRendererInvoke: vi.fn(),
     exposeInMainWorld: vi.fn(),
     getFocusedWindow: vi.fn(),
+    getAllWindows: vi.fn(() => []),
     clipboardWriteText: vi.fn(),
     resolveLcuAuth: vi.fn(),
     createLcuClient: vi.fn(),
@@ -43,7 +44,16 @@ const mocks = vi.hoisted(() => {
     fetchCatalog: vi.fn(),
     fetchMyOwned: vi.fn(),
     readSyncState: vi.fn(),
-    writeSyncState: vi.fn()
+    writeSyncState: vi.fn(),
+    matchPollerStart: vi.fn(),
+    matchPollerGetSnapshot: vi.fn(),
+    matchPollerRefreshNow: vi.fn(),
+    matchPollerSubscribe: vi.fn(),
+    getRecommendationState: vi.fn(),
+    requestRecommendation: vi.fn(),
+    getLlmStatus: vi.fn(),
+    saveLlmApiKey: vi.fn(),
+    clearLlmApiKey: vi.fn()
   };
 });
 
@@ -51,7 +61,10 @@ vi.mock('electron', () => ({
   ipcMain: { handle: mocks.ipcMainHandle },
   ipcRenderer: { invoke: mocks.ipcRendererInvoke },
   contextBridge: { exposeInMainWorld: mocks.exposeInMainWorld },
-  BrowserWindow: { getFocusedWindow: mocks.getFocusedWindow },
+  BrowserWindow: {
+    getFocusedWindow: mocks.getFocusedWindow,
+    getAllWindows: mocks.getAllWindows
+  },
   clipboard: { writeText: mocks.clipboardWriteText }
 }));
 
@@ -92,6 +105,28 @@ vi.mock('../catalog', () => ({
 vi.mock('../syncState', () => ({
   readSyncState: mocks.readSyncState,
   writeSyncState: mocks.writeSyncState
+}));
+
+// 轮询器会去真的连 LCU / 拉 DDragon,单测里必须换掉。
+vi.mock('../match/poller', () => ({
+  matchPoller: {
+    start: mocks.matchPollerStart,
+    stop: vi.fn(),
+    getSnapshot: mocks.matchPollerGetSnapshot,
+    refreshNow: mocks.matchPollerRefreshNow,
+    subscribe: mocks.matchPollerSubscribe
+  }
+}));
+
+vi.mock('../match/recommendationService', () => ({
+  getRecommendationState: mocks.getRecommendationState,
+  requestRecommendation: mocks.requestRecommendation
+}));
+
+vi.mock('../llm', () => ({
+  getLlmStatus: mocks.getLlmStatus,
+  saveLlmApiKey: mocks.saveLlmApiKey,
+  clearLlmApiKey: mocks.clearLlmApiKey
 }));
 
 // Importing the preload module is itself the behavior under test: it exposes the bridge.
@@ -142,9 +177,19 @@ describe('IPC wiring', () => {
     mocks.fetchMyOwned.mockReset();
     mocks.readSyncState.mockReset();
     mocks.writeSyncState.mockReset();
+    mocks.matchPollerStart.mockReset();
+    mocks.matchPollerGetSnapshot.mockReset();
+    mocks.matchPollerRefreshNow.mockReset();
+    mocks.matchPollerSubscribe.mockReset();
+    mocks.getRecommendationState.mockReset();
+    mocks.requestRecommendation.mockReset();
+    mocks.getLlmStatus.mockReset();
+    mocks.saveLlmApiKey.mockReset();
+    mocks.clearLlmApiKey.mockReset();
     mocks.getFocusedWindow.mockReset();
     mocks.clipboardWriteText.mockReset();
     mocks.readSyncState.mockReturnValue({ lastSyncAt: null });
+    mocks.matchPollerSubscribe.mockReturnValue(() => undefined);
     registerIpcHandlers();
   });
 
@@ -178,7 +223,7 @@ describe('IPC wiring', () => {
     ]);
   });
 
-  it('registers all 10 ipc channels on call to registerIpcHandlers', () => {
+  it('registers all 17 ipc channels on call to registerIpcHandlers', () => {
     expect(mocks.ipcMainHandle.mock.calls.map(([channel]) => channel)).toEqual([
       'lcu:check-status',
       'lcu:fetch-skins',
@@ -189,7 +234,14 @@ describe('IPC wiring', () => {
       'catalog:fetch-all',
       'catalog:fetch-owned',
       'dev:open-devtools',
-      'dev:copy-text'
+      'dev:copy-text',
+      'match:get-state',
+      'match:refresh',
+      'match:get-recommendation',
+      'match:recommend',
+      'llm:get-status',
+      'llm:set-key',
+      'llm:clear-key'
     ]);
   });
 
@@ -472,5 +524,66 @@ describe('IPC wiring', () => {
       message: 'invalid text'
     });
     expect(mocks.clipboardWriteText).not.toHaveBeenCalled();
+  });
+
+  it('match:get-state wakes the poller up and returns the current snapshot', async () => {
+    const snapshot = { state: 'idle', summoner: null, live: null, champSelect: null, ranked: [], recent: null, lastError: null, updatedAt: 0 };
+    mocks.matchPollerGetSnapshot.mockReturnValue(snapshot);
+
+    expect(await invoke('match:get-state')).toEqual(snapshot);
+    expect(mocks.matchPollerStart).toHaveBeenCalledOnce();
+  });
+
+  it('match:refresh re-collects and returns the fresh snapshot', async () => {
+    const snapshot = { state: 'lobby', summoner: null, live: null, champSelect: null, ranked: [], recent: null, lastError: null, updatedAt: 1 };
+    mocks.matchPollerRefreshNow.mockResolvedValue(snapshot);
+
+    expect(await invoke('match:refresh')).toEqual(snapshot);
+    expect(mocks.matchPollerStart).toHaveBeenCalledOnce();
+  });
+
+  it('match:get-recommendation returns the recommendation kept in the main process', async () => {
+    const state = { markdown: '## 主推英雄', usedFallback: false, error: null, inflight: false, generatedAt: 5 };
+    mocks.getRecommendationState.mockReturnValue(state);
+
+    expect(await invoke('match:get-recommendation')).toEqual(state);
+  });
+
+  it('match:recommend refuses to run outside champ select', async () => {
+    mocks.matchPollerGetSnapshot.mockReturnValue({ champSelect: null });
+
+    await expect(invoke('match:recommend')).rejects.toThrow(/英雄选择/);
+    expect(mocks.requestRecommendation).not.toHaveBeenCalled();
+  });
+
+  it('match:recommend asks the service for the current session', async () => {
+    const session = { myTeam: [], theirTeam: [], myRole: 'MIDDLE', myChampionId: 1, myCellId: 3, bannedChampions: [] };
+    const state = { markdown: 'x', usedFallback: false, error: null, inflight: false, generatedAt: 1 };
+    mocks.matchPollerGetSnapshot.mockReturnValue({ champSelect: session });
+    mocks.requestRecommendation.mockResolvedValue(state);
+
+    expect(await invoke('match:recommend')).toEqual(state);
+    expect(mocks.requestRecommendation).toHaveBeenCalledWith(session, 'MIDDLE');
+  });
+
+  it('llm:set-key saves the key and returns the refreshed status', async () => {
+    const status = { configured: true, baseUrl: 'https://api.deepseek.com', model: 'deepseek-chat', persisted: true };
+    mocks.getLlmStatus.mockReturnValue(status);
+
+    expect(await invoke('llm:set-key', {}, { apiKey: 'sk-test' })).toEqual(status);
+    expect(mocks.saveLlmApiKey).toHaveBeenCalledWith('sk-test');
+  });
+
+  it('llm:set-key rejects a payload without a string apiKey', async () => {
+    await expect(invoke('llm:set-key', {}, { apiKey: 42 })).rejects.toThrow('invalid apiKey');
+    expect(mocks.saveLlmApiKey).not.toHaveBeenCalled();
+  });
+
+  it('llm:clear-key wipes the stored key', async () => {
+    const status = { configured: false, baseUrl: 'https://api.deepseek.com', model: 'deepseek-chat', persisted: true };
+    mocks.getLlmStatus.mockReturnValue(status);
+
+    expect(await invoke('llm:clear-key')).toEqual(status);
+    expect(mocks.clearLlmApiKey).toHaveBeenCalledOnce();
   });
 });

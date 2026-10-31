@@ -1,4 +1,25 @@
 import { contextBridge, ipcRenderer } from 'electron';
+import { MATCH_STATE_CHANNEL } from '../shared/match';
+import type {
+  LlmStatus,
+  MatchSnapshot,
+  RecommendationState
+} from '../shared/match';
+
+export type {
+  ChampSelectMember,
+  ChampSelectSession,
+  ChampionRef,
+  LlmStatus,
+  LiveGameInfo,
+  MatchSnapshot,
+  MatchState,
+  MatchSummoner,
+  RankedEntry,
+  RecentMatch,
+  RecentMatchesSummary,
+  RecommendationState
+} from '../shared/match';
 
 export interface LcuStatus {
   running: boolean;
@@ -105,7 +126,30 @@ const api = {
   /** 打开 Chromium 开发者工具(开发者面板用) */
   openDevTools: (): Promise<{ ok: true }> => invoke('dev:open-devtools'),
   /** 把一段文本写进系统剪贴板(开发者面板的「复制诊断信息」用) */
-  copyText: (text: string): Promise<{ ok: true }> => invoke('dev:copy-text', text)
+  copyText: (text: string): Promise<{ ok: true }> => invoke('dev:copy-text', text),
+
+  // ---- 对局助手 ------------------------------------------------------------
+  /** 取一次当前快照(同时会把主进程轮询器唤醒) */
+  getMatchState: (): Promise<MatchSnapshot> => invoke('match:get-state'),
+  /** 立刻重采一次 */
+  refreshMatchState: (): Promise<MatchSnapshot> => invoke('match:refresh'),
+  /** 主进程里存着的上一份推荐(切页回来还能看到) */
+  getRecommendation: (): Promise<RecommendationState> => invoke('match:get-recommendation'),
+  /** 拿当前选人会话去生成推荐 */
+  requestRecommendation: (): Promise<RecommendationState> => invoke('match:recommend'),
+  getLlmStatus: (): Promise<LlmStatus> => invoke('llm:get-status'),
+  setLlmApiKey: (apiKey: string): Promise<LlmStatus> => invoke('llm:set-key', { apiKey }),
+  clearLlmApiKey: (): Promise<LlmStatus> => invoke('llm:clear-key'),
+  /** 订阅主进程推来的对局快照,返回取消订阅的函数 */
+  onMatchState: (cb: (snapshot: MatchSnapshot) => void): (() => void) => {
+    const listener = (_e: Electron.IpcRendererEvent, snapshot: MatchSnapshot): void => {
+      cb(snapshot);
+    };
+    ipcRenderer.on(MATCH_STATE_CHANNEL, listener);
+    return () => {
+      ipcRenderer.removeListener(MATCH_STATE_CHANNEL, listener);
+    };
+  }
 };
 
 contextBridge.exposeInMainWorld('api', api);

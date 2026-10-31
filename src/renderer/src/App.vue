@@ -6,6 +6,11 @@
         <span class="brand-text">LOL 皮肤助手</span>
       </span>
       <span class="spacer" />
+      <nav v-if="route.path !== '/login'" class="tabs">
+        <router-link to="/sync" class="tab">皮肤同步</router-link>
+        <router-link to="/match" class="tab">对局助手</router-link>
+      </nav>
+      <span class="spacer" />
       <span v-if="loggedIn" class="auth-info">已登录</span>
       <el-button
         v-if="loggedIn"
@@ -29,12 +34,13 @@
 
 <script setup lang="ts">
 import { onMounted } from 'vue';
-import { useRouter } from 'vue-router';
+import { useRoute, useRouter } from 'vue-router';
 import { storeToRefs } from 'pinia';
 import DevPanel from './components/DevPanel.vue';
 import { useAuthStore } from './stores/auth';
 
 const router = useRouter();
+const route = useRoute();
 const auth = useAuthStore();
 const { loggedIn } = storeToRefs(auth);
 
@@ -86,6 +92,27 @@ onMounted(async () => {
 }
 .spacer {
   flex: 1;
+}
+.tabs {
+  display: flex;
+  gap: 4px;
+}
+.tab {
+  padding: 5px 14px;
+  font-size: 11px;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: var(--hx-text-faint);
+  text-decoration: none;
+  border: 1px solid transparent;
+}
+.tab:hover {
+  color: var(--hx-gold);
+}
+.tab.router-link-active {
+  color: var(--hx-blue);
+  border-color: var(--hx-line-strong);
+  background: rgba(53, 184, 232, 0.08);
 }
 .auth-info {
   color: var(--hx-text-faint);

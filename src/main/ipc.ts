@@ -6,9 +6,20 @@ import { syncOwnedSkins, shouldSkipSync, minIntervalFor } from './backend';
 import { fetchCatalog, fetchMyOwned } from './catalog';
 import { resolveOwnedSkinIds } from './owned';
 import { readSyncState, writeSyncState } from './syncState';
+import { matchPoller } from './match/poller';
+import {
+  getRecommendationState,
+  requestRecommendation
+} from './match/recommendationService';
+import { clearLlmApiKey, getLlmStatus, saveLlmApiKey } from './llm';
+import { MATCH_STATE_CHANNEL } from '../shared/match';
 
 interface RedeemPayload {
   code: string;
+}
+
+interface LlmKeyPayload {
+  apiKey: string;
 }
 
 interface SyncPayload {
@@ -214,5 +225,49 @@ export function registerIpcHandlers(): void {
     if (typeof text !== 'string') throw new Error('invalid text');
     clipboard.writeText(text);
     return { ok: true as const };
+  });
+
+  // ---- 对局助手 ------------------------------------------------------------
+
+  // 轮询器是懒启动的:第一次有人要状态才开跑,用户不打开对局页就一点开销都没有。
+  matchPoller.subscribe((snapshot) => {
+    for (const win of BrowserWindow.getAllWindows()) {
+      if (win.isDestroyed()) continue;
+      win.webContents.send(MATCH_STATE_CHANNEL, snapshot);
+    }
+  });
+
+  ipcMain.handle('match:get-state', () => {
+    matchPoller.start();
+    return matchPoller.getSnapshot();
+  });
+
+  ipcMain.handle('match:refresh', async () => {
+    matchPoller.start();
+    return matchPoller.refreshNow();
+  });
+
+  ipcMain.handle('match:get-recommendation', () => getRecommendationState());
+
+  ipcMain.handle('match:recommend', async () => {
+    const snapshot = matchPoller.getSnapshot();
+    if (!snapshot.champSelect) {
+      throw new Error('当前不在英雄选择阶段,无法生成推荐');
+    }
+    return requestRecommendation(snapshot.champSelect, snapshot.champSelect.myRole);
+  });
+
+  ipcMain.handle('llm:get-status', () => getLlmStatus());
+
+  ipcMain.handle('llm:set-key', async (_event, payload: LlmKeyPayload) => {
+    if (typeof payload !== 'object' || payload === null) throw new Error('invalid payload');
+    if (typeof payload.apiKey !== 'string') throw new Error('invalid apiKey');
+    saveLlmApiKey(payload.apiKey);
+    return getLlmStatus();
+  });
+
+  ipcMain.handle('llm:clear-key', async () => {
+    clearLlmApiKey();
+    return getLlmStatus();
   });
 }

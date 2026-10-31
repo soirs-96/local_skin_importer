@@ -4,7 +4,7 @@ import * as fs from 'node:fs';
 import * as net from 'node:net';
 import * as os from 'node:os';
 import * as path from 'node:path';
-import { execSync } from 'node:child_process';
+import { execSync, spawn } from 'node:child_process';
 
 /** Credentials scraped from the League client lockfile. Never leaves the main process. */
 export interface LcuAuth {
@@ -113,19 +113,19 @@ export function readLockfile(lockfilePath: string = findLockfilePath()): LcuAuth
  * Uses Get-CimInstance via PowerShell because wmic was removed in Windows 11 24H2.
  * The script is piped via stdin (`-Command -`) to avoid cmd.exe quote-escaping pitfalls.
  */
-export function readLcuAuthFromProcess(): LcuAuth {
-  const psScript =
-    '[Console]::OutputEncoding = [System.Text.Encoding]::UTF8; ' +
-    "Get-CimInstance Win32_Process -Filter \"Name='LeagueClientUx.exe'\" | " +
-    'Select-Object -ExpandProperty CommandLine';
+const PS_QUERY_SCRIPT =
+  '[Console]::OutputEncoding = [System.Text.Encoding]::UTF8; ' +
+  "Get-CimInstance Win32_Process -Filter \"Name='LeagueClientUx.exe'\" | " +
+  'Select-Object -ExpandProperty CommandLine';
 
+export function readLcuAuthFromProcess(): LcuAuth {
   let out: string;
   try {
     const raw: unknown = execSync(`powershell.exe -NoProfile -NonInteractive -Command -`, {
       encoding: 'utf8',
       timeout: 10000,
       windowsHide: true,
-      input: psScript
+      input: PS_QUERY_SCRIPT
     });
     out = typeof raw === 'string' ? raw : '';
   } catch (e: unknown) {
@@ -134,7 +134,11 @@ export function readLcuAuthFromProcess(): LcuAuth {
       `LeagueClientUx.exe not found (PowerShell query failed: ${detail}).`
     );
   }
+  return parseLcuAuthFromCommandLine(out);
+}
 
+/** 从 LeagueClientUx.exe 的命令行里抠出端口和 token。 */
+export function parseLcuAuthFromCommandLine(out: string): LcuAuth {
   const remotingTokenMatch = out.match(/--remoting-auth-token=([\w-]+)/);
   const appPortMatch = out.match(/--app-port=(\d+)/);
 
@@ -153,6 +157,84 @@ export function readLcuAuthFromProcess(): LcuAuth {
     'LeagueClientUx.exe is running but did not expose recognizable LCU port/token ' +
       '(expected --app-port + --remoting-auth-token, or --riotclient-app-port + --riotclient-auth-token).'
   );
+}
+
+/**
+ * 异步版的 {@link readLcuAuthFromProcess}。
+ *
+ * `execSync` 会把主进程的事件循环卡住最多 10 秒 —— 定时轮询里用不起,
+ * 界面会跟着一起卡。用 spawn 把脚本喂给 PowerShell 的 stdin,全程不阻塞。
+ */
+export function readLcuAuthFromProcessAsync(): Promise<LcuAuth> {
+  return new Promise<LcuAuth>((resolve, reject) => {
+    const child = spawn('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', '-'], {
+      windowsHide: true,
+      stdio: ['pipe', 'pipe', 'pipe']
+    });
+
+    let out = '';
+    let stderr = '';
+    let settled = false;
+
+    const finish = (fn: () => void): void => {
+      if (settled) return;
+      settled = true;
+      fn();
+    };
+
+    const timer = setTimeout(() => {
+      child.kill();
+      finish(() =>
+        reject(new LcuNotRunningError('PowerShell query for LeagueClientUx.exe timed out.'))
+      );
+    }, 10_000);
+
+    child.stdout.setEncoding('utf8');
+    child.stderr.setEncoding('utf8');
+    child.stdout.on('data', (chunk: string) => {
+      out += chunk;
+    });
+    child.stderr.on('data', (chunk: string) => {
+      stderr += chunk;
+    });
+
+    child.on('error', (e: Error) => {
+      clearTimeout(timer);
+      finish(() =>
+        reject(
+          new LcuNotRunningError(
+            `LeagueClientUx.exe not found (PowerShell query failed: ${e.message}).`
+          )
+        )
+      );
+    });
+
+    child.on('close', (code: number | null) => {
+      clearTimeout(timer);
+      if (code !== 0 && !out.trim()) {
+        finish(() =>
+          reject(
+            new LcuNotRunningError(
+              `LeagueClientUx.exe not found (PowerShell exited with ${code ?? 'null'}: ${stderr.trim()}).`
+            )
+          )
+        );
+        return;
+      }
+      finish(() => {
+        try {
+          resolve(parseLcuAuthFromCommandLine(out));
+        } catch (e: unknown) {
+          reject(e);
+        }
+      });
+    });
+
+    child.stdin.on('error', () => {
+      // PowerShell 已经退出了,stdin 写不进去 —— close 事件会给出真正的结论
+    });
+    child.stdin.end(PS_QUERY_SCRIPT);
+  });
 }
 
 /** 端口/token 的来源,排查时用得上。 */
@@ -224,7 +306,38 @@ export function collectLcuAuthCandidates(): LcuAuthCandidate[] {
  * 并把试过的端口报出来 —— 端口号变了正是客户端重启过的信号。
  */
 export async function resolveLcuAuth(): Promise<LcuAuth> {
-  const candidates = collectLcuAuthCandidates();
+  return pickAliveCandidate(collectLcuAuthCandidates());
+}
+
+/**
+ * {@link resolveLcuAuth} 的非阻塞版本。
+ *
+ * 轮询器里必须用这个:`execSync` 查进程命令行会把主进程卡住最多 10 秒,
+ * 定时任务里用不起。
+ */
+export async function resolveLcuAuthAsync(): Promise<LcuAuth> {
+  const candidates: LcuAuthCandidate[] = [];
+  let firstError: unknown;
+
+  try {
+    candidates.push({ ...(await readLcuAuthFromProcessAsync()), source: 'process' });
+  } catch (e: unknown) {
+    firstError = e;
+  }
+
+  try {
+    candidates.push({ ...readLockfile(findLockfilePath()), source: 'lockfile' });
+  } catch (e: unknown) {
+    if (firstError === undefined) firstError = e;
+  }
+
+  if (candidates.length === 0) {
+    throw firstError instanceof Error ? firstError : new LcuNotRunningError();
+  }
+  return pickAliveCandidate(candidates);
+}
+
+async function pickAliveCandidate(candidates: LcuAuthCandidate[]): Promise<LcuAuth> {
   const dead: number[] = [];
 
   for (const candidate of candidates) {
