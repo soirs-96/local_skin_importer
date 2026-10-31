@@ -13,19 +13,27 @@ const mocks = vi.hoisted(() => {
     }
   }
 
+  class MockLcuUnreachableError extends Error {
+    constructor(message = 'League client is not reachable') {
+      super(message);
+      this.name = 'LcuUnreachableError';
+    }
+  }
+
   return {
     ipcMainHandle: vi.fn(),
     ipcRendererInvoke: vi.fn(),
     exposeInMainWorld: vi.fn(),
     getFocusedWindow: vi.fn(),
     clipboardWriteText: vi.fn(),
-    readLcuAuth: vi.fn(),
+    resolveLcuAuth: vi.fn(),
     createLcuClient: vi.fn(),
     getCurrentSummoner: vi.fn(),
     getInventoryOwnedSkinIds: vi.fn(),
     getStoreOwnedSkinIds: vi.fn(),
     resolveOwnedSkinIds: vi.fn(),
     LcuNotRunningError: MockLcuNotRunningError,
+    LcuUnreachableError: MockLcuUnreachableError,
     redeemSyncCode: vi.fn(),
     saveToken: vi.fn(),
     getAuthStatus: vi.fn(),
@@ -48,12 +56,13 @@ vi.mock('electron', () => ({
 }));
 
 vi.mock('../lcu', () => ({
-  readLcuAuth: mocks.readLcuAuth,
+  resolveLcuAuth: mocks.resolveLcuAuth,
   createLcuClient: mocks.createLcuClient,
   getCurrentSummoner: mocks.getCurrentSummoner,
   getInventoryOwnedSkinIds: mocks.getInventoryOwnedSkinIds,
   getStoreOwnedSkinIds: mocks.getStoreOwnedSkinIds,
-  LcuNotRunningError: mocks.LcuNotRunningError
+  LcuNotRunningError: mocks.LcuNotRunningError,
+  LcuUnreachableError: mocks.LcuUnreachableError
 }));
 
 vi.mock('../owned', () => ({
@@ -117,7 +126,7 @@ describe('IPC wiring', () => {
   beforeEach(() => {
     mocks.ipcMainHandle.mockReset();
     mocks.ipcRendererInvoke.mockReset();
-    mocks.readLcuAuth.mockReset();
+    mocks.resolveLcuAuth.mockReset();
     mocks.createLcuClient.mockReset();
     mocks.getCurrentSummoner.mockReset();
     mocks.getInventoryOwnedSkinIds.mockReset();
@@ -185,9 +194,7 @@ describe('IPC wiring', () => {
   });
 
   it('lcu:check-status returns running false when LCU is not detected', async () => {
-    mocks.readLcuAuth.mockImplementation(() => {
-      throw new mocks.LcuNotRunningError();
-    });
+    mocks.resolveLcuAuth.mockRejectedValue(new mocks.LcuNotRunningError());
 
     await expect(invoke('lcu:check-status')).resolves.toEqual({ running: false });
   });
@@ -196,7 +203,7 @@ describe('IPC wiring', () => {
     const lcuAuth = { port: 1234, token: 'secret' };
     const summoner = { displayName: 'Alice', puuid: 'puuid-1' };
     const client = {} as AxiosInstance;
-    mocks.readLcuAuth.mockReturnValue(lcuAuth);
+    mocks.resolveLcuAuth.mockResolvedValue(lcuAuth);
     mocks.createLcuClient.mockReturnValue(client);
     mocks.getCurrentSummoner.mockResolvedValue(summoner);
 
@@ -210,7 +217,7 @@ describe('IPC wiring', () => {
   });
 
   it('lcu:check-status reports axios failures without hiding the message', async () => {
-    mocks.readLcuAuth.mockReturnValue({ port: 1234, token: 'secret' });
+    mocks.resolveLcuAuth.mockResolvedValue({ port: 1234, token: 'secret' });
     mocks.createLcuClient.mockReturnValue({} as AxiosInstance);
     mocks.getCurrentSummoner.mockRejectedValue(
       Object.assign(new Error('connect ECONNREFUSED'), { isAxiosError: true })
@@ -222,10 +229,18 @@ describe('IPC wiring', () => {
     });
   });
 
+  it('lcu:check-status explains a stale client port in plain language', async () => {
+    mocks.resolveLcuAuth.mockRejectedValue(new mocks.LcuUnreachableError());
+
+    const outcome = (await invoke('lcu:check-status')) as { running: boolean; error?: string };
+    expect(outcome.running).toBe(false);
+    expect(outcome.error).toMatch(/游戏客户端/);
+  });
+
   it('lcu:fetch-skins returns the summoner and owned skin IDs', async () => {
     const client = {} as AxiosInstance;
     const summoner = { displayName: 'Alice', puuid: 'puuid-1' };
-    mocks.readLcuAuth.mockReturnValue({ port: 1234, token: 'secret' });
+    mocks.resolveLcuAuth.mockResolvedValue({ port: 1234, token: 'secret' });
     mocks.createLcuClient.mockReturnValue(client);
     mocks.getCurrentSummoner.mockResolvedValue(summoner);
     mocks.resolveOwnedSkinIds.mockResolvedValue({
@@ -244,14 +259,40 @@ describe('IPC wiring', () => {
   });
 
   it('lcu:fetch-skins propagates LCU-not-detected error as a real Error', async () => {
-    mocks.readLcuAuth.mockImplementation(() => {
-      throw new mocks.LcuNotRunningError();
-    });
+    mocks.resolveLcuAuth.mockRejectedValue(new mocks.LcuNotRunningError());
 
     const err = await invoke('lcu:fetch-skins').catch((e: unknown) => e);
     expect(err).toBeInstanceOf(Error);
     expect((err as Error).message).toBe('League client is not running');
     expect((err as Error).name).toBe('LcuNotRunningError');
+  });
+
+  it('lcu:fetch-skins turns a refused connection into a readable message', async () => {
+    mocks.resolveLcuAuth.mockResolvedValue({ port: 1234, token: 'secret' });
+    mocks.createLcuClient.mockReturnValue({} as AxiosInstance);
+    mocks.getCurrentSummoner.mockRejectedValue(
+      Object.assign(new Error('connect ECONNREFUSED 127.0.0.1:55102'), {
+        isAxiosError: true,
+        name: 'AxiosError',
+        code: 'ECONNREFUSED'
+      })
+    );
+
+    const err = await invoke('lcu:fetch-skins').catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(Error);
+    expect((err as Error).message).toMatch(/游戏客户端/);
+    expect((err as Error).message).not.toMatch(/55102/);
+    expect((err as Error & { code?: string }).code).toBe('ECONNREFUSED');
+  });
+
+  it('lcu:fetch-skins explains an unreachable client port in plain language', async () => {
+    mocks.resolveLcuAuth.mockRejectedValue(new mocks.LcuUnreachableError());
+
+    const err = await invoke('lcu:fetch-skins').catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(Error);
+    expect((err as Error).message).toMatch(/游戏客户端/);
+    expect((err as Error).name).toBe('LcuUnreachableError');
+    expect((err as Error & { code?: string }).code).toBe('LCU_UNREACHABLE');
   });
 
   it('lcu:fetch-skins throws a real Error (not a plain object) on axios failures', async () => {
@@ -261,7 +302,7 @@ describe('IPC wiring', () => {
       response: { status: 500, data: { message: 'oops' } },
       code: 'ERR_BAD_RESPONSE'
     });
-    mocks.readLcuAuth.mockReturnValue({ port: 1234, token: 'secret' });
+    mocks.resolveLcuAuth.mockResolvedValue({ port: 1234, token: 'secret' });
     mocks.createLcuClient.mockReturnValue({} as AxiosInstance);
     mocks.getCurrentSummoner.mockRejectedValue(axiosError);
 

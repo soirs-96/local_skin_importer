@@ -32,6 +32,25 @@ interface NormalizedSyncError extends Error {
   code?: string;
 }
 
+/**
+ * 面向用户的中文化错误文案 —— **只给游戏客户端相关的错误用**。
+ *
+ * axios 的原始 message 是给开发者看的("connect ECONNREFUSED 127.0.0.1:55102"),
+ * 直接甩到界面上没人知道该干什么 —— 这类错误九成是「游戏客户端没开 / 重启后换了端口」。
+ * 后端/目录接口的网络错误不归这套管,那边连的是服务器,说成"游戏客户端"是误导。
+ */
+const FRIENDLY_LCU_MESSAGES: Record<string, string> = {
+  ECONNREFUSED: '连不上游戏客户端:端口没人监听。请先启动游戏客户端,等它进到主界面再重试。',
+  ENOTFOUND: '找不到游戏客户端地址。',
+  EHOSTUNREACH: '游戏客户端地址不可达。',
+  ENETUNREACH: '网络不可达,连不上游戏客户端。',
+  ETIMEDOUT: '连接游戏客户端超时。',
+  ECONNRESET: '连接被游戏客户端中断。'
+};
+
+const LCU_UNREACHABLE_MESSAGE =
+  '游戏客户端未运行,或端口已失效(客户端重启后会换端口)。请先启动游戏客户端,等它进到主界面再重试。';
+
 function normalizeSyncError(e: unknown): NormalizedSyncError {
   if (axios.isAxiosError(e)) {
     const err = new Error(e.message) as NormalizedSyncError;
@@ -46,6 +65,26 @@ function normalizeSyncError(e: unknown): NormalizedSyncError {
   const err = new Error(String(e)) as NormalizedSyncError;
   err.name = 'UnknownError';
   return err;
+}
+
+/** 游戏客户端专属的错误包装:把网络错误码换成用户看得懂的话。 */
+function normalizeLcuError(e: unknown): NormalizedSyncError {
+  if (e instanceof lcu.LcuUnreachableError) {
+    const err = new Error(LCU_UNREACHABLE_MESSAGE) as NormalizedSyncError;
+    err.name = e.name;
+    err.code = 'LCU_UNREACHABLE';
+    return err;
+  }
+  if (axios.isAxiosError(e)) {
+    const code = (e as { code?: string }).code;
+    const friendly = code ? FRIENDLY_LCU_MESSAGES[code] : undefined;
+    const err = new Error(friendly ?? e.message) as NormalizedSyncError;
+    err.name = e.name;
+    err.status = e.response?.status;
+    err.code = code;
+    return err;
+  }
+  return normalizeSyncError(e);
 }
 
 function assertSyncPayload(p: unknown): asserts p is SyncPayload {
@@ -70,17 +109,10 @@ function assertRedeemPayload(p: unknown): asserts p is RedeemPayload {
   }
 }
 
-function errorMessage(error: unknown): string {
-  if (axios.isAxiosError(error)) {
-    return error.message;
-  }
-  return error instanceof Error ? error.message : 'LCU 请求失败';
-}
-
 export function registerIpcHandlers(): void {
   ipcMain.handle('lcu:check-status', async () => {
     try {
-      const lcuAuth = lcu.readLcuAuth();
+      const lcuAuth = await lcu.resolveLcuAuth();
       const client = lcu.createLcuClient(lcuAuth.port, lcuAuth.token);
       const summoner = await lcu.getCurrentSummoner(client);
       return {
@@ -92,13 +124,13 @@ export function registerIpcHandlers(): void {
       if (error instanceof lcu.LcuNotRunningError) {
         return { running: false };
       }
-      return { running: false, error: errorMessage(error) };
+      return { running: false, error: normalizeLcuError(error).message };
     }
   });
 
   ipcMain.handle('lcu:fetch-skins', async () => {
     try {
-      const lcuAuth = lcu.readLcuAuth();
+      const lcuAuth = await lcu.resolveLcuAuth();
       const client = lcu.createLcuClient(lcuAuth.port, lcuAuth.token);
       const summoner = await lcu.getCurrentSummoner(client);
       const owned = await resolveOwnedSkinIds(client);
@@ -109,7 +141,7 @@ export function registerIpcHandlers(): void {
         catalogFiltered: owned.catalogFiltered
       };
     } catch (e) {
-      throw normalizeSyncError(e);
+      throw normalizeLcuError(e);
     }
   });
 

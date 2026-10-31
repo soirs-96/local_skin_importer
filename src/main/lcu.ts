@@ -1,6 +1,7 @@
 import axios, { AxiosInstance } from 'axios';
 import * as https from 'node:https';
 import * as fs from 'node:fs';
+import * as net from 'node:net';
 import * as os from 'node:os';
 import * as path from 'node:path';
 import { execSync } from 'node:child_process';
@@ -21,6 +22,18 @@ export class LcuNotRunningError extends Error {
   constructor(message = 'League client is not running (lockfile not found).') {
     super(message);
     this.name = 'LcuNotRunningError';
+  }
+}
+
+/**
+ * 端口解析到了,但那个端口没人监听 —— 客户端重启过、换了端口,或者 lockfile /
+ * 命令行里留着上一轮的旧端口。跟 {@link LcuNotRunningError} 分开:
+ * 那个是「压根没找到客户端」,这个是「找到了,但已经失效」。
+ */
+export class LcuUnreachableError extends Error {
+  constructor(message = 'League client is not reachable (port is not accepting connections).') {
+    super(message);
+    this.name = 'LcuUnreachableError';
   }
 }
 
@@ -108,12 +121,13 @@ export function readLcuAuthFromProcess(): LcuAuth {
 
   let out: string;
   try {
-    out = execSync(`powershell.exe -NoProfile -NonInteractive -Command -`, {
+    const raw: unknown = execSync(`powershell.exe -NoProfile -NonInteractive -Command -`, {
       encoding: 'utf8',
       timeout: 10000,
       windowsHide: true,
       input: psScript
     });
+    out = typeof raw === 'string' ? raw : '';
   } catch (e: unknown) {
     const detail = e instanceof Error ? e.message : 'unknown';
     throw new LcuNotRunningError(
@@ -141,18 +155,89 @@ export function readLcuAuthFromProcess(): LcuAuth {
   );
 }
 
+/** 端口/token 的来源,排查时用得上。 */
+export type LcuAuthSource = 'process' | 'lockfile';
+
+export interface LcuAuthCandidate extends LcuAuth {
+  source: LcuAuthSource;
+}
+
 /**
- * Resolves LCU auth. Prefers the process command line (works for both standard
- * Riot installs and WeGame). Falls back to the lockfile if wmic is unavailable
- * or the process is not running for the expected user.
+ * 端口探活:127.0.0.1:port 上有没有人在听。
+ *
+ * 死端口会立刻回 ECONNREFUSED,所以这一步几乎不花时间。
+ * 只判断「有没有人在听」,不判断对端是不是 LCU。
  */
-export function readLcuAuth(): LcuAuth {
+export function isPortAlive(port: number, timeoutMs = 1000): Promise<boolean> {
+  return new Promise((resolve) => {
+    const socket = new net.Socket();
+    let settled = false;
+    const finish = (alive: boolean): void => {
+      if (settled) return;
+      settled = true;
+      socket.destroy();
+      resolve(alive);
+    };
+    socket.setTimeout(timeoutMs);
+    socket.once('connect', () => finish(true));
+    socket.once('timeout', () => finish(false));
+    socket.once('error', () => finish(false));
+    socket.connect(port, '127.0.0.1');
+  });
+}
+
+/**
+ * 把两个来源都收集起来,谁成功算谁的。
+ *
+ * 进程命令行优先(标准 Riot 和 WeGame 都能覆盖),lockfile 兜底。
+ * 两个都留着是有原因的:进程查到了但端口是旧的(客户端重启过)这种场景更常见,
+ * 光靠「进程查询失败才退 lockfile」会直接拿到死端口。
+ */
+export function collectLcuAuthCandidates(): LcuAuthCandidate[] {
+  const candidates: LcuAuthCandidate[] = [];
+  let firstError: unknown;
+
   try {
-    return readLcuAuthFromProcess();
-  } catch {
-    // fall through to lockfile
+    const auth = readLcuAuthFromProcess();
+    candidates.push({ ...auth, source: 'process' });
+  } catch (e: unknown) {
+    firstError = e;
   }
-  return readLockfile(findLockfilePath());
+
+  try {
+    const auth = readLockfile(findLockfilePath());
+    candidates.push({ ...auth, source: 'lockfile' });
+  } catch (e: unknown) {
+    if (firstError === undefined) firstError = e;
+  }
+
+  if (candidates.length === 0) {
+    throw firstError instanceof Error ? firstError : new LcuNotRunningError();
+  }
+  return candidates;
+}
+
+/**
+ * 解析出**连得上**的 LCU 端口。
+ *
+ * 两个来源都探一遍,谁先活着用谁;都死了就抛 {@link LcuUnreachableError},
+ * 并把试过的端口报出来 —— 端口号变了正是客户端重启过的信号。
+ */
+export async function resolveLcuAuth(): Promise<LcuAuth> {
+  const candidates = collectLcuAuthCandidates();
+  const dead: number[] = [];
+
+  for (const candidate of candidates) {
+    if (await isPortAlive(candidate.port)) {
+      return { port: candidate.port, token: candidate.token };
+    }
+    dead.push(candidate.port);
+  }
+
+  throw new LcuUnreachableError(
+    `League client is not reachable (tried port(s) ${dead.join(', ')}). ` +
+      'The client may have restarted with a new port — open the game client and retry.'
+  );
 }
 
 /**

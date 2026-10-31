@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import * as fs from 'node:fs';
+import * as net from 'node:net';
 import * as os from 'node:os';
 import * as path from 'node:path';
 import type { AxiosInstance } from 'axios';
@@ -8,13 +9,16 @@ import {
   parseLockfile,
   findLockfilePath,
   readLockfile,
-  readLcuAuth,
+  collectLcuAuthCandidates,
+  resolveLcuAuth,
+  isPortAlive,
   readLcuAuthFromProcess,
   createLcuClient,
   getCurrentSummoner,
   getInventoryOwnedSkinIds,
   getStoreOwnedSkinIds,
-  LcuNotRunningError
+  LcuNotRunningError,
+  LcuUnreachableError
 } from '../lcu';
 
 vi.mock('node:child_process', () => ({
@@ -26,6 +30,32 @@ const VALID_LOCKFILE = 'LeagueClientUx:12345:9999:secret-token-here:https';
 /** Minimal stand-in for an axios instance; only `get` is exercised. */
 function stubClient(): AxiosInstance {
   return { get: vi.fn() } as unknown as AxiosInstance;
+}
+
+/** 真起一个监听端口 —— 探活要对着真的 socket 才有意义。 */
+function listen(): Promise<{ port: number; close: () => Promise<void> }> {
+  const server = net.createServer();
+  return new Promise((resolve, reject) => {
+    server.once('error', reject);
+    server.listen(0, '127.0.0.1', () => {
+      const { port } = server.address() as net.AddressInfo;
+      resolve({
+        port,
+        close: () => new Promise<void>((done) => server.close(() => done()))
+      });
+    });
+  });
+}
+
+/** 刚释放掉的端口 = 没人监听 = 连过去会被拒。偶尔会被系统回收成别的用途,那就再要一个。 */
+async function deadPort(): Promise<number> {
+  for (let attempt = 0; attempt < 5; attempt += 1) {
+    const server = await listen();
+    const { port } = server;
+    await server.close();
+    if (!(await isPortAlive(port))) return port;
+  }
+  throw new Error('could not find a closed port');
 }
 
 afterEach(() => {
@@ -184,31 +214,123 @@ describe('readLcuAuthFromProcess', () => {
   });
 });
 
-describe('readLcuAuth', () => {
+describe('isPortAlive', () => {
+  it('reports a listening port as alive', async () => {
+    const server = await listen();
+    try {
+      await expect(isPortAlive(server.port)).resolves.toBe(true);
+    } finally {
+      await server.close();
+    }
+  });
+
+  it('reports a port nobody listens on as dead', async () => {
+    await expect(isPortAlive(await deadPort())).resolves.toBe(false);
+  });
+});
+
+describe('collectLcuAuthCandidates', () => {
   beforeEach(() => {
     vi.mocked(execSync).mockReset();
   });
 
-  it('prefers the process command line when available', () => {
+  it('keeps both sources — the process port may be the stale one', () => {
     vi.mocked(execSync).mockReturnValue(
       'LeagueClientUx.exe "--riotclient-auth-token=fromProcess" "--riotclient-app-port=11111"'
     );
 
-    expect(readLcuAuth()).toEqual({ port: 11111, token: 'fromProcess' });
-  });
-
-  it('falls back to the lockfile when the process query fails', () => {
-    vi.mocked(execSync).mockImplementation(() => {
-      throw new Error('wmic not available');
-    });
-
-    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'lcu-fallback-'));
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'lcu-candidates-'));
     const lockfile = path.join(tmpDir, 'lockfile');
     fs.writeFileSync(lockfile, VALID_LOCKFILE, 'utf8');
     process.env.LOL_LOCKFILE_PATH = lockfile;
 
     try {
-      expect(readLcuAuth()).toEqual({ port: 9999, token: 'secret-token-here' });
+      expect(collectLcuAuthCandidates()).toEqual([
+        { port: 11111, token: 'fromProcess', source: 'process' },
+        { port: 9999, token: 'secret-token-here', source: 'lockfile' }
+      ]);
+    } finally {
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+  });
+
+  it('throws LcuNotRunningError when neither source is available', () => {
+    vi.mocked(execSync).mockImplementation(() => {
+      throw new Error('powershell not found');
+    });
+
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'lcu-candidates-'));
+    process.env.LOL_LOCKFILE_PATH = path.join(tmpDir, 'absent');
+
+    try {
+      expect(() => collectLcuAuthCandidates()).toThrow(LcuNotRunningError);
+    } finally {
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+  });
+});
+
+describe('resolveLcuAuth', () => {
+  beforeEach(() => {
+    vi.mocked(execSync).mockReset();
+  });
+
+  it('returns the process candidate when its port accepts connections', async () => {
+    const server = await listen();
+    vi.mocked(execSync).mockReturnValue(
+      `LeagueClientUx.exe "--riotclient-auth-token=fromProcess" "--riotclient-app-port=${server.port}"`
+    );
+    // 隔离开发机上的真实 lockfile,免得它混进候选里
+    process.env.LOL_LOCKFILE_PATH = path.join(os.tmpdir(), 'lcu-absent-lockfile');
+
+    try {
+      await expect(resolveLcuAuth()).resolves.toEqual({
+        port: server.port,
+        token: 'fromProcess'
+      });
+    } finally {
+      await server.close();
+    }
+  });
+
+  it('falls back to the lockfile port when the process port is stale', async () => {
+    const server = await listen();
+    const stale = await deadPort();
+    vi.mocked(execSync).mockReturnValue(
+      `LeagueClientUx.exe "--riotclient-auth-token=fromProcess" "--riotclient-app-port=${stale}"`
+    );
+
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'lcu-resolve-'));
+    const lockfile = path.join(tmpDir, 'lockfile');
+    fs.writeFileSync(lockfile, `LeagueClientUx:12345:${server.port}:lockToken:https`, 'utf8');
+    process.env.LOL_LOCKFILE_PATH = lockfile;
+
+    try {
+      await expect(resolveLcuAuth()).resolves.toEqual({
+        port: server.port,
+        token: 'lockToken'
+      });
+    } finally {
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+      await server.close();
+    }
+  });
+
+  it('throws LcuUnreachableError when every candidate port is dead', async () => {
+    const stale = await deadPort();
+    vi.mocked(execSync).mockReturnValue(
+      `LeagueClientUx.exe "--riotclient-auth-token=fromProcess" "--riotclient-app-port=${stale}"`
+    );
+
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'lcu-resolve-'));
+    const lockfile = path.join(tmpDir, 'lockfile');
+    fs.writeFileSync(lockfile, `LeagueClientUx:12345:${stale}:lockToken:https`, 'utf8');
+    process.env.LOL_LOCKFILE_PATH = lockfile;
+
+    try {
+      const err = await resolveLcuAuth().catch((e: unknown) => e);
+      expect(err).toBeInstanceOf(LcuUnreachableError);
+      expect((err as Error).message).toContain(String(stale));
     } finally {
       fs.rmSync(tmpDir, { recursive: true, force: true });
     }
