@@ -61,9 +61,22 @@ watch(
   position: relative;
   width: 132px;
   height: 132px;
-  border-radius: 6px;
+  box-sizing: border-box;
+  border-radius: 0;
   overflow: hidden;
-  background: #2b2b31;
+  background: #0a1017;
+  border: 1px solid var(--hx-line);
+  transition: border-color 0.15s ease, box-shadow 0.15s ease;
+}
+.skin-card:hover .thumb {
+  border-color: var(--hx-blue);
+  box-shadow: 0 0 12px var(--hx-blue-glow);
+}
+.is-owned .thumb {
+  border-color: var(--hx-line-strong);
+}
+.is-locked .thumb {
+  border-color: rgba(139, 147, 167, 0.14);
 }
 .thumb img {
   width: 100%;
@@ -74,7 +87,7 @@ watch(
 .thumb-placeholder {
   width: 100%;
   height: 100%;
-  background: #2b2b31;
+  background: #0a1017;
 }
 .is-locked .thumb img {
   filter: grayscale(1) brightness(0.55);
@@ -86,29 +99,37 @@ watch(
 }
 .lock-badge {
   position: absolute;
-  right: 4px;
-  bottom: 4px;
-  padding: 1px 5px;
-  border-radius: 3px;
-  font-size: 11px;
-  line-height: 16px;
-  color: #fff;
-  background: rgba(0, 0, 0, 0.6);
+  right: 0;
+  bottom: 0;
+  padding: 0 6px;
+  border-radius: 0;
+  border-top: 1px solid var(--hx-line-strong);
+  border-left: 1px solid var(--hx-line-strong);
+  font-size: 10px;
+  line-height: 18px;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: var(--hx-gold);
+  background: rgba(5, 7, 10, 0.85);
 }
 .meta {
-  padding-top: 4px;
+  padding-top: 6px;
 }
 .name {
   font-size: 12px;
   line-height: 16px;
+  color: var(--hx-text);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
 }
+.is-owned .name {
+  color: var(--hx-gold);
+}
 .sub {
   font-size: 11px;
   line-height: 15px;
-  color: var(--el-text-color-secondary);
+  color: var(--hx-text-faint);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;

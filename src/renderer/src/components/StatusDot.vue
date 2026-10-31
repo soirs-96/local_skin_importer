@@ -38,15 +38,15 @@ const tooltipText = computed<string>(() => {
   flex-shrink: 0;
 }
 .status-dot--disconnected {
-  background: #94a3b8;
-  box-shadow: 0 0 0 1px rgba(148, 163, 184, 0.3);
+  background: #64748b;
+  box-shadow: 0 0 0 1px rgba(100, 116, 139, 0.35);
 }
 .status-dot--running {
-  background: #4ade80;
-  box-shadow: 0 0 6px #4ade80;
+  background: var(--hx-blue);
+  box-shadow: 0 0 8px var(--hx-blue-glow);
 }
 .status-dot--error {
-  background: #f87171;
-  box-shadow: 0 0 6px #f87171;
+  background: var(--hx-danger);
+  box-shadow: 0 0 8px rgba(255, 107, 107, 0.45);
 }
 </style>

@@ -4,20 +4,17 @@
       <div class="status-row">
         <div class="status-left">
           <StatusDot :state="lcuState" :label="lcuTooltip" />
-          <span class="status-label">League Client</span>
+          <span class="hx-diamond" />
+          <span class="status-label hx-label">游戏客户端</span>
         </div>
         <div class="status-actions">
-          <el-button :loading="lcuChecking" @click="onCheckLcu">Check LCU</el-button>
+          <el-button class="hx-gold" :loading="lcuChecking" @click="onCheckLcu">检测客户端</el-button>
         </div>
       </div>
       <div v-if="lcuStatus.running" class="summoner-row">
         <div class="summoner-field">
-          <span class="field-label">Summoner</span>
+          <span class="field-label hx-label">当前账号</span>
           <span class="field-value">{{ lcuStatus.summoner?.displayName ?? '—' }}</span>
-        </div>
-        <div class="summoner-field">
-          <span class="field-label">PUUID</span>
-          <span class="field-value mono">{{ lcuStatus.summoner?.puuid ?? '—' }}</span>
         </div>
       </div>
     </el-card>
@@ -25,11 +22,21 @@
     <el-card class="skins-card" shadow="never">
       <div class="skins-row">
         <div class="skins-info">
-          <span class="skins-label">Owned skins</span>
+          <span class="skins-label hx-label">已拥有皮肤</span>
           <span class="skins-count">{{ skinCount }}</span>
+          <span
+            v-if="ownedSourceLabel"
+            class="skins-source"
+            :class="ownedSource === 'inventory' ? 'is-live' : 'is-degraded'"
+          >{{ ownedSourceLabel }}</span>
         </div>
-        <el-button :loading="fetchingSkins" :disabled="!lcuStatus.running" @click="onFetchSkins">
-          Fetch skins
+        <el-button
+          type="primary"
+          :loading="fetchingSkins"
+          :disabled="!lcuStatus.running"
+          @click="onFetchSkins"
+        >
+          读取我的皮肤
         </el-button>
       </div>
     </el-card>
@@ -37,11 +44,11 @@
     <el-card class="overview-card" shadow="never">
       <div class="overview-row">
         <div class="overview-info">
-          <span class="overview-label">皮肤总览</span>
-          <span class="overview-meta">查看全量皮肤目录，已拥有的高亮显示，未拥有的置灰</span>
+          <span class="overview-label hx-label">皮肤图鉴</span>
+          <span class="overview-meta">浏览全部皮肤,已拥有的会高亮显示</span>
         </div>
         <div class="overview-actions">
-          <el-button type="primary" plain @click="openOverview">打开皮肤总览</el-button>
+          <el-button class="hx-gold" @click="openOverview">浏览图鉴</el-button>
         </div>
       </div>
     </el-card>
@@ -49,45 +56,27 @@
     <el-card v-if="loggedIn" class="sync-card" shadow="never">
       <div class="sync-row">
         <div class="sync-info">
-          <span class="sync-label">Sync to backend</span>
-          <span class="sync-meta">added / updated / total</span>
+          <span class="sync-label hx-label">同步到小程序</span>
+          <span class="sync-meta">把已拥有的皮肤同步到微信小程序的收藏册</span>
         </div>
         <div class="sync-actions">
           <el-button
             type="primary"
             :loading="syncing"
             :disabled="!canSync"
-            @click="onSync"
+            @click="onSync()"
           >
-            Sync now
+            立即同步
           </el-button>
         </div>
       </div>
       <div v-if="lastSyncResult" class="sync-result">
-        Last sync: added={{ lastSyncResult.added }},
-        updated={{ lastSyncResult.updated }},
-        totalOwned={{ lastSyncResult.totalOwned }}
+        上次同步:新增 {{ lastSyncResult.added }} 款 · 更新 {{ lastSyncResult.updated }} 款 ·
+        当前共 {{ lastSyncResult.totalOwned }} 款
       </div>
     </el-card>
 
-    <el-card class="log-card" shadow="never">
-      <template #header>
-        <span class="log-title">Console</span>
-      </template>
-      <div class="log-panel">
-        <div v-if="logs.length === 0" class="log-empty">No events yet.</div>
-        <div
-          v-for="(line, i) in logs"
-          :key="`${line.ts}-${i}`"
-          class="log-line"
-          :class="`log-level-${line.level}`"
-        >
-          <span class="log-ts">{{ line.ts }}</span>
-          <span class="log-level">{{ line.level }}</span>
-          <span class="log-msg">{{ line.msg }}</span>
-        </div>
-      </div>
-    </el-card>
+    <button type="button" class="version-entry" @click="openDevPanel">{{ APP_VERSION }}</button>
 
     <SkinOverviewDialog ref="overviewRef" />
   </div>
@@ -99,20 +88,24 @@ import { ElNotification } from 'element-plus';
 import { storeToRefs } from 'pinia';
 import StatusDot from '../components/StatusDot.vue';
 import SkinOverviewDialog from '../components/SkinOverviewDialog.vue';
+import { APP_VERSION } from '../config/dev';
+import { useDevEntry } from '../composables/useDevEntry';
 import { useAuthStore } from '../stores/auth';
-import type { FetchSkinsResult, LcuStatus, SyncResult } from '../../../preload/index';
+import { useLogStore, type LogLevel } from '../stores/log';
+import type {
+  FetchSkinsResult,
+  LcuStatus,
+  OwnedDataSource,
+  SyncOutcome,
+  SyncResult
+} from '../../../preload/index';
 
 type LcuState = 'disconnected' | 'running' | 'error';
-type LogLevel = 'INFO' | 'WARN' | 'ERROR';
-
-interface LogLine {
-  ts: string;
-  level: LogLevel;
-  msg: string;
-}
 
 const auth = useAuthStore();
 const { loggedIn } = storeToRefs(auth);
+const log = useLogStore();
+const { openDevPanel } = useDevEntry();
 
 const lcuStatus = ref<LcuStatus>({ running: false });
 const lcuChecking = ref<boolean>(false);
@@ -127,7 +120,17 @@ const lastFetchError = ref<Error | null>(null);
 const lastFetchedSkins = shallowRef<FetchSkinsResult | null>(null);
 
 const lastSyncResult = ref<SyncResult | null>(null);
-const logs = ref<LogLine[]>([]);
+/** 已拥有集合的数据来源:库存端点(权威)还是商城目录(降级) */
+const ownedSource = ref<OwnedDataSource | null>(null);
+const catalogFiltered = ref<boolean>(true);
+
+const ownedSourceLabel = computed<string>(() => {
+  if (ownedSource.value === 'inventory') return '实时读取自游戏客户端';
+  if (ownedSource.value === 'store') {
+    return catalogFiltered.value ? '备用来源(降级)' : '备用来源(未与图鉴比对)';
+  }
+  return '';
+});
 
 // 皮肤总览弹窗自己管 visible,通过 ref 调 open()
 const overviewRef = ref<InstanceType<typeof SkinOverviewDialog> | null>(null);
@@ -144,12 +147,12 @@ const lcuState = computed<LcuState>(() => {
 
 const lcuTooltip = computed<string>(() => {
   if (lcuState.value === 'error') {
-    return lastFetchError.value?.message ?? 'LCU error';
+    return lastFetchError.value?.message ?? '游戏客户端连接失败';
   }
   if (lcuState.value === 'running') {
-    return 'League client running';
+    return '游戏客户端已连接';
   }
-  return 'League client not detected';
+  return '未检测到游戏客户端';
 });
 
 const canSync = computed<boolean>(
@@ -157,11 +160,7 @@ const canSync = computed<boolean>(
 );
 
 function pushLog(level: LogLevel, msg: string): void {
-  const ts = new Date().toISOString().replace('T', ' ').slice(0, 19);
-  logs.value.push({ ts, level, msg });
-  if (logs.value.length > 200) {
-    logs.value.splice(0, logs.value.length - 200);
-  }
+  log.push(level, msg);
 }
 
 function notifyError(title: string, message: string): void {
@@ -175,7 +174,7 @@ function notifyError(title: string, message: string): void {
 
 function describeError(e: unknown): string {
   const err = e as { message?: string };
-  return err.message ?? 'Unknown error';
+  return err.message ?? '未知错误';
 }
 
 async function onCheckLcu(): Promise<void> {
@@ -192,7 +191,7 @@ async function onCheckLcu(): Promise<void> {
     const msg = describeError(e);
     lastFetchError.value = new Error(msg);
     pushLog('ERROR', `LCU check failed: ${msg}`);
-    notifyError('LCU check failed', msg);
+    notifyError('检测游戏客户端失败', msg);
   } finally {
     lcuChecking.value = false;
   }
@@ -207,22 +206,33 @@ async function onFetchSkins(): Promise<void> {
       summoner: result.summoner
     };
     skinCount.value = result.ownedSkinIds.length;
+    ownedSource.value = result.source;
+    catalogFiltered.value = result.catalogFiltered;
     lastFetchedSkins.value = result;
-    pushLog('INFO', `Fetched ${skinCount.value} owned skins for ${result.summoner.displayName}`);
+    pushLog(
+      'INFO',
+      `Fetched ${skinCount.value} owned skins (${result.source}) for ${result.summoner.displayName}`
+    );
   } catch (e: unknown) {
     const msg = describeError(e);
     pushLog('ERROR', `Fetch skins failed: ${msg}`);
-    notifyError('Fetch skins failed', msg);
+    notifyError('读取皮肤失败', msg);
   } finally {
     fetchingSkins.value = false;
   }
 }
 
-async function onSync(): Promise<void> {
+async function onSync(options: { auto?: boolean } = {}): Promise<void> {
+  const isAuto = options.auto === true;
   if (!lastFetchedSkins.value) {
+    // 自动模式下没有皮肤列表说明游戏客户端没开,静默跳过
+    if (isAuto) {
+      pushLog('WARN', 'Auto sync skipped: no skins fetched');
+      return;
+    }
     ElNotification({
-      title: 'Cannot sync',
-      message: '请先获取皮肤列表',
+      title: '还不能同步',
+      message: '请先读取我的皮肤',
       type: 'warning',
       duration: 4000
     });
@@ -231,21 +241,41 @@ async function onSync(): Promise<void> {
   syncing.value = true;
   try {
     const { summoner, ownedSkinIds } = lastFetchedSkins.value;
-    const r: SyncResult = await window.api.sync({
+    const outcome: SyncOutcome = await window.api.sync({
       puuid: summoner.puuid,
       summonerName: summoner.displayName,
-      ownedSkinIds
+      ownedSkinIds,
+      mode: isAuto ? 'auto' : 'manual'
     });
-    lastSyncResult.value = r;
-    skinCount.value = r.totalOwned;
-    pushLog(
-      'INFO',
-      `Sync OK: added=${r.added} updated=${r.updated} totalOwned=${r.totalOwned}`
-    );
+
+    if (outcome.skipped) {
+      pushLog('INFO', 'Sync skipped: 刚刚已同步过');
+      if (!isAuto) {
+        ElNotification({
+          title: '跳过本次同步',
+          message: '刚刚已经同步过一次,稍后再试',
+          type: 'info',
+          duration: 4000
+        });
+      }
+      return;
+    }
+
+    lastSyncResult.value = outcome.result;
+    if (outcome.result) {
+      skinCount.value = outcome.result.totalOwned;
+      pushLog(
+        'INFO',
+        `Sync OK: added=${outcome.result.added} updated=${outcome.result.updated} totalOwned=${outcome.result.totalOwned}`
+      );
+    }
   } catch (e: unknown) {
     const msg = describeError(e);
     pushLog('ERROR', `Sync failed: ${msg}`);
-    notifyError('Sync failed', msg);
+    // 自动同步是静默的:用户没主动要求,失败不弹窗打扰他
+    if (!isAuto) {
+      notifyError('同步失败', msg);
+    }
   } finally {
     syncing.value = false;
   }
@@ -256,6 +286,9 @@ onMounted(async () => {
   await onCheckLcu();
   if (lcuStatus.value.running) {
     await onFetchSkins();
+    if (loggedIn.value) {
+      await onSync({ auto: true });
+    }
   }
 });
 </script>
@@ -281,7 +314,7 @@ onMounted(async () => {
 .status-left {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 10px;
 }
 .status-label {
   font-weight: 500;
@@ -297,16 +330,9 @@ onMounted(async () => {
   flex-direction: column;
   gap: 2px;
 }
-.field-label {
-  font-size: 12px;
-  color: var(--el-text-color-secondary);
-}
 .field-value {
   font-size: 14px;
-}
-.field-value.mono {
-  font-family: monospace;
-  font-size: 12px;
+  color: var(--hx-text);
 }
 .skins-info,
 .sync-info,
@@ -315,67 +341,54 @@ onMounted(async () => {
   flex-direction: column;
   gap: 2px;
 }
-.skins-label,
-.sync-label,
-.overview-label {
-  font-size: 12px;
-  color: var(--el-text-color-secondary);
-}
 .skins-count {
   font-size: 28px;
   font-weight: 600;
+  color: var(--hx-gold);
+}
+
+.skins-source {
+  font-size: 11px;
+  letter-spacing: 0.08em;
+  color: var(--hx-text-dim);
+}
+/* 实时库存数据 = 魔法蓝;降级到商城目录 = 金色(提醒) */
+.skins-source.is-live {
+  color: var(--hx-blue);
+}
+.skins-source.is-degraded {
+  color: var(--hx-gold);
 }
 .sync-meta {
   font-size: 11px;
-  color: var(--el-text-color-secondary);
+  letter-spacing: 0.1em;
+  color: var(--hx-text-faint);
 }
 .overview-meta {
-  font-size: 14px;
+  font-size: 13px;
+  color: var(--hx-text-dim);
 }
 .sync-result {
   margin-top: 12px;
+  font-size: 12px;
+  letter-spacing: 0.04em;
+  color: var(--hx-gold);
+}
+/* 版本号:平时几乎看不见,点它可以进开发者模式 */
+.version-entry {
+  align-self: center;
+  padding: 0;
+  border: none;
+  background: none;
+  cursor: pointer;
+  color: var(--hx-text-faint);
+  font-size: 10px;
+  letter-spacing: 0.18em;
   font-family: monospace;
-  font-size: 12px;
-  color: var(--el-color-success);
+  opacity: 0.45;
 }
-.log-title {
-  font-weight: 500;
-}
-.log-panel {
-  background: #000;
-  border: 1px solid var(--el-border-color);
-  border-radius: 4px;
-  padding: 8px;
-  height: 220px;
-  overflow-y: auto;
-  font-family: 'Menlo', 'Consolas', monospace;
-  font-size: 12px;
-  color: #cbd5e1;
-}
-.log-empty {
-  color: var(--el-text-color-secondary);
-  font-style: italic;
-}
-.log-line {
-  display: flex;
-  gap: 8px;
-  line-height: 1.5;
-  word-break: break-all;
-}
-.log-ts {
-  color: #64748b;
-}
-.log-level {
-  width: 50px;
-  flex-shrink: 0;
-}
-.log-level-INFO .log-level {
-  color: #94a3b8;
-}
-.log-level-WARN .log-level {
-  color: #facc15;
-}
-.log-level-ERROR .log-level {
-  color: #f87171;
+.version-entry:hover {
+  color: var(--hx-gold);
+  opacity: 0.9;
 }
 </style>

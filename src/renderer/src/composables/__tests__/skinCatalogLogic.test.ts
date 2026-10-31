@@ -4,8 +4,11 @@ import {
   computeStats,
   computeVisibleRange,
   dedupeBySkinId,
+  dropDefaultSkins,
   filterSkins,
-  isOwned
+  isDefaultSkin,
+  isOwned,
+  parseServerTime
 } from '../skinCatalogLogic';
 
 function skin(partial: Partial<CatalogSkin> & { skinId: number | null }): CatalogSkin {
@@ -22,6 +25,24 @@ function skin(partial: Partial<CatalogSkin> & { skinId: number | null }): Catalo
     ...partial
   };
 }
+
+describe('parseServerTime', () => {
+  it('parses the space-separated form the backend actually emits', () => {
+    // 后端全局 Jackson 把 LocalDateTime 序列化成 "yyyy-MM-dd HH:mm:ss"
+    expect(parseServerTime('2026-10-30 16:20:33')).toBe(Date.parse('2026-10-30T16:20:33'));
+  });
+
+  it('parses the ISO form unchanged', () => {
+    expect(parseServerTime('2026-10-30T16:20:33')).toBe(Date.parse('2026-10-30T16:20:33'));
+  });
+
+  it('returns null for anything it cannot parse', () => {
+    expect(parseServerTime(null)).toBeNull();
+    expect(parseServerTime(undefined)).toBeNull();
+    expect(parseServerTime('')).toBeNull();
+    expect(parseServerTime('不是时间')).toBeNull();
+  });
+});
 
 describe('isOwned', () => {
   it('returns true when the skin id is in the owned set', () => {
@@ -56,6 +77,38 @@ describe('dedupeBySkinId', () => {
     const rows = [skin({ id: 1, skinId: null }), skin({ id: 2, skinId: null })];
 
     expect(dedupeBySkinId(rows)).toHaveLength(2);
+  });
+});
+
+describe('isDefaultSkin', () => {
+  it('treats a skin id of champId * 1000 as the hero default skin', () => {
+    // 62 = 亚索,62 * 1000 = 62000 是他的原皮
+    expect(isDefaultSkin(skin({ skinId: 62000 }))).toBe(true);
+  });
+
+  it('does not treat a collectable skin as a default skin', () => {
+    expect(isDefaultSkin(skin({ skinId: 62001 }))).toBe(false);
+  });
+
+  it('falls back to the name when the skin id is unknown', () => {
+    expect(
+      isDefaultSkin(skin({ skinId: null, name: '探险家', heroName: '探险家' }))
+    ).toBe(true);
+    expect(
+      isDefaultSkin(skin({ skinId: null, name: '铁血剑豪', heroName: '探险家' }))
+    ).toBe(false);
+  });
+});
+
+describe('dropDefaultSkins', () => {
+  it('removes the hero default skins from the catalog', () => {
+    const rows = [
+      skin({ id: 1, skinId: 62000, name: '疾风剑豪', heroName: '疾风剑豪' }),
+      skin({ id: 2, skinId: 62001, name: '钢铁烈魂' }),
+      skin({ id: 3, skinId: null, name: '探险家', heroName: '探险家' })
+    ];
+
+    expect(dropDefaultSkins(rows).map((r) => r.id)).toEqual([2]);
   });
 });
 
@@ -217,6 +270,26 @@ describe('computeStats', () => {
     const rows = [skin({ id: 1, skinId: 100 }), skin({ id: 2, skinId: null })];
 
     expect(computeStats(rows, new Set(), 0).skinIdCoverage).toBe(0.5);
+  });
+
+  it('excludes hero default skins from the collectable total', () => {
+    // 62 = 亚索,62 * 1000 = 62000 是他的默认皮肤
+    const rows = [
+      skin({ id: 1, skinId: 62000 }),
+      skin({ id: 2, skinId: 62001 }),
+      skin({ id: 3, skinId: 62001 })
+    ];
+
+    const stats = computeStats(rows, new Set([62001]), 1);
+
+    expect(stats.collectableTotal).toBe(1);
+    expect(stats.ownedMatched).toBe(1);
+  });
+
+  it('counts nothing collectable when no skin id is known', () => {
+    const rows = [skin({ id: 1, skinId: null })];
+
+    expect(computeStats(rows, new Set(), 0).collectableTotal).toBe(0);
   });
 
   it('reports zero coverage for an empty catalog', () => {

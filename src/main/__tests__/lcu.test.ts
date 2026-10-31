@@ -12,7 +12,8 @@ import {
   readLcuAuthFromProcess,
   createLcuClient,
   getCurrentSummoner,
-  getOwnedSkinIds,
+  getInventoryOwnedSkinIds,
+  getStoreOwnedSkinIds,
   LcuNotRunningError
 } from '../lcu';
 
@@ -253,11 +254,16 @@ describe('getCurrentSummoner', () => {
   });
 });
 
-describe('getOwnedSkinIds', () => {
+describe('getStoreOwnedSkinIds', () => {
+  /** Each endpoint answers with its own payload; unlisted endpoints answer with an empty object. */
+  function routedClient(routes: Record<string, unknown>): AxiosInstance {
+    const get = vi.fn(async (url: string) => ({ data: url in routes ? routes[url] : {} }));
+    return { get } as unknown as AxiosInstance;
+  }
+
   it('keeps only CHAMPION_SKIN entries with owned=true and returns numeric itemIds', async () => {
-    const client = stubClient();
-    vi.spyOn(client, 'get').mockResolvedValue({
-      data: {
+    const client = routedClient({
+      '/lol-store/v1/skins': {
         catalog: [
           { itemId: 161013, inventoryType: 'CHAMPION_SKIN', owned: true },
           { itemId: 1002, inventoryType: 'CHAMPION_SKIN', owned: false },
@@ -271,34 +277,98 @@ describe('getOwnedSkinIds', () => {
       }
     });
 
-    await expect(getOwnedSkinIds(client)).resolves.toEqual([161013, 2005]);
+    await expect(getStoreOwnedSkinIds(client)).resolves.toEqual([161013, 2005]);
     expect(client.get).toHaveBeenCalledWith('/lol-store/v1/skins');
   });
 
-  it('returns an empty array when the catalog is empty', async () => {
-    const client = stubClient();
-    vi.spyOn(client, 'get').mockResolvedValue({
-      data: { catalog: [], groupOrder: [], itemGroups: {}, player: {} }
+  it('drops chromas — they are CHAMPION_SKIN + owned but the site catalog has none', async () => {
+    const client = routedClient({
+      '/lol-store/v1/skins': {
+        catalog: [
+          { itemId: 161013, inventoryType: 'CHAMPION_SKIN', owned: true, subInventoryType: null },
+          { itemId: 10011, inventoryType: 'CHAMPION_SKIN', owned: true, subInventoryType: 'RECOLOR' },
+          { itemId: 10012, inventoryType: 'CHAMPION_SKIN', owned: true, subInventoryType: 'recolor' },
+          { itemId: 10013, inventoryType: 'CHAMPION_SKIN', owned: true, tags: ['RECOLOR'] },
+          { itemId: 2005, inventoryType: 'CHAMPION_SKIN', owned: true }
+        ]
+      }
     });
-    await expect(getOwnedSkinIds(client)).resolves.toEqual([]);
+
+    await expect(getStoreOwnedSkinIds(client)).resolves.toEqual([161013, 2005]);
+  });
+
+  it('drops skin variants — they carry a skin_variant tag and have no splash art', async () => {
+    const client = routedClient({
+      '/lol-store/v1/skins': {
+        catalog: [
+          { itemId: 157001, inventoryType: 'CHAMPION_SKIN', owned: true, tags: ['champions_157'] },
+          {
+            itemId: 157054,
+            inventoryType: 'CHAMPION_SKIN',
+            owned: true,
+            tags: ['champions_157', 'skin_variant', 'skin_variant_skin_157055']
+          }
+        ]
+      }
+    });
+
+    await expect(getStoreOwnedSkinIds(client)).resolves.toEqual([157001]);
+  });
+
+  it('merges owned skins from bundles and featured — retired skins the catalog dropped', async () => {
+    const client = routedClient({
+      '/lol-store/v1/skins': {
+        catalog: [{ itemId: 161013, inventoryType: 'CHAMPION_SKIN', owned: true }]
+      },
+      '/lol-store/v1/bundles': [
+        { items: [{ itemId: 89001, inventoryType: 'CHAMPION_SKIN', owned: true }] }
+      ],
+      '/lol-store/v1/featured': [
+        { items: [{ itemId: 267003, inventoryType: 'CHAMPION_SKIN', owned: true }] }
+      ]
+    });
+
+    await expect(getStoreOwnedSkinIds(client)).resolves.toEqual([161013, 89001, 267003]);
+  });
+
+  it('keeps the catalog result when a supplement endpoint fails', async () => {
+    const get = vi.fn(async (url: string) => {
+      if (url === '/lol-store/v1/skins') {
+        return {
+          data: { catalog: [{ itemId: 161013, inventoryType: 'CHAMPION_SKIN', owned: true }] }
+        };
+      }
+      throw new Error('supplement unavailable');
+    });
+    const client = { get } as unknown as AxiosInstance;
+
+    await expect(getStoreOwnedSkinIds(client)).resolves.toEqual([161013]);
+  });
+
+  it('returns an empty array when the catalog is empty', async () => {
+    const client = routedClient({
+      '/lol-store/v1/skins': { catalog: [], groupOrder: [], itemGroups: {}, player: {} }
+    });
+    await expect(getStoreOwnedSkinIds(client)).resolves.toEqual([]);
   });
 
   it('returns an empty array when the envelope has no catalog array', async () => {
-    const client = stubClient();
-    vi.spyOn(client, 'get').mockResolvedValue({ data: { message: 'unauthorized' } });
-    await expect(getOwnedSkinIds(client)).resolves.toEqual([]);
+    const client = routedClient({
+      '/lol-store/v1/skins': { message: 'unauthorized' }
+    });
+    await expect(getStoreOwnedSkinIds(client)).resolves.toEqual([]);
   });
 
   it('returns an empty array when the payload is not an object', async () => {
-    const client = stubClient();
-    vi.spyOn(client, 'get').mockResolvedValue({ data: 'oops' });
-    await expect(getOwnedSkinIds(client)).resolves.toEqual([]);
+    const client = routedClient({
+      '/lol-store/v1/skins': 'oops'
+    });
+    await expect(getStoreOwnedSkinIds(client)).resolves.toEqual([]);
   });
 
   it('skips malformed entries in catalog', async () => {
-    const client = stubClient();
-    vi.spyOn(client, 'get').mockResolvedValue({
-      data: {
+    const client = routedClient({
+      '/lol-store/v1/skins': {
         catalog: [
           { itemId: 1001 },
           null,
@@ -306,7 +376,7 @@ describe('getOwnedSkinIds', () => {
         ]
       }
     });
-    await expect(getOwnedSkinIds(client)).resolves.toEqual([2005]);
+    await expect(getStoreOwnedSkinIds(client)).resolves.toEqual([2005]);
   });
 
   it('rejects when the client cannot connect', async () => {
@@ -314,6 +384,64 @@ describe('getOwnedSkinIds', () => {
     const refused = Object.assign(new Error('connect ECONNREFUSED'), { code: 'ECONNREFUSED' });
     vi.spyOn(client, 'get').mockRejectedValue(refused);
 
-    await expect(getOwnedSkinIds(client)).rejects.toThrow(refused);
+    await expect(getStoreOwnedSkinIds(client)).rejects.toThrow(refused);
+  });
+});
+
+describe('getInventoryOwnedSkinIds', () => {
+  function inventoryClient(payload: unknown): AxiosInstance {
+    const get = vi.fn(async () => ({ data: payload }));
+    return { get } as unknown as AxiosInstance;
+  }
+
+  it('returns every owned itemId from the inventory endpoint', async () => {
+    const client = inventoryClient([
+      { itemId: 161013, inventoryType: 'CHAMPION_SKIN', owned: true, ownershipType: 'OWNED' },
+      { itemId: 2005, inventoryType: 'CHAMPION_SKIN', owned: true, ownershipType: 'OWNED' }
+    ]);
+
+    await expect(getInventoryOwnedSkinIds(client)).resolves.toEqual([161013, 2005]);
+    expect(client.get).toHaveBeenCalledWith('/lol-inventory/v2/inventory/CHAMPION_SKIN', {
+      timeout: 30000
+    });
+  });
+
+  it('drops items that are not owned — rented, unowned or a different ownership type', async () => {
+    const client = inventoryClient([
+      { itemId: 1002, owned: true, ownershipType: 'OWNED' },
+      { itemId: 1003, owned: false, ownershipType: 'OWNED' },
+      { itemId: 1004, owned: true, ownershipType: 'RENTAL' },
+      { itemId: 1005, owned: true, ownershipType: 'OWNED', rental: true },
+      { itemId: 2005, owned: true, ownershipType: 'OWNED' }
+    ]);
+
+    await expect(getInventoryOwnedSkinIds(client)).resolves.toEqual([1002, 2005]);
+  });
+
+  it('dedupes repeated itemIds and skips malformed entries', async () => {
+    const client = inventoryClient([
+      { itemId: 161013, owned: true, ownershipType: 'OWNED' },
+      { itemId: 161013, owned: true, ownershipType: 'OWNED' },
+      null,
+      { owned: true },
+      { itemId: 0, owned: true },
+      { itemId: 2005, owned: true, ownershipType: 'OWNED' }
+    ]);
+
+    await expect(getInventoryOwnedSkinIds(client)).resolves.toEqual([161013, 2005]);
+  });
+
+  it('rejects when the payload is not an array', async () => {
+    const client = inventoryClient({ message: 'unauthorized' });
+
+    await expect(getInventoryOwnedSkinIds(client)).rejects.toThrow(/Unexpected/);
+  });
+
+  it('rejects when the client cannot connect', async () => {
+    const client = stubClient();
+    const refused = Object.assign(new Error('connect ECONNREFUSED'), { code: 'ECONNREFUSED' });
+    vi.spyOn(client, 'get').mockRejectedValue(refused);
+
+    await expect(getInventoryOwnedSkinIds(client)).rejects.toThrow(refused);
   });
 });

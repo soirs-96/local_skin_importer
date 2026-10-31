@@ -1,6 +1,12 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import axios from 'axios';
-import { syncOwnedSkins } from '../backend';
+import {
+  syncOwnedSkins,
+  shouldSkipSync,
+  minIntervalFor,
+  AUTO_SYNC_MIN_INTERVAL_MS,
+  MANUAL_SYNC_MIN_INTERVAL_MS
+} from '../backend';
 import { getStoredToken } from '../auth';
 
 vi.mock('axios');
@@ -85,5 +91,33 @@ describe('backend.syncOwnedSkins', () => {
     vi.mocked(axios.post).mockRejectedValue(err);
     await expect(syncOwnedSkins('p', 's', [1])).rejects.toMatchObject({ code: 'ECONNRESET' });
     expect(axios.post).toHaveBeenCalledTimes(3);
+  });
+});
+
+describe('shouldSkipSync', () => {
+  it('skips when the last sync was more recent than the minimum interval', () => {
+    expect(
+      shouldSkipSync(1_000_000, 1_000_000 + 5_000, MANUAL_SYNC_MIN_INTERVAL_MS)
+    ).toBe(true);
+  });
+
+  it('does not skip when the minimum interval has elapsed', () => {
+    expect(
+      shouldSkipSync(1_000_000, 1_000_000 + MANUAL_SYNC_MIN_INTERVAL_MS, MANUAL_SYNC_MIN_INTERVAL_MS)
+    ).toBe(false);
+  });
+
+  it('does not skip when there is no previous sync', () => {
+    expect(shouldSkipSync(null, 1_000_000, MANUAL_SYNC_MIN_INTERVAL_MS)).toBe(false);
+  });
+
+  it('uses a wider interval for automatic syncs', () => {
+    expect(shouldSkipSync(1_000_000, 1_030_000, AUTO_SYNC_MIN_INTERVAL_MS)).toBe(true);
+    expect(shouldSkipSync(1_000_000, 1_030_000, MANUAL_SYNC_MIN_INTERVAL_MS)).toBe(false);
+  });
+
+  it('maps the sync mode to its threshold', () => {
+    expect(minIntervalFor('auto')).toBe(AUTO_SYNC_MIN_INTERVAL_MS);
+    expect(minIntervalFor('manual')).toBe(MANUAL_SYNC_MIN_INTERVAL_MS);
   });
 });

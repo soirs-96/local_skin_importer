@@ -1,9 +1,11 @@
 import axios from 'axios';
-import { ipcMain } from 'electron';
+import { BrowserWindow, clipboard, ipcMain } from 'electron';
 import * as lcu from './lcu';
 import * as auth from './auth';
-import { syncOwnedSkins } from './backend';
+import { syncOwnedSkins, shouldSkipSync, minIntervalFor } from './backend';
 import { fetchCatalog, fetchMyOwned } from './catalog';
+import { resolveOwnedSkinIds } from './owned';
+import { readSyncState, writeSyncState } from './syncState';
 
 interface RedeemPayload {
   code: string;
@@ -13,6 +15,8 @@ interface SyncPayload {
   puuid: string;
   summonerName: string;
   ownedSkinIds: number[];
+  /** auto = 启动自动同步(60s 节流);manual = 用户手点(10s 节流) */
+  mode?: 'auto' | 'manual';
 }
 
 /**
@@ -52,6 +56,9 @@ function assertSyncPayload(p: unknown): asserts p is SyncPayload {
   if (!Array.isArray(obj.ownedSkinIds)) throw new Error('invalid ownedSkinIds');
   if (!(obj.ownedSkinIds as unknown[]).every((n) => typeof n === 'number')) {
     throw new Error('invalid ownedSkinIds');
+  }
+  if (obj.mode !== undefined && obj.mode !== 'auto' && obj.mode !== 'manual') {
+    throw new Error('invalid mode');
   }
 }
 
@@ -94,8 +101,13 @@ export function registerIpcHandlers(): void {
       const lcuAuth = lcu.readLcuAuth();
       const client = lcu.createLcuClient(lcuAuth.port, lcuAuth.token);
       const summoner = await lcu.getCurrentSummoner(client);
-      const ownedSkinIds = await lcu.getOwnedSkinIds(client);
-      return { summoner, ownedSkinIds };
+      const owned = await resolveOwnedSkinIds(client);
+      return {
+        summoner,
+        ownedSkinIds: owned.ownedSkinIds,
+        source: owned.source,
+        catalogFiltered: owned.catalogFiltered
+      };
     } catch (e) {
       throw normalizeSyncError(e);
     }
@@ -118,7 +130,27 @@ export function registerIpcHandlers(): void {
   ipcMain.handle('backend:sync', async (_event, payload: SyncPayload) => {
     try {
       assertSyncPayload(payload);
-      return await syncOwnedSkins(payload.puuid, payload.summonerName, payload.ownedSkinIds);
+      const mode = payload.mode ?? 'manual';
+      const minInterval = minIntervalFor(mode);
+      const state = readSyncState();
+      const now = Date.now();
+
+      if (shouldSkipSync(state.lastSyncAt, now, minInterval)) {
+        return {
+          skipped: true,
+          lastSyncAt: state.lastSyncAt,
+          result: null
+        };
+      }
+
+      const result = await syncOwnedSkins(payload.puuid, payload.summonerName, payload.ownedSkinIds);
+      // 只在成功后记时间戳 —— 失败不能算「已同步」
+      writeSyncState({ lastSyncAt: now });
+      return {
+        skipped: false,
+        lastSyncAt: now,
+        result
+      };
     } catch (e) {
       throw normalizeSyncError(e);
     }
@@ -138,5 +170,17 @@ export function registerIpcHandlers(): void {
     } catch (e) {
       throw normalizeSyncError(e);
     }
+  });
+
+  // 开发者面板的快捷操作。渲染进程没有 Node 能力,这两件事得走主进程。
+  ipcMain.handle('dev:open-devtools', async () => {
+    BrowserWindow.getFocusedWindow()?.webContents.openDevTools();
+    return { ok: true as const };
+  });
+
+  ipcMain.handle('dev:copy-text', async (_event, text: string) => {
+    if (typeof text !== 'string') throw new Error('invalid text');
+    clipboard.writeText(text);
+    return { ok: true as const };
   });
 }

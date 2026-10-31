@@ -1,6 +1,6 @@
 import { computed, ref, shallowRef } from 'vue';
 import type { CatalogResult, CatalogSkin, OwnedSnapshot } from '../../../preload/index';
-import { computeStats, dedupeBySkinId } from './skinCatalogLogic';
+import { computeStats, dedupeBySkinId, dropDefaultSkins } from './skinCatalogLogic';
 
 export type OwnedSource = 'lcu' | 'backend' | 'none';
 
@@ -30,6 +30,8 @@ export function useSkinCatalog() {
   const ownedIds = shallowRef<Set<number>>(new Set());
   const ownedSource = ref<OwnedSource>('none');
   const ownedReported = ref(0);
+  /** 后端快照里的最近一次同步时刻(ISO 字符串);null = 从未同步过 */
+  const ownedLastSyncAt = ref<string | null>(null);
   const skinIdFieldPresent = ref(true);
 
   const catalogSize = computed(() => skins.value.length);
@@ -43,7 +45,8 @@ export function useSkinCatalog() {
       records: result.records,
       skinIdFieldPresent: result.skinIdFieldPresent
     };
-    skins.value = dedupeBySkinId(result.records);
+    // 原皮(英雄默认皮肤)不是可收集的皮肤,浏览图鉴时不该出现
+    skins.value = dedupeBySkinId(dropDefaultSkins(result.records));
     skinIdFieldPresent.value = result.skinIdFieldPresent;
   }
 
@@ -54,6 +57,7 @@ export function useSkinCatalog() {
       ownedIds.value = new Set(r.ownedSkinIds);
       ownedReported.value = r.ownedSkinIds.length;
       ownedSource.value = 'lcu';
+      ownedLastSyncAt.value = null;
       return;
     } catch {
       // 继续降级
@@ -65,6 +69,7 @@ export function useSkinCatalog() {
       const snap: OwnedSnapshot = await window.api.fetchMyOwned();
       ownedIds.value = new Set(snap.ownedSkinIds);
       ownedReported.value = snap.totalOwnedCount;
+      ownedLastSyncAt.value = snap.lastSyncAt;
       ownedSource.value = 'backend';
       return;
     } catch {
@@ -74,6 +79,7 @@ export function useSkinCatalog() {
     ownedIds.value = new Set();
     ownedReported.value = 0;
     ownedSource.value = 'none';
+    ownedLastSyncAt.value = null;
   }
 
   /** 后台静默刷新:失败保留旧数据,不报错。 */
@@ -119,6 +125,7 @@ export function useSkinCatalog() {
     ownedIds,
     ownedSource,
     ownedReported,
+    ownedLastSyncAt,
     skinIdFieldPresent,
     catalogSize,
     stats,

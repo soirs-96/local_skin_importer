@@ -17,47 +17,72 @@ const mocks = vi.hoisted(() => {
     ipcMainHandle: vi.fn(),
     ipcRendererInvoke: vi.fn(),
     exposeInMainWorld: vi.fn(),
+    getFocusedWindow: vi.fn(),
+    clipboardWriteText: vi.fn(),
     readLcuAuth: vi.fn(),
     createLcuClient: vi.fn(),
     getCurrentSummoner: vi.fn(),
-    getOwnedSkinIds: vi.fn(),
+    getInventoryOwnedSkinIds: vi.fn(),
+    getStoreOwnedSkinIds: vi.fn(),
+    resolveOwnedSkinIds: vi.fn(),
     LcuNotRunningError: MockLcuNotRunningError,
     redeemSyncCode: vi.fn(),
     saveToken: vi.fn(),
     getAuthStatus: vi.fn(),
     clearStoredToken: vi.fn(),
+    getStoredToken: vi.fn(),
     syncOwnedSkins: vi.fn(),
     fetchCatalog: vi.fn(),
-    fetchMyOwned: vi.fn()
+    fetchMyOwned: vi.fn(),
+    readSyncState: vi.fn(),
+    writeSyncState: vi.fn()
   };
 });
 
 vi.mock('electron', () => ({
   ipcMain: { handle: mocks.ipcMainHandle },
   ipcRenderer: { invoke: mocks.ipcRendererInvoke },
-  contextBridge: { exposeInMainWorld: mocks.exposeInMainWorld }
+  contextBridge: { exposeInMainWorld: mocks.exposeInMainWorld },
+  BrowserWindow: { getFocusedWindow: mocks.getFocusedWindow },
+  clipboard: { writeText: mocks.clipboardWriteText }
 }));
 
 vi.mock('../lcu', () => ({
   readLcuAuth: mocks.readLcuAuth,
   createLcuClient: mocks.createLcuClient,
   getCurrentSummoner: mocks.getCurrentSummoner,
-  getOwnedSkinIds: mocks.getOwnedSkinIds,
+  getInventoryOwnedSkinIds: mocks.getInventoryOwnedSkinIds,
+  getStoreOwnedSkinIds: mocks.getStoreOwnedSkinIds,
   LcuNotRunningError: mocks.LcuNotRunningError
+}));
+
+vi.mock('../owned', () => ({
+  resolveOwnedSkinIds: mocks.resolveOwnedSkinIds
 }));
 
 vi.mock('../auth', () => ({
   redeemSyncCode: mocks.redeemSyncCode,
   saveToken: mocks.saveToken,
   getAuthStatus: mocks.getAuthStatus,
-  clearStoredToken: mocks.clearStoredToken
+  clearStoredToken: mocks.clearStoredToken,
+  getStoredToken: mocks.getStoredToken
 }));
 
-vi.mock('../backend', () => ({ syncOwnedSkins: mocks.syncOwnedSkins }));
+// 只替换真正打网络的 syncOwnedSkins；shouldSkipSync / minIntervalFor 是纯函数，
+// 必须留真实实现，否则节流逻辑等于没被测到。
+vi.mock('../backend', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../backend')>();
+  return { ...actual, syncOwnedSkins: mocks.syncOwnedSkins };
+});
 
 vi.mock('../catalog', () => ({
   fetchCatalog: mocks.fetchCatalog,
   fetchMyOwned: mocks.fetchMyOwned
+}));
+
+vi.mock('../syncState', () => ({
+  readSyncState: mocks.readSyncState,
+  writeSyncState: mocks.writeSyncState
 }));
 
 // Importing the preload module is itself the behavior under test: it exposes the bridge.
@@ -74,6 +99,8 @@ type ExposedApi = {
   sync: (payload: { puuid: string; summonerName: string; ownedSkinIds: number[] }) => unknown;
   fetchCatalog: () => unknown;
   fetchMyOwned: () => unknown;
+  openDevTools: () => unknown;
+  copyText: (text: string) => unknown;
 };
 
 function handlerFor(channel: string): Handler {
@@ -93,14 +120,22 @@ describe('IPC wiring', () => {
     mocks.readLcuAuth.mockReset();
     mocks.createLcuClient.mockReset();
     mocks.getCurrentSummoner.mockReset();
-    mocks.getOwnedSkinIds.mockReset();
+    mocks.getInventoryOwnedSkinIds.mockReset();
+    mocks.getStoreOwnedSkinIds.mockReset();
+    mocks.resolveOwnedSkinIds.mockReset();
     mocks.redeemSyncCode.mockReset();
     mocks.saveToken.mockReset();
     mocks.getAuthStatus.mockReset();
     mocks.clearStoredToken.mockReset();
+    mocks.getStoredToken.mockReset();
     mocks.syncOwnedSkins.mockReset();
     mocks.fetchCatalog.mockReset();
     mocks.fetchMyOwned.mockReset();
+    mocks.readSyncState.mockReset();
+    mocks.writeSyncState.mockReset();
+    mocks.getFocusedWindow.mockReset();
+    mocks.clipboardWriteText.mockReset();
+    mocks.readSyncState.mockReturnValue({ lastSyncAt: null });
     registerIpcHandlers();
   });
 
@@ -117,6 +152,8 @@ describe('IPC wiring', () => {
     api.sync({ puuid: 'p', summonerName: 'Alice', ownedSkinIds: [1, 2] });
     api.fetchCatalog();
     api.fetchMyOwned();
+    api.openDevTools();
+    api.copyText('诊断信息');
 
     expect(mocks.ipcRendererInvoke.mock.calls).toEqual([
       ['lcu:check-status'],
@@ -126,11 +163,13 @@ describe('IPC wiring', () => {
       ['auth:get-status'],
       ['backend:sync', { puuid: 'p', summonerName: 'Alice', ownedSkinIds: [1, 2] }],
       ['catalog:fetch-all'],
-      ['catalog:fetch-owned']
+      ['catalog:fetch-owned'],
+      ['dev:open-devtools'],
+      ['dev:copy-text', '诊断信息']
     ]);
   });
 
-  it('registers all 8 ipc channels on call to registerIpcHandlers', () => {
+  it('registers all 10 ipc channels on call to registerIpcHandlers', () => {
     expect(mocks.ipcMainHandle.mock.calls.map(([channel]) => channel)).toEqual([
       'lcu:check-status',
       'lcu:fetch-skins',
@@ -139,7 +178,9 @@ describe('IPC wiring', () => {
       'auth:get-status',
       'backend:sync',
       'catalog:fetch-all',
-      'catalog:fetch-owned'
+      'catalog:fetch-owned',
+      'dev:open-devtools',
+      'dev:copy-text'
     ]);
   });
 
@@ -187,13 +228,19 @@ describe('IPC wiring', () => {
     mocks.readLcuAuth.mockReturnValue({ port: 1234, token: 'secret' });
     mocks.createLcuClient.mockReturnValue(client);
     mocks.getCurrentSummoner.mockResolvedValue(summoner);
-    mocks.getOwnedSkinIds.mockResolvedValue([1001, 2005]);
+    mocks.resolveOwnedSkinIds.mockResolvedValue({
+      ownedSkinIds: [1001, 2005],
+      source: 'inventory',
+      catalogFiltered: true
+    });
 
     await expect(invoke('lcu:fetch-skins')).resolves.toEqual({
       summoner,
-      ownedSkinIds: [1001, 2005]
+      ownedSkinIds: [1001, 2005],
+      source: 'inventory',
+      catalogFiltered: true
     });
-    expect(mocks.getOwnedSkinIds).toHaveBeenCalledWith(client);
+    expect(mocks.resolveOwnedSkinIds).toHaveBeenCalledWith(client);
   });
 
   it('lcu:fetch-skins propagates LCU-not-detected error as a real Error', async () => {
@@ -256,12 +303,54 @@ describe('IPC wiring', () => {
       ownedSkinIds: [1, 2, 3]
     };
 
-    await expect(invoke('backend:sync', {}, payload)).resolves.toBe(result);
+    const outcome = await invoke('backend:sync', {}, payload);
+
+    expect(outcome).toMatchObject({ skipped: false, result });
     expect(mocks.syncOwnedSkins).toHaveBeenCalledWith(
       payload.puuid,
       'Alice',
       [1, 2, 3]
     );
+    expect(mocks.writeSyncState).toHaveBeenCalledOnce();
+  });
+
+  it('backend:sync skips the request when the throttle window has not elapsed', async () => {
+    mocks.readSyncState.mockReturnValue({ lastSyncAt: Date.now() });
+
+    const outcome = await invoke('backend:sync', {}, {
+      puuid: 'p'.padEnd(32, 'x'),
+      summonerName: 'Alice',
+      ownedSkinIds: [1]
+    });
+
+    expect(outcome).toMatchObject({ skipped: true, result: null });
+    expect(mocks.syncOwnedSkins).not.toHaveBeenCalled();
+  });
+
+  it('backend:sync does not record a timestamp when the request fails', async () => {
+    mocks.syncOwnedSkins.mockRejectedValue(new Error('网络炸了'));
+
+    await expect(
+      invoke('backend:sync', {}, {
+        puuid: 'p'.padEnd(32, 'x'),
+        summonerName: 'Alice',
+        ownedSkinIds: [1]
+      })
+    ).rejects.toThrow('网络炸了');
+
+    expect(mocks.writeSyncState).not.toHaveBeenCalled();
+  });
+
+  it('backend:sync rejects an unknown mode', async () => {
+    await expect(
+      invoke('backend:sync', {}, {
+        puuid: 'p'.padEnd(32, 'x'),
+        summonerName: 'Alice',
+        ownedSkinIds: [1],
+        mode: 'weird'
+      })
+    ).rejects.toThrow('invalid mode');
+    expect(mocks.syncOwnedSkins).not.toHaveBeenCalled();
   });
 
   it('backend:sync preserves axios error status code in thrown payload', async () => {
@@ -322,5 +411,25 @@ describe('IPC wiring', () => {
     const err = await invoke('catalog:fetch-all').catch((e: unknown) => e);
     expect(err).toBeInstanceOf(Error);
     expect((err as Error).message).toBe('服务端响应超时');
+  });
+
+  it('dev:open-devtools opens the devtools of the focused window', async () => {
+    const openDevTools = vi.fn();
+    mocks.getFocusedWindow.mockReturnValue({ webContents: { openDevTools } });
+
+    await expect(invoke('dev:open-devtools')).resolves.toEqual({ ok: true });
+    expect(openDevTools).toHaveBeenCalledOnce();
+  });
+
+  it('dev:copy-text writes the text to the system clipboard', async () => {
+    await expect(invoke('dev:copy-text', {}, '诊断信息')).resolves.toEqual({ ok: true });
+    expect(mocks.clipboardWriteText).toHaveBeenCalledWith('诊断信息');
+  });
+
+  it('dev:copy-text rejects a non-string payload', async () => {
+    await expect(invoke('dev:copy-text', {}, 42)).rejects.toMatchObject({
+      message: 'invalid text'
+    });
+    expect(mocks.clipboardWriteText).not.toHaveBeenCalled();
   });
 });

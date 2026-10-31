@@ -6,7 +6,7 @@ function createWindow(): void {
   const win = new BrowserWindow({
     width: 920,
     height: 640,
-    title: 'LOL Skin Importer',
+    title: 'LOL 皮肤助手',
     show: false,
     autoHideMenuBar: true,
     webPreferences: {

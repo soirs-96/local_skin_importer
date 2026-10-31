@@ -1,5 +1,5 @@
 import axios from 'axios';
-import { getStoredToken } from './auth';
+import { getStoredToken, clearStoredToken } from './auth';
 
 const BACKEND_BASE_URL = 'http://101.34.210.254';
 const AXIOS_TIMEOUT_MS = 10_000;
@@ -10,6 +10,32 @@ export interface SyncResult {
   added: number;
   updated: number;
   totalOwned: number;
+}
+
+/** 后端 inventorySyncLimiter 是 10 秒最小间隔 + 60 秒内 5 次。 */
+export const MANUAL_SYNC_MIN_INTERVAL_MS = 10_000;
+/** 自动同步放宽到 60 秒:用户反复重开应用时不必每次都打后端。 */
+export const AUTO_SYNC_MIN_INTERVAL_MS = 60_000;
+
+export type SyncMode = 'auto' | 'manual';
+
+/**
+ * 这次同步要不要跳过。纯函数,不碰 IO,方便单测。
+ *
+ * 后端对同一用户有 10 秒最小间隔的限频,自动同步是静默的——
+ * 撞上 429 用户只会觉得「怎么数据不更新」。本地先挡一道。
+ */
+export function shouldSkipSync(
+  lastSyncAt: number | null,
+  now: number,
+  minIntervalMs: number
+): boolean {
+  if (lastSyncAt === null) return false;
+  return now - lastSyncAt < minIntervalMs;
+}
+
+export function minIntervalFor(mode: SyncMode): number {
+  return mode === 'auto' ? AUTO_SYNC_MIN_INTERVAL_MS : MANUAL_SYNC_MIN_INTERVAL_MS;
 }
 
 interface BackendEnvelope<T> {
@@ -65,13 +91,23 @@ export async function syncOwnedSkins(
           response?: { status?: number; data?: { message?: unknown } };
         };
         const backendMsg = axiosErr.response?.data?.message;
+        const status = axiosErr.response?.status;
+        if (status === 401) {
+          // token 过期了。留着它只会让每一次同步都静默失败 —— 丢掉它,
+          // 并且明确告诉用户要重新用同步码登录,而不是让它看起来像「没同步」。
+          clearStoredToken();
+          const expired = new Error('登录已过期,请用同步码重新登录') as Error & { status?: number };
+          expired.name = 'UnauthorizedError';
+          expired.status = 401;
+          throw expired;
+        }
         const msg =
           typeof backendMsg === 'string'
-            ? `${backendMsg} (HTTP ${axiosErr.response?.status})`
+            ? `${backendMsg} (HTTP ${status})`
             : axiosErr.message;
         const err = new Error(msg) as Error & { status?: number; code?: string };
         err.name = axiosErr.name;
-        err.status = axiosErr.response?.status;
+        err.status = status;
         err.code = axiosErr.code;
         throw err;
       }

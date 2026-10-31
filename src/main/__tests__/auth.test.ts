@@ -54,14 +54,14 @@ afterEach(() => {
 });
 
 describe('auth', () => {
-  it('redeemSyncCode posts the 6-digit code and returns the JWT', async () => {
+  it('redeemSyncCode posts the 6-digit code to the desktop endpoint and returns the JWT', async () => {
     vi.mocked(axios.post).mockResolvedValue({
       data: { code: 200, data: { token: 'jwt-xyz', userId: 1, nickname: 'Soirs' }, message: 'ok' }
     });
     const token = await redeemSyncCode('482931');
     expect(token).toBe('jwt-xyz');
     expect(axios.post).toHaveBeenCalledWith(
-      expect.stringContaining('/api/sync-code/redeem'),
+      expect.stringContaining('/api/sync-code/redeem-desktop'),
       { code: '482931' },
       expect.objectContaining({
         headers: expect.objectContaining({ 'Content-Type': 'application/json' })
@@ -103,5 +103,20 @@ describe('auth', () => {
 
   it('getAuthStatus returns loggedIn=false when no token', () => {
     expect(getAuthStatus()).toEqual({ loggedIn: false, tokenPreview: null });
+  });
+
+  it('getAuthStatus reports logged out and drops the file when the token already expired', () => {
+    // header.payload.signature,payload 里放一个过去的 exp
+    const payload = Buffer.from(JSON.stringify({ exp: Math.floor(Date.now() / 1000) - 60 })).toString('base64url');
+    writeFileSync(tokenPath, Buffer.from(`enc:h.${payload}.s`));
+    expect(getAuthStatus()).toEqual({ loggedIn: false, tokenPreview: null });
+    expect(existsSync(tokenPath)).toBe(false);
+  });
+
+  it('getAuthStatus keeps a token that has not expired yet', () => {
+    const payload = Buffer.from(JSON.stringify({ exp: Math.floor(Date.now() / 1000) + 3600 })).toString('base64url');
+    const token = `h.${payload}.s`;
+    writeFileSync(tokenPath, Buffer.from(`enc:${token}`));
+    expect(getAuthStatus()).toEqual({ loggedIn: true, tokenPreview: `${token.substring(0, 12)}...` });
   });
 });

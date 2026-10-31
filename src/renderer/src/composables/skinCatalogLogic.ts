@@ -1,8 +1,42 @@
 // composables 目录在 src/renderer/src/ 下,往上三层才是 src/
 import type { CatalogSkin } from '../../../preload/index';
 
+/**
+ * 解析后端给的时间字符串。
+ *
+ * 后端全局 Jackson 把 LocalDateTime 序列化成 "yyyy-MM-dd HH:mm:ss"(空格分隔),
+ * 不是 ISO 8601 的 'T' 分隔。不同 JS 引擎对空格形式的 Date.parse 结果不统一,
+ * 所以自己换成 'T' 再按本地时间解析。已经是 ISO 的原样返回。
+ * 解析不了返回 null,别显示 NaN。
+ */
+export function parseServerTime(value: string | null | undefined): number | null {
+  if (typeof value !== 'string') return null;
+  const normalized = value.trim().replace(' ', 'T');
+  if (!normalized) return null;
+  const t = Date.parse(normalized);
+  return Number.isNaN(t) ? null : t;
+}
+
 export function isOwned(skin: CatalogSkin, ownedIds: Set<number>): boolean {
   return skin.skinId != null && ownedIds.has(skin.skinId);
+}
+
+/**
+ * 英雄默认皮肤(原皮)。
+ *
+ * skinId = champId * 1000,人人都有,不是「可收集的皮肤」—— 游戏收藏册本来就不算它们。
+ * 目录里混着这批行,界面上看着像一堆未拥有的皮肤(原皮的名字和英雄名一模一样),
+ * 浏览图鉴时也要剔掉。
+ *
+ * 没有 skinId 的老数据只能靠名字兜底:原皮的名字 = 英雄名。
+ */
+export function isDefaultSkin(skin: CatalogSkin): boolean {
+  if (skin.skinId != null) return skin.skinId % 1000 === 0;
+  return !!skin.name && !!skin.heroName && skin.name === skin.heroName;
+}
+
+export function dropDefaultSkins(records: CatalogSkin[]): CatalogSkin[] {
+  return records.filter((r) => !isDefaultSkin(r));
 }
 
 /**
@@ -90,6 +124,12 @@ export interface OwnedStats {
   ownedMissingFromCatalog: number;
   /** 目录中 skinId 非空的比例,0~1 */
   skinIdCoverage: number;
+  /**
+   * 可收集皮肤数(按 skinId 去重、去掉英雄默认皮肤)。
+   * 口径与后端 my-collection 的 totalSkinsInGame 一致 —— 默认皮肤人人都有,
+   * 客户端的收藏册也不把它们算进去,留着会让完成率永远差一截。
+   */
+  collectableTotal: number;
 }
 
 export function computeStats(
@@ -98,16 +138,21 @@ export function computeStats(
   ownedReported: number
 ): OwnedStats {
   const matched = new Set<number>();
+  const collectable = new Set<number>();
   let withId = 0;
   for (const s of skins) {
     if (s.skinId == null) continue;
     withId += 1;
+    // 英雄默认皮肤:skinId = champId * 1000,人人都有,不计入可收集
+    if (s.skinId % 1000 === 0) continue;
+    collectable.add(s.skinId);
     if (ownedIds.has(s.skinId)) matched.add(s.skinId);
   }
   return {
     ownedMatched: matched.size,
     ownedReported,
     ownedMissingFromCatalog: Math.max(0, ownedReported - matched.size),
-    skinIdCoverage: skins.length ? withId / skins.length : 0
+    skinIdCoverage: skins.length ? withId / skins.length : 0,
+    collectableTotal: collectable.size
   };
 }

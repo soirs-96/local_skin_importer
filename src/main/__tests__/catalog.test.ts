@@ -114,18 +114,23 @@ describe('catalog.fetchMyOwned', () => {
     expect(axios.get).not.toHaveBeenCalled();
   });
 
-  it('returns the total count and the owned skin ids', async () => {
+  it('returns the total count, the owned skin ids and the last sync time', async () => {
     vi.mocked(getStoredToken).mockReturnValue('jwt-abc');
     vi.mocked(axios.get).mockResolvedValue(
       ok({
         totalOwnedCount: 87,
-        ownedSkins: [{ skinId: 161013 }, { skinId: 1001 }]
+        ownedSkinIds: [161013, 1001],
+        lastSyncAt: '2026-10-30 16:20:33'
       })
     );
 
     const result = await fetchMyOwned();
 
-    expect(result).toEqual({ totalOwnedCount: 87, ownedSkinIds: [161013, 1001] });
+    expect(result).toEqual({
+      totalOwnedCount: 87,
+      ownedSkinIds: [161013, 1001],
+      lastSyncAt: '2026-10-30 16:20:33'
+    });
     expect(axios.get).toHaveBeenCalledWith(
       expect.stringContaining('/api/skins/my-owned'),
       expect.objectContaining({ headers: { Authorization: 'Bearer jwt-abc' } })
@@ -135,7 +140,7 @@ describe('catalog.fetchMyOwned', () => {
   it('drops non-numeric skin ids', async () => {
     vi.mocked(getStoredToken).mockReturnValue('jwt-abc');
     vi.mocked(axios.get).mockResolvedValue(
-      ok({ totalOwnedCount: 2, ownedSkins: [{ skinId: 161013 }, { skinId: null }] })
+      ok({ totalOwnedCount: 2, ownedSkinIds: [161013, null] })
     );
 
     const result = await fetchMyOwned();
@@ -145,10 +150,21 @@ describe('catalog.fetchMyOwned', () => {
 
   it('falls back to the id count when totalOwnedCount is absent', async () => {
     vi.mocked(getStoredToken).mockReturnValue('jwt-abc');
-    vi.mocked(axios.get).mockResolvedValue(ok({ ownedSkins: [{ skinId: 1 }, { skinId: 2 }] }));
+    vi.mocked(axios.get).mockResolvedValue(ok({ ownedSkinIds: [1, 2] }));
 
     const result = await fetchMyOwned();
 
     expect(result.totalOwnedCount).toBe(2);
+  });
+
+  it('returns lastSyncAt=null when the user has never synced', async () => {
+    vi.mocked(getStoredToken).mockReturnValue('jwt-abc');
+    vi.mocked(axios.get).mockResolvedValue(
+      ok({ totalOwnedCount: 0, ownedSkinIds: [] })
+    );
+
+    const result = await fetchMyOwned();
+
+    expect(result.lastSyncAt).toBeNull();
   });
 });

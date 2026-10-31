@@ -162,9 +162,9 @@
 ```json
 {
   "totalOwnedCount": 87,
-  "totalSkinsInGame": 2138,
+  "totalSkinsInGame": 1965,
   "ownedMatchedCount": 80,
-  "completionRate": 0.0374,
+  "completionRate": 0.0407,
   "lastSyncAt": "2026-10-30T16:20:33",
   "byHero": [
     {
@@ -182,7 +182,7 @@
 | 字段 | 含义 |
 |---|---|
 | `totalOwnedCount` | 已拥有总数（含目录未收录的） |
-| `totalSkinsInGame` | `t_skin` 中 `is_active = 1` 的总数 |
+| `totalSkinsInGame` | `t_skin` 中 `is_active = 1` 且**非英雄默认皮肤**（`skin_id % 1000 != 0`）的总数 |
 | `ownedMatchedCount` | 已拥有 ∩ 目录 的匹配数 |
 | `completionRate` | `ownedMatchedCount / totalSkinsInGame`，保留 4 位小数 |
 | `byHero` | 按英雄聚合的收集进度 |
@@ -198,7 +198,11 @@
 
 3. **`heroId` 的口径要写对。** `HeroSkinOwnershipVO.heroId` 的 `@Schema` 注释写的是「业务侧英雄 ID（`Hero.heroId`, Integer）」，但代码里填的是 `e.getKey().intValue()`，也就是 `t_hero.id`（Long 主键）转 int。`SkinItemVO.heroId` 同理。两处实际口径一致，**新接口沿用 `t_hero.id`**，顺手把 `@Schema` 注释改对。
 
+4. **分母要剔掉英雄默认皮肤。** `t_skin` 里每个英雄都有一条默认皮肤（`skin_id = heroId * 1000`），2026-10-31 实测：站内 2138 条里有 173 条 `skin_id % 1000 == 0`，`rarity` / `price_rp` 都是 NULL；而客户端上报的已拥有真皮肤里**一条默认皮肤都没有**（LCU owned 集合中 `id % 1000 == 0` 的数量为 0）。默认皮肤人人都有，客户端的收藏册也不把它们算「可收集皮肤」，留着只会让完成率永远差一截（按英雄的「3/12」在客户端那边是「3/11」）。⇒ `totalSkinsInGame` 与 `byHero.totalCount` 都按非默认皮肤统计；`assemble`（A0 专用）的旧口径不动。**桌面端「皮肤总览」弹窗的「已拥有 X / Y」也要用同一个分母**（`computeStats` 增加 `collectableTotal`：按 skinId 去重、去掉 `skinId % 1000 === 0` 的行），否则桌面端显示 747/2138、小程序显示 747/1965，两边自己就对不上。
+
 `byHero` 只包含**有 active 皮肤的英雄**（从 `is_active = 1` 的皮肤分组而来），不是 `t_hero` 的全部——没皮肤的英雄不必占位。
+
+5. **收藏册的「已拥有」是下界，页面必须写明。** 2026-10-31 实测：桌面端能从 WeGame LCU 读到的 owned 真皮肤是 **747**（站内目录 100% 覆盖），而客户端显示「已拥有的皮肤总数 **1717**」，差 **970**。差额已定性为**已下架（绝版）皮肤**——绝版皮肤不再出现在商城目录里，而 WeGame 版 LCU 的库存类端点（`/lol-inventory/*`、`/lol-champions/v1/inventories/*`、`/lol-cosmetics/v1/collection` 等）全部 404/400，`/lol-store/v1/catalog` 有 9106 条 CHAMPION_SKIN 但零 owned 标记。也就是说**绝版皮肤的拥有状态本地读不到**。⇒ 收藏册总览卡在同步时间下方加一行说明「已下架(绝版)皮肤游戏接口读不到，这里的数量可能少于游戏内」，不要把 747 说成「全部」。真正补齐这 970 个只能走腾讯侧接口（A0，见 `all_function_api/docs/superpowers/specs/2026-08-18-a0-tencent-inventory-research.md`）。
 
 ### Redis 缓存
 

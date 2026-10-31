@@ -1,5 +1,5 @@
 import axios from 'axios';
-import { getStoredToken } from './auth';
+import { clearStoredToken, getStoredToken } from './auth';
 
 const BACKEND_BASE_URL = 'http://101.34.210.254';
 const CATALOG_TIMEOUT_MS = 60_000;
@@ -35,8 +35,13 @@ export interface CatalogResult {
 export interface OwnedSnapshot {
   /** 已同步到后端的已拥有总数(含目录未收录的) */
   totalOwnedCount: number;
-  /** 已拥有且目录里有对应行的 skinId 列表 */
+  /** 已拥有的游戏内皮肤 ID 列表(t_skin.skin_id 口径,可能含目录没收录的) */
   ownedSkinIds: number[];
+  /**
+   * 最近一次同步时刻(ISO 字符串)。
+   * null = 该用户从未同步过 —— 小程序据此决定要不要显示「已拥有」徽标。
+   */
+  lastSyncAt: string | null;
 }
 
 interface BackendEnvelope<T> {
@@ -55,7 +60,8 @@ interface CatalogPage {
 
 interface OwnedPayload {
   totalOwnedCount?: number;
-  ownedSkins?: { skinId?: number | null }[];
+  ownedSkinIds?: number[];
+  lastSyncAt?: string | null;
 }
 
 function numOrNull(v: unknown): number | null {
@@ -119,23 +125,57 @@ export async function fetchCatalog(): Promise<CatalogResult> {
   };
 }
 
+/**
+ * 站内目录里的 skinId 集合。
+ *
+ * 返回 null = 后端还没升级(响应里没有 `skinId` 字段),无法判断「哪些皮肤是站内收录的」,
+ * 调用方要自己决定退路 —— 别拿空集合去过滤,那会把已拥有数清零。
+ */
+export async function fetchCatalogSkinIds(): Promise<Set<number> | null> {
+  const result = await fetchCatalog();
+  if (!result.skinIdFieldPresent) return null;
+  const ids = new Set<number>();
+  for (const r of result.records) {
+    if (typeof r.skinId === 'number') ids.add(r.skinId);
+  }
+  return ids;
+}
+
+/**
+ * 拉 /skins/my-owned。token 过期时(401)清掉本地 token 并给出可执行的提示 ——
+ * 留着过期 token 只会让「已登录」的假象一直挂着,数据却永远同步不上。
+ */
+async function fetchOwnedPayload(url: string, token: string): Promise<OwnedPayload> {
+  try {
+    const { data } = await axios.get<BackendEnvelope<OwnedPayload>>(url, {
+      timeout: OWNED_TIMEOUT_MS,
+      headers: { Authorization: `Bearer ${token}` }
+    });
+    if (data.code !== 200 || !data.data) {
+      throw new Error(data.message ?? '获取已拥有皮肤失败');
+    }
+    return data.data;
+  } catch (e) {
+    if (axios.isAxiosError(e) && e.response?.status === 401) {
+      clearStoredToken();
+      throw new Error('登录已过期,请用同步码重新登录');
+    }
+    throw e;
+  }
+}
+
 export async function fetchMyOwned(): Promise<OwnedSnapshot> {
   const token = getStoredToken();
   if (!token) throw new Error('未登录:请先登录后再查看已拥有皮肤');
 
   const url = `${BACKEND_BASE_URL}/api/skins/my-owned`;
-  const { data } = await axios.get<BackendEnvelope<OwnedPayload>>(url, {
-    timeout: OWNED_TIMEOUT_MS,
-    headers: { Authorization: `Bearer ${token}` }
-  });
-  if (data.code !== 200 || !data.data) {
-    throw new Error(data.message ?? '获取已拥有皮肤失败');
-  }
-  const ownedSkinIds = (data.data.ownedSkins ?? [])
-    .map((s) => s.skinId)
-    .filter((v): v is number => typeof v === 'number');
+  const data = await fetchOwnedPayload(url, token);
+  const ownedSkinIds = (data.ownedSkinIds ?? []).filter(
+    (v): v is number => typeof v === 'number'
+  );
   return {
-    totalOwnedCount: data.data.totalOwnedCount ?? ownedSkinIds.length,
-    ownedSkinIds
+    totalOwnedCount: data.totalOwnedCount ?? ownedSkinIds.length,
+    ownedSkinIds,
+    lastSyncAt: typeof data.lastSyncAt === 'string' ? data.lastSyncAt : null
   };
 }

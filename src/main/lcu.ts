@@ -180,30 +180,118 @@ export async function getCurrentSummoner(client: AxiosInstance): Promise<Current
   };
 }
 
-/** Owned skin IDs for the local player.
- *
- * WeGame-installed LOL does not expose the standard Riot endpoint
- * `/lol-champions/v1/inventories/local-player/skin-minimal` (returns 404 with
- * "Invalid URI format"). The WeGame LCU fork exposes the same data through the
- * store catalog: `/lol-store/v1/skins` returns a `{ catalog, groupOrder, itemGroups, player }`
- * envelope where `catalog` holds every champion and skin (each annotated with
- * `inventoryType` and `owned`). We keep only `CHAMPION_SKIN` entries with
- * `owned === true` and return their numeric `itemId` (which follows the
- * `<championId>000+<skinIndex>` convention, e.g. `161013` = champion 161 skin 13).
+/**
+ * 库存端点。类型名要写**枚举名**放在**路径段**里 —— 传 owned/skins/all 这类
+ * 小写词会返回 200 但 body 是空数组，看起来像「这个接口没数据」。
+ * 响应约 1.1 MB,5 秒默认超时不够,单独放宽。
  */
-export async function getOwnedSkinIds(client: AxiosInstance): Promise<number[]> {
-  const { data } = await client.get('/lol-store/v1/skins');
-  if (!isRecord(data) || !Array.isArray(data.catalog)) return [];
+const INVENTORY_PATH = '/lol-inventory/v2/inventory/CHAMPION_SKIN';
+const INVENTORY_TIMEOUT_MS = 30_000;
 
-  return data.catalog
-    .filter((entry: unknown): entry is Record<string, unknown> => isOwnedSkin(entry))
-    .map((entry) => Number(entry.itemId))
-    .filter((id) => Number.isFinite(id));
+/**
+ * 库存里的「已拥有」判定。库存条目的拥有状态是**扁平**的:
+ *   owned / ownershipType / rental / quantity 都在条目顶层,没有嵌套的 ownership.owned。
+ */
+function isOwnedInventoryItem(item: Record<string, unknown>): boolean {
+  if (item.owned === false) return false;
+  if (item.rental === true) return false;
+  const ownershipType =
+    typeof item.ownershipType === 'string' ? item.ownershipType.toUpperCase() : '';
+  if (ownershipType && ownershipType !== 'OWNED') return false;
+  return true;
+}
+
+/**
+ * 从 LCU 库存端点读「已拥有的英雄皮肤卡」itemId。
+ *
+ * 这是权威的拥有数据源:商城目录的 `owned` 标记只覆盖当前在售的商品,
+ * 已下架(绝版)的皮肤在商城里看不到,只能从库存拿到。
+ *
+ * 返回的是**未经筛选的原始 itemId 集合** —— 里面混着炫彩(RECOLOR)、皮肤变体
+ * (skin_variant)、经典版英雄的长 id(60000000 + champId*1000 + 序号)以及商城
+ * 没有收录的皮肤。要判断「哪些是皮肤、哪些是站内收录的皮肤」,得由调用方拿
+ * 站内目录去比对(见 owned.ts)。
+ */
+export async function getInventoryOwnedSkinIds(client: AxiosInstance): Promise<number[]> {
+  const { data } = await client.get(INVENTORY_PATH, { timeout: INVENTORY_TIMEOUT_MS });
+  if (!Array.isArray(data)) {
+    throw new Error(`Unexpected ${INVENTORY_PATH} response.`);
+  }
+  const ids = new Set<number>();
+  for (const item of data) {
+    if (!isRecord(item)) continue;
+    if (!isOwnedInventoryItem(item)) continue;
+    const id = Number(item.itemId);
+    if (Number.isFinite(id) && id > 0) ids.add(id);
+  }
+  return [...ids];
+}
+
+/**
+ * 商城目录口径的「已拥有皮肤」(降级兜底)。
+ *
+ * 只认当前在售 + bundles/featured 补充的条目,所以读不到已下架皮肤,
+ * 也分不出炫彩/变体以外的东西。库存端点不可用时才走这条路。
+ */
+export async function getStoreOwnedSkinIds(client: AxiosInstance): Promise<number[]> {
+  const owned = new Set<number>();
+
+  const { data } = await client.get('/lol-store/v1/skins');
+  collectOwnedSkins(data, owned);
+
+  // Supplement: retired skins the store catalog no longer lists. A failure here
+  // must not lose the catalog data, so each source is best-effort.
+  for (const url of ['/lol-store/v1/bundles', '/lol-store/v1/featured']) {
+    try {
+      const { data: supplement } = await client.get(url, { timeout: 20000 });
+      collectOwnedSkins(supplement, owned);
+    } catch {
+      // ignore — the catalog data collected above still stands
+    }
+  }
+
+  return [...owned];
+}
+
+/** Walks an arbitrary store payload and keeps every owned CHAMPION_SKIN itemId. */
+function collectOwnedSkins(node: unknown, out: Set<number>): void {
+  if (Array.isArray(node)) {
+    for (const item of node) collectOwnedSkins(item, out);
+    return;
+  }
+  if (!isRecord(node)) return;
+
+  if (isOwnedSkin(node)) {
+    const id = Number(node.itemId);
+    if (Number.isFinite(id)) out.add(id);
+  }
+
+  for (const value of Object.values(node)) {
+    if (value !== null && typeof value === 'object') {
+      collectOwnedSkins(value, out);
+    }
+  }
 }
 
 function isOwnedSkin(entry: unknown): boolean {
   if (!isRecord(entry)) return false;
-  return entry.inventoryType === 'CHAMPION_SKIN' && entry.owned === true;
+  if (entry.inventoryType !== 'CHAMPION_SKIN' || entry.owned !== true) return false;
+  return !isChroma(entry);
+}
+
+/** 炫彩与皮肤变体:商城条目里 inventoryType 也是 CHAMPION_SKIN,靠 subInventoryType 或 tags 区分。
+ *  - subInventoryType === 'RECOLOR' 是标准炫彩
+ *  - tags 里带 skin_variant 的是皮肤变体(如 神龙尊者 昼日真龙 亚索),同样没有原画 */
+function isChroma(entry: Record<string, unknown>): boolean {
+  if (String(entry.subInventoryType ?? '').toUpperCase() === 'RECOLOR') return true;
+  const tags = entry.tags;
+  if (Array.isArray(tags)) {
+    return tags.some((tag) => {
+      const t = String(tag).toLowerCase();
+      return t === 'recolor' || t.startsWith('skin_variant');
+    });
+  }
+  return false;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

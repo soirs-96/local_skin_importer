@@ -1,7 +1,7 @@
 <template>
   <el-dialog
     v-model="visible"
-    title="皮肤总览"
+    title="皮肤图鉴"
     width="94%"
     top="3vh"
     destroy-on-close
@@ -11,18 +11,30 @@
     <div class="overview">
       <div class="overview-header">
         <div class="overview-stats">
-          <span class="stat-main">
-            已拥有 {{ stats.ownedMatched }} / {{ catalogSize }}
-          </span>
-          <span class="stat-sub">{{ ownedSourceText }}</span>
-          <span v-if="stats.ownedMissingFromCatalog > 0" class="stat-sub">
-            {{ stats.ownedMissingFromCatalog }} 件目录未收录
-          </span>
+          <div class="stat-ring" :style="{ '--pct': `${ringDegrees}deg` }">
+            <span class="stat-ring-value">{{ completionPercent }}%</span>
+          </div>
+          <div class="stat-lines">
+            <span class="stat-head">
+              <span class="hx-diamond" />
+              <span class="stat-main">
+                已拥有 {{ stats.ownedMatched }} / {{ collectableTotal }}
+              </span>
+            </span>
+            <span class="stat-sub">{{ ownedSourceText }}</span>
+            <span v-if="ownedSource === 'backend' && ownedLastSyncAt" class="stat-sub">
+              上次同步:{{ lastSyncText }}
+            </span>
+            <span v-if="stats.ownedMissingFromCatalog > 0" class="stat-sub">
+              {{ stats.ownedMissingFromCatalog }} 款暂未收录到图鉴
+            </span>
+            <span class="stat-sub">绝版(已下架)皮肤也能读到;与游戏内收藏册的差额是经典版英雄皮肤卡(图鉴未收录)</span>
+          </div>
         </div>
         <div class="overview-filters">
           <el-input
             v-model="filters.keyword"
-            placeholder="搜索皮肤名 / 英雄名"
+            placeholder="搜索皮肤名或英雄名"
             clearable
             class="filter-search"
           />
@@ -46,7 +58,7 @@
         type="error"
         show-icon
         :closable="false"
-        title="服务端版本过低，未返回皮肤 ID，无法比对已拥有状态"
+        title="服务器版本较旧,暂时无法判断哪些皮肤你已经拥有"
         class="overview-alert"
       />
       <el-alert
@@ -54,7 +66,7 @@
         type="warning"
         show-icon
         :closable="false"
-        :title="`部分皮肤缺少 ID（覆盖率 ${Math.round(stats.skinIdCoverage * 100)}%），这些皮肤无法比对拥有状态`"
+        :title="`有部分皮肤暂时无法判断是否已拥有(覆盖率 ${Math.round(stats.skinIdCoverage * 100)}%)`"
         class="overview-alert"
       />
       <el-alert
@@ -62,7 +74,7 @@
         type="warning"
         show-icon
         :closable="false"
-        title="未能获取已拥有皮肤，当前全部按未拥有显示"
+        title="暂时读不到你的皮肤,已按未拥有显示"
         class="overview-alert"
       />
       <el-alert
@@ -70,11 +82,11 @@
         type="info"
         show-icon
         :closable="false"
-        title="数据来自上次同步"
+        title="显示的是上次同步的数据,点「读取我的皮肤」可以更新"
         class="overview-alert"
       />
 
-      <div v-if="loading && catalogSize === 0" class="overview-loading">正在加载皮肤目录…</div>
+      <div v-if="loading && catalogSize === 0" class="overview-loading">正在加载皮肤图鉴…</div>
       <div v-else-if="error" class="overview-error">
         <p>{{ error }}</p>
         <el-button type="primary" @click="reload">重试</el-button>
@@ -89,8 +101,8 @@
       />
 
       <div class="overview-footer">
-        <el-button size="small" :loading="loading" @click="reload">刷新目录</el-button>
-        <span class="footer-count">共 {{ filteredSkins.length }} 件</span>
+        <el-button size="small" class="hx-gold" :loading="loading" @click="reload">刷新图鉴</el-button>
+        <span class="footer-count">共 {{ filteredSkins.length }} 款</span>
       </div>
     </div>
 
@@ -103,7 +115,7 @@ import { computed, reactive, ref, shallowRef } from 'vue';
 import SkinDetailDialog from './SkinDetailDialog.vue';
 import SkinGrid from './SkinGrid.vue';
 import type { CatalogSkin } from '../../../preload/index';
-import { filterSkins, isOwned } from '../composables/skinCatalogLogic';
+import { filterSkins, isOwned, parseServerTime } from '../composables/skinCatalogLogic';
 import { useSkinCatalog } from '../composables/useSkinCatalog';
 
 const visible = ref(false);
@@ -123,6 +135,7 @@ const {
   skins,
   ownedIds,
   ownedSource,
+  ownedLastSyncAt,
   skinIdFieldPresent,
   catalogSize,
   stats,
@@ -163,9 +176,36 @@ const rarityOptions = computed(() => {
 });
 
 const ownedSourceText = computed(() => {
-  if (ownedSource.value === 'lcu') return 'LCU 实时数据';
-  if (ownedSource.value === 'backend') return '数据来自上次同步';
-  return '未能获取已拥有皮肤';
+  if (ownedSource.value === 'lcu') return '实时读取自游戏客户端';
+  if (ownedSource.value === 'backend') return '上次同步的数据';
+  return '暂时读不到你的皮肤';
+});
+
+/**
+ * 分母口径与后端 my-collection 的 totalSkinsInGame 一致:去掉英雄默认皮肤,
+ * 跟游戏客户端的收藏册对得上。后端没升级、拿不到 skinId 时退回目录总数。
+ */
+const collectableTotal = computed(() => stats.value.collectableTotal || catalogSize.value);
+
+/** 完成度环:圆形聚焦,比例取「已拥有 / 可收集总数」。 */
+const completionPercent = computed(() => {
+  const total = collectableTotal.value;
+  if (!total) return 0;
+  const pct = (stats.value.ownedMatched / total) * 100;
+  return Math.min(100, Math.round(pct * 10) / 10);
+});
+
+const ringDegrees = computed(() => completionPercent.value * 3.6);
+
+const lastSyncText = computed(() => {
+  const t = parseServerTime(ownedLastSyncAt.value);
+  if (t === null) return '—';
+  const diffMin = Math.floor((Date.now() - t) / 60000);
+  if (diffMin < 1) return '刚刚';
+  if (diffMin < 60) return `${diffMin} 分钟前`;
+  const diffHour = Math.floor(diffMin / 60);
+  if (diffHour < 24) return `${diffHour} 小时前`;
+  return `${Math.floor(diffHour / 24)} 天前`;
 });
 
 const selectedOwned = computed(() =>
@@ -209,20 +249,67 @@ defineExpose({ open });
   justify-content: space-between;
   gap: 16px;
   flex-wrap: wrap;
+  padding-bottom: 10px;
+  border-bottom: 1px solid var(--hx-line);
 }
 .overview-stats {
   display: flex;
-  align-items: baseline;
+  align-items: center;
   gap: 12px;
   flex-wrap: wrap;
+}
+/* 圆形 = 聚焦:完成度环 */
+.stat-ring {
+  --pct: 0deg;
+  position: relative;
+  width: 76px;
+  height: 76px;
+  flex-shrink: 0;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: conic-gradient(
+    var(--hx-blue) 0deg var(--pct),
+    rgba(139, 147, 167, 0.16) var(--pct) 360deg
+  );
+}
+.stat-ring::before {
+  content: '';
+  position: absolute;
+  inset: 4px;
+  border-radius: 50%;
+  background: var(--hx-panel);
+  border: 1px solid var(--hx-line);
+}
+.stat-ring-value {
+  position: relative;
+  font-size: 17px;
+  font-weight: 600;
+  color: var(--hx-gold);
+  letter-spacing: 0.02em;
+}
+.stat-lines {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  min-width: 0;
+}
+.stat-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
 }
 .stat-main {
   font-size: 18px;
   font-weight: 600;
+  color: var(--hx-gold);
+  letter-spacing: 0.04em;
 }
 .stat-sub {
-  font-size: 12px;
-  color: var(--el-text-color-secondary);
+  font-size: 11px;
+  letter-spacing: 0.1em;
+  color: var(--hx-text-dim);
 }
 .overview-filters {
   display: flex;
@@ -247,7 +334,7 @@ defineExpose({ open });
   align-items: center;
   justify-content: center;
   gap: 12px;
-  color: var(--el-text-color-secondary);
+  color: var(--hx-text-dim);
 }
 .overview-grid {
   flex: 1;
@@ -259,8 +346,9 @@ defineExpose({ open });
   gap: 12px;
 }
 .footer-count {
-  font-size: 12px;
-  color: var(--el-text-color-secondary);
+  font-size: 11px;
+  letter-spacing: 0.1em;
+  color: var(--hx-text-faint);
 }
 </style>
 

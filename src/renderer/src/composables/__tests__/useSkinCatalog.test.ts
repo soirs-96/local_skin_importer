@@ -62,7 +62,11 @@ describe('useSkinCatalog', () => {
   it('falls back to the backend snapshot when the LCU is unavailable', async () => {
     api.fetchSkins.mockRejectedValue(new Error('League client is not running'));
     api.getAuthStatus.mockResolvedValue({ loggedIn: true, tokenPreview: 'jwt...' });
-    api.fetchMyOwned.mockResolvedValue({ totalOwnedCount: 87, ownedSkinIds: [100] });
+    api.fetchMyOwned.mockResolvedValue({
+      totalOwnedCount: 87,
+      ownedSkinIds: [100],
+      lastSyncAt: '2026-10-30 16:20:33'
+    });
     api.fetchCatalog.mockResolvedValue(catalogResult([record(1, 100), record(2, 200)]));
 
     const catalog = useSkinCatalog();
@@ -70,8 +74,23 @@ describe('useSkinCatalog', () => {
 
     expect(catalog.ownedSource.value).toBe('backend');
     expect(catalog.ownedReported.value).toBe(87);
+    expect(catalog.ownedLastSyncAt.value).toBe('2026-10-30 16:20:33');
     expect(catalog.stats.value.ownedMatched).toBe(1);
     expect(catalog.stats.value.ownedMissingFromCatalog).toBe(86);
+  });
+
+  it('clears the last sync time when the live LCU list wins', async () => {
+    api.fetchSkins.mockResolvedValue({
+      summoner: { displayName: 'A', puuid: 'p' },
+      ownedSkinIds: [100]
+    });
+    api.fetchCatalog.mockResolvedValue(catalogResult([record(1, 100)]));
+
+    const catalog = useSkinCatalog();
+    await catalog.load();
+
+    expect(catalog.ownedSource.value).toBe('lcu');
+    expect(catalog.ownedLastSyncAt.value).toBeNull();
   });
 
   it('skips the backend call when the user is not logged in', async () => {
