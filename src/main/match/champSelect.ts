@@ -1,4 +1,5 @@
 import type { AxiosInstance } from 'axios';
+import { lcuIconUrl } from '../../shared/icons';
 import type { ChampSelectMember, ChampSelectSession } from '../../shared/match';
 import type { StaticData } from './staticData';
 
@@ -33,7 +34,7 @@ export function parseChampSelectMembers(raw: unknown, staticData: StaticData): C
     out.push({
       championId,
       championName: info?.name ?? `#${championId}`,
-      championIconUrl: info?.iconUrl ?? null,
+      championIconUrl: championId > 0 ? lcuIconUrl('champion', championId) : null,
       assignedPosition: str(entry.assignedPosition),
       cellId: num(entry.cellId),
       summonerId: num(entry.summonerId)
@@ -85,7 +86,7 @@ export function parseChampSelectSession(
       return {
         championId: id,
         championName: info?.name ?? `#${id}`,
-        championIconUrl: info?.iconUrl ?? null
+        championIconUrl: id > 0 ? lcuIconUrl('champion', id) : null
       };
     })
   };

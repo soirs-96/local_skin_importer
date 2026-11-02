@@ -1,18 +1,19 @@
 /**
- * 图标代理:把客户端自带的图标通过 `lcuicon://` 交给渲染进程。
+ * 图标代理:把英雄/物品图标通过 `lcuicon://` 交给渲染进程。
  *
- * 为什么要自己代理,而不是让渲染进程直接 `<img src="https://ddragon...">`:
+ * 图标有两个来源,各有各的脾气:
  *
- *   - **外网 CDN 靠不住**。Data Dragon 在国服经常拉不动,表现就是
- *     「英雄名有、头像和装备全是空的」——图标这块不能再依赖外网。
- *   - **客户端自己带全套图标**。`/lol-game-data/assets/v1/` 下有英雄头像和
- *     物品图标,走本机回环一定通。
- *   - **鉴权和缓存得在主进程里做**。LCU 的资源端点要带 Basic 认证头;
- *     一次拉下来落盘缓存,之后连客户端都不用开。
+ *   - **客户端自带资源**(`/lol-game-data/assets/v1/`)—— 本机回环,一定通。
+ *     但只有**英雄头像**在那儿(`champion-icons/{id}.png`),**物品图标
+ *     客户端根本不提供**(`item/`、`items/` 全回 400)。
+ *   - **Data Dragon CDN** —— 物品图标只能走这儿。版本号必须用**客户端
+ *     报的**那个(见 patchVersion.ts),不是 DDG API 里的那个。
  *
- * 取图顺序:**磁盘缓存 → 客户端本地资源 → Data Dragon**。
- * 客户端资源走**串行**队列 —— Python 版那边踩过坑:并发拉图会把 LCU
- * 那个单监听器的回环口打爆,连带整个应用的 LCU 连接都被拒。
+ * 所以顺序是:**英雄 = 客户端 → DDG**,**物品 = DDG → 客户端**。
+ *
+ * 鉴权和磁盘缓存都在主进程里做;客户端资源走**串行**队列 —— Python 版
+ * 那边踩过坑:并发拉图会把 LCU 那个单监听器的回环口打爆,连带整个应用的
+ * LCU 连接都被拒。
  */
 
 import { app, protocol } from 'electron';
@@ -23,7 +24,9 @@ import * as fs from 'node:fs/promises';
 import * as path from 'node:path';
 import { ICON_SCHEME, parseLcuIconUrl, type IconKind } from '../../shared/icons';
 import { getIconMeta } from './iconMeta';
+import { FALLBACK_PATCH, resolvePatchVersion } from './patchVersion';
 import {
+  createLcuClient,
   getSharedLcuAuth,
   invalidateSharedLcuAuth,
   resolveLcuAuthAsync,
@@ -33,8 +36,8 @@ import {
 /**
  * 客户端资源路径的候选表。
  *
- * 路径各版本不太一样:英雄头像历来是 `champion-icons/`,物品则见过
- * `item/` 和 `items/` 两种写法 —— 所以每个都多试几个,谁先返回 200 用谁。
+ * 路径各版本不太一样,先按经验值挨个试;全都没中再去客户端的元数据里
+ * 找**权威路径**(见 loadIconPathMap)。
  */
 const LCU_ICON_PATHS: Record<IconKind, string[]> = {
   champion: [
@@ -49,6 +52,24 @@ const LCU_ICON_PATHS: Record<IconKind, string[]> = {
   ]
 };
 
+/**
+ * 客户端元数据里带图标路径的字段。
+ *
+ * 猜路径靠不住 —— 腾讯客户端的 `/lol-game-data/assets/v1/item/{id}.png`
+ * 直接回 400。客户端自己的元数据(items.json / champion-summary.json)
+ * 里带着每个 id 的**真实图标路径**,从那儿读最靠谱。
+ */
+const LCU_ICON_METADATA: Record<IconKind, string> = {
+  champion: '/lol-game-data/assets/v1/champion-summary.json',
+  item: '/lol-game-data/assets/v1/items.json'
+};
+
+/** 每个类型优先读哪个字段当图标路径。 */
+const ICON_PATH_FIELDS: Record<IconKind, string[]> = {
+  champion: ['squarePortraitPath', 'portraitPath'],
+  item: ['iconPath', 'iconLargePath', 'iconSmallPath']
+};
+
 const LCU_TIMEOUT_MS = 5_000;
 const DDRAGON_TIMEOUT_MS = 10_000;
 const DDRAGON_CDN_BASE = 'https://ddragon.leagueoflegends.com/cdn';
@@ -58,6 +79,15 @@ const inflight = new Map<string, Promise<Buffer>>();
 
 /** 已经报过「客户端资源没命中」的图标类型,避免同一个错刷几十遍。 */
 const loggedLcuMisses = new Set<IconKind>();
+
+/** 从客户端元数据里读出来的 id → 图标路径。 */
+const iconPathMaps = new Map<IconKind, Map<number, string>>();
+
+/** 已经报过「这个补丁能用」的版本号,避免每张图标都喊一遍。 */
+const loggedDdragonPatches = new Set<string>();
+
+/** 已经报过「这类图标是从哪儿取到的」,每种组合只喊一遍。 */
+const loggedSources = new Set<string>();
 
 /**
  * 拉客户端资源的串行队列。
@@ -107,7 +137,7 @@ export function registerIconProtocol(): void {
         headers: { 'content-type': 'image/png', 'cache-control': 'max-age=86400' }
       });
     } catch (e: unknown) {
-      console.warn('[iconAssets] 取图标失败', ref, e);
+      console.warn('[iconAssets] icon request failed', ref, e);
       return new Response('not found', { status: 404 });
     }
   });
@@ -128,18 +158,30 @@ export function loadIcon(kind: IconKind, id: number): Promise<Buffer> {
 
 async function fetchIcon(kind: IconKind, id: number): Promise<Buffer> {
   const cached = await readCache(kind, id);
-  if (cached) return cached;
-
-  const fromLcu = await fetchFromLcu(kind, id);
-  if (fromLcu) {
-    await writeCache(kind, id, fromLcu);
-    return fromLcu;
+  if (cached) {
+    const tag = `${kind}:cache`;
+    if (!loggedSources.has(tag)) {
+      loggedSources.add(tag);
+      console.log(`[iconAssets] ${kind} icons served from disk cache`);
+    }
+    return cached;
   }
 
-  const fromDdragon = await fetchFromDdragon(kind, id);
-  if (fromDdragon) {
-    await writeCache(kind, id, fromDdragon);
-    return fromDdragon;
+  // 英雄头像客户端就有,先走本机;物品图标客户端不提供,只能走 DDG
+  const order: ('lcu' | 'ddragon')[] = kind === 'item' ? ['ddragon', 'lcu'] : ['lcu', 'ddragon'];
+
+  for (const source of order) {
+    const buffer =
+      source === 'lcu' ? await fetchFromLcu(kind, id) : await fetchFromDdragon(kind, id);
+    if (buffer) {
+      const tag = `${kind}:${source}`;
+      if (!loggedSources.has(tag)) {
+        loggedSources.add(tag);
+        console.log(`[iconAssets] ${kind} icons served from ${source} (e.g. ${kind}/${id})`);
+      }
+      await writeCache(kind, id, buffer);
+      return buffer;
+    }
   }
 
   throw new Error(`icon ${kind}/${id} not found`);
@@ -169,7 +211,7 @@ async function writeCache(kind: IconKind, id: number, data: Buffer): Promise<voi
     await fs.writeFile(target, data);
   } catch (e: unknown) {
     // 缓存写不进去不影响使用,只是下次还要重新拉一遍
-    console.warn('[iconAssets] 写缓存失败', target, e);
+    console.warn('[iconAssets] cache write failed', target, e);
   }
 }
 
@@ -186,25 +228,133 @@ async function fetchFromLcu(kind: IconKind, id: number): Promise<Buffer | null> 
 
       let authFailed = false;
       const statuses: string[] = [];
+      let detail: string | undefined;
+      const note = (result: LcuFetchResult, label: string): void => {
+        statuses.push(`${label}=${result.status ?? 'ERR'}`);
+        if (!detail && result.detail) detail = result.detail;
+      };
+
+      // 元数据已经读过的话,权威路径排最前面 —— 一次就中
+      const known = iconPathMaps.get(kind)?.get(id);
+      if (known) {
+        const result = await tryFetchLcu(auth, known);
+        if (result.buffer) return result.buffer;
+        if (result.authFailed) authFailed = true;
+        note(result, known);
+      }
+
+      // 经验候选路径
       for (const candidate of candidates) {
         const result = await tryFetchLcu(auth, candidate);
         if (result.buffer) return result.buffer;
         if (result.authFailed) authFailed = true;
-        statuses.push(`${candidate}=${result.status ?? 'ERR'}`);
+        note(result, candidate);
       }
+
+      // 元数据还没读过 —— 读一次,拿权威路径再试
+      if (!iconPathMaps.has(kind)) {
+        const authoritative = await lookupAuthoritativePath(kind, id, auth);
+        if (authoritative) {
+          const result = await tryFetchLcu(auth, authoritative);
+          if (result.buffer) {
+            console.log(`[iconAssets] HIT ${kind}/${id} via client metadata: ${authoritative}`);
+            return result.buffer;
+          }
+          if (result.authFailed) authFailed = true;
+          note(result, authoritative);
+        }
+      }
+
       // 路径全试过了还没中 —— 每种类型只报一次,不然刷屏
       if (!loggedLcuMisses.has(kind)) {
         loggedLcuMisses.add(kind);
-        console.warn(`[iconAssets] 客户端资源没命中 ${kind},试过:${statuses.join(' ')}`);
+        const suffix = detail ? ` | body: ${detail}` : '';
+        console.warn(`[iconAssets] MISS ${kind} tried: ${statuses.join(' ')}${suffix}`);
       }
       // 401/403 说明 token 过期了(客户端重启过),换一份凭据再试一轮
       if (!authFailed) return null;
       invalidateSharedLcuAuth();
       localAuth = null;
       localAuthFailedAt = 0;
+      iconPathMaps.clear();
     }
     return null;
   });
+}
+
+/**
+ * 从客户端元数据里查 id 对应的图标路径。
+ *
+ * 猜路径靠不住:腾讯客户端的物品图标路径不是 `item/` 也不是 `items/`,
+ * 挨个试都是 400。客户端自己的 items.json / champion-summary.json 里
+ * 带着每个 id 的真实路径,从那儿读最稳。
+ */
+async function lookupAuthoritativePath(
+  kind: IconKind,
+  id: number,
+  auth: LcuAuth
+): Promise<string | null> {
+  const map = await loadIconPathMap(kind, auth);
+  return map.get(id) ?? null;
+}
+
+/** 拉一次客户端元数据,建 id → 图标路径的表;只拉一次,之后都用缓存。 */
+async function loadIconPathMap(kind: IconKind, auth: LcuAuth): Promise<Map<number, string>> {
+  const cached = iconPathMaps.get(kind);
+  if (cached) return cached;
+
+  const raw = await lcuGetJson(auth, LCU_ICON_METADATA[kind]);
+  const entries = Array.isArray(raw)
+    ? raw
+    : isRecord(raw)
+      ? Object.values(raw)
+      : [];
+
+  // 英雄:同一个 id 下还挂着皮肤条目,本体条目(带 roles)的路径才算数
+  const base = new Map<number, string>();
+  const fallback = new Map<number, string>();
+  for (const entry of entries) {
+    if (!isRecord(entry)) continue;
+    const id = Number(entry.id);
+    if (!Number.isFinite(id) || id <= 0) continue;
+    const path = pickIconPath(kind, entry);
+    if (!path) continue;
+    const isBase = Array.isArray(entry.roles) && entry.roles.length > 0;
+    const target = isBase ? base : fallback;
+    if (!target.has(id)) target.set(id, path);
+  }
+
+  const map = new Map<number, string>([...fallback, ...base]);
+
+  if (map.size === 0) {
+    // 元数据里没有可用的路径字段 —— 把字段名打出来,好知道该认哪个
+    const first = entries.find((entry) => isRecord(entry));
+    const keys = first && isRecord(first) ? Object.keys(first).join(',') : '(empty)';
+    console.warn(`[iconAssets] no icon path field in ${LCU_ICON_METADATA[kind]}, keys: ${keys}`);
+    return map;
+  }
+
+  iconPathMaps.set(kind, map);
+  console.log(`[iconAssets] ${kind} icon paths from client metadata: ${map.size} entries`);
+  return map;
+}
+
+/** 从一条元数据里挑出图标路径。 */
+function pickIconPath(kind: IconKind, entry: Record<string, unknown>): string | null {
+  for (const field of ICON_PATH_FIELDS[kind]) {
+    const value = entry[field];
+    if (typeof value === 'string' && value.endsWith('.png')) return value;
+  }
+  // 兜底:任何叫 xxxPath 的 png 字段(原画 splash 这类不要)
+  for (const [key, value] of Object.entries(entry)) {
+    if (!key.endsWith('Path') || key.toLowerCase().includes('splash')) continue;
+    if (typeof value === 'string' && value.endsWith('.png')) return value;
+  }
+  return null;
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null;
 }
 
 interface LcuFetchResult {
@@ -212,6 +362,8 @@ interface LcuFetchResult {
   authFailed: boolean;
   /** HTTP 状态码;连接层出错时是 undefined */
   status?: number;
+  /** 错误响应体的一小截,用来认出「路径不对」还是别的原因 */
+  detail?: string;
 }
 
 async function tryFetchLcu(auth: LcuAuth, assetPath: string): Promise<LcuFetchResult> {
@@ -229,8 +381,38 @@ async function tryFetchLcu(auth: LcuAuth, assetPath: string): Promise<LcuFetchRe
     const buffer = Buffer.from(data);
     return { buffer: buffer.length > 0 ? buffer : null, authFailed: false, status: 200 };
   } catch (e: unknown) {
-    const status = (e as { response?: { status?: number } })?.response?.status;
-    return { buffer: null, authFailed: status === 401 || status === 403, status };
+    const response = (e as { response?: { status?: number; data?: unknown } })?.response;
+    const status = response?.status;
+    return {
+      buffer: null,
+      authFailed: status === 401 || status === 403,
+      status,
+      detail: readDetail(response?.data)
+    };
+  }
+}
+
+/** 错误响应体取个短摘要 —— LCU 有时会在里面说明为什么 400。 */
+function readDetail(data: unknown): string | undefined {
+  if (!data) return undefined;
+  const text = Buffer.isBuffer(data) ? data.toString('utf8') : String(data);
+  const trimmed = text.replace(/\s+/g, ' ').trim();
+  if (!trimmed) return undefined;
+  return trimmed.slice(0, 120);
+}
+
+/** GET 一次客户端的 JSON 接口。 */
+async function lcuGetJson(auth: LcuAuth, url: string): Promise<unknown | null> {
+  try {
+    const { data } = await axios.get(url, {
+      httpsAgent: new https.Agent({ rejectUnauthorized: false }),
+      headers: { Authorization: basicAuthHeader(auth.token) },
+      timeout: LCU_TIMEOUT_MS,
+      validateStatus: (status) => status === 200
+    });
+    return data;
+  } catch {
+    return null;
   }
 }
 
@@ -272,15 +454,61 @@ function runExclusive<T>(task: () => Promise<T>): Promise<T> {
 /*                                Data Dragon                                   */
 /* -------------------------------------------------------------------------- */
 
-async function fetchFromDdragon(kind: IconKind, id: number): Promise<Buffer | null> {
-  const meta = getIconMeta();
-  if (!meta.version) return null;
+/** 客户端报的版本号,只探一次。 */
+let patchPromise: Promise<string> | null = null;
 
+/**
+ * 问客户端当前是哪个补丁。
+ *
+ * 腾讯客户端报的是 `16.18.8165012+branch.releases-...`,原样拼到 CDN 路径
+ * 里每个请求都 403 —— patchVersion.ts 负责归一化成 `X.Y.1`。
+ */
+function resolvePatch(): Promise<string> {
+  if (!patchPromise) {
+    patchPromise = (async () => {
+      const auth = await resolveAuth();
+      if (!auth) return FALLBACK_PATCH;
+      try {
+        return await resolvePatchVersion(createLcuClient(auth.port, auth.token));
+      } catch {
+        return FALLBACK_PATCH;
+      }
+    })();
+  }
+  return patchPromise;
+}
+
+/** 值得试的补丁号:客户端报的优先,再退到静态数据用过的版本、兜底版本。 */
+async function ddragonPatches(): Promise<string[]> {
+  const out: string[] = [];
+  const fromClient = await resolvePatch();
+  out.push(fromClient);
+  const meta = getIconMeta();
+  if (meta.version && !out.includes(meta.version)) out.push(meta.version);
+  if (!out.includes(FALLBACK_PATCH)) out.push(FALLBACK_PATCH);
+  return out;
+}
+
+async function fetchFromDdragon(kind: IconKind, id: number): Promise<Buffer | null> {
   // 物品图标按 id 命名(1001.png),英雄图标按英文名命名(Aatrox.png)
-  const file = kind === 'champion' ? meta.championFiles.get(id) : `${id}.png`;
+  const file = kind === 'champion' ? getIconMeta().championFiles.get(id) : `${id}.png`;
   if (!file) return null;
 
-  const url = `${DDRAGON_CDN_BASE}/${meta.version}/img/${kind}/${file}`;
+  for (const patch of await ddragonPatches()) {
+    const url = `${DDRAGON_CDN_BASE}/${patch}/img/${kind}/${file}`;
+    const buffer = await fetchDdragonImage(url);
+    if (buffer) {
+      if (!loggedDdragonPatches.has(patch)) {
+        loggedDdragonPatches.add(patch);
+        console.log(`[iconAssets] ddragon patch ${patch} works for ${kind}/${id}`);
+      }
+      return buffer;
+    }
+  }
+  return null;
+}
+
+async function fetchDdragonImage(url: string): Promise<Buffer | null> {
   try {
     const { data } = await axios.get<ArrayBuffer>(url, {
       responseType: 'arraybuffer',

@@ -1,4 +1,5 @@
 import type { AxiosInstance } from 'axios';
+import { lcuIconUrl } from '../../shared/icons';
 import type { RecentMatch, RecentMatchesSummary } from '../../shared/match';
 import type { StaticData } from './staticData';
 
@@ -112,7 +113,8 @@ export function parseMatchEntry(
     gameId: num(raw.gameId),
     championId,
     championName: championName || `#${championId}`,
-    championIconUrl: info?.iconUrl ?? null,
+    // 图标地址只认 id —— 静态数据没查到这个名字,不代表头像就画不出来
+    championIconUrl: championId > 0 ? lcuIconUrl('champion', championId) : null,
     queueType: str(raw.gameMode) || str(raw.queueType),
     role: str(timeline.role) || str(stats.role),
     kills,
@@ -127,7 +129,7 @@ export function parseMatchEntry(
       return {
         itemId,
         name: item?.name ?? `物品#${itemId}`,
-        iconUrl: item?.iconUrl ?? null
+        iconUrl: itemId > 0 ? lcuIconUrl('item', itemId) : null
       };
     })
   };

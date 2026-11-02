@@ -13,7 +13,7 @@ const staticData: StaticData = {
 };
 
 describe('parseChampSelectMembers', () => {
-  it('用静态数据补上英雄中文名和头像', () => {
+  it('中文名取静态数据,头像地址按 id 拼', () => {
     const members = parseChampSelectMembers(
       [{ championId: 1, assignedPosition: 'MIDDLE', cellId: 3, summonerId: 111 }],
       staticData
@@ -22,7 +22,7 @@ describe('parseChampSelectMembers', () => {
       {
         championId: 1,
         championName: '安妮',
-        championIconUrl: 'https://cdn/annie.png',
+        championIconUrl: 'lcuicon://champion/1.png',
         assignedPosition: 'MIDDLE',
         cellId: 3,
         summonerId: 111
@@ -30,10 +30,10 @@ describe('parseChampSelectMembers', () => {
     ]);
   });
 
-  it('静态数据里没有的英雄退回 #id', () => {
+  it('静态数据里没有的英雄退回 #id,头像地址照样按 id 拼', () => {
     const members = parseChampSelectMembers([{ championId: 999 }], staticData);
     expect(members[0].championName).toBe('#999');
-    expect(members[0].championIconUrl).toBeNull();
+    expect(members[0].championIconUrl).toBe('lcuicon://champion/999.png');
   });
 
   it('非数组输入返回空数组', () => {

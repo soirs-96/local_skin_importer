@@ -113,6 +113,20 @@ describe('parseMatchEntry', () => {
   it('非对象返回 null', () => {
     expect(parseMatchEntry('nope', staticData)).toBeNull();
   });
+
+  it('图标地址只认 id —— 静态数据里没有的英雄/物品也要给地址', () => {
+    const match = parseMatchEntry(
+      {
+        gameId: 14,
+        championId: 999,
+        stats: { kills: 0, deaths: 0, assists: 0, item0: 2003 }
+      },
+      staticData
+    );
+    expect(match?.championName).toBe('#999');
+    expect(match?.championIconUrl).toBe('lcuicon://champion/999.png');
+    expect(match?.items[0].iconUrl).toBe('lcuicon://item/2003.png');
+  });
 });
 
 describe('parseRecentMatches', () => {

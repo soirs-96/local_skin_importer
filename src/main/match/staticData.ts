@@ -1,6 +1,7 @@
 import axios, { AxiosInstance } from 'axios';
 import { lcuIconUrl } from '../../shared/icons';
-import { setIconMeta } from './iconMeta';
+import { setChampionFiles, setIconVersion } from './iconMeta';
+import { patchCandidates } from './patchVersion';
 
 /**
  * 静态游戏数据:英雄 / 物品 / 天赋的中文名,以及图标 URL。
@@ -13,6 +14,10 @@ import { setIconMeta } from './iconMeta';
  * 两条路**同时跑**:Data Dragon 在国服经常拉不动,只给它 2.5 秒预算,超时就
  * 用 LCU 的结果 —— 名字可能带点皮肤名,但至少不为空。名字取两份的并集,
  * Data Dragon 优先。
+ *
+ * **版本号不从 Data Dragon 的 API 取**,而是从客户端那里问(见
+ * patchVersion.ts):腾讯客户端报的是 `16.18.8165012+branch...`,
+ * 原样丢给 CDN 每个请求都 403。
  *
  * 图标不再走 Data Dragon 的 CDN URL —— 外网 CDN 一挂,界面上就是
  * 「英雄名有、头像和装备全是空的」。现在一律给 `lcuicon://` 自定义协议,
@@ -74,7 +79,9 @@ function num(v: unknown): number {
 /**
  * 取最近的几个版本号,新的在前。
  *
- * 新版本刚发布时 CDN 上的数据文件经常还没传完,这时退回上一个版本就好。
+ * 这是 **Data Dragon 自己的版本列表**,只当兜底:国服网络上这个接口经常
+ * 拉不到,拉到了也不一定是客户端正在跑的那个版本。真正的版本号由
+ * {@link patchCandidates} 从客户端那里问出来。
  */
 export async function fetchDdragonVersions(): Promise<string[]> {
   try {
@@ -88,6 +95,16 @@ export async function fetchDdragonVersions(): Promise<string[]> {
   } catch {
     return [];
   }
+}
+
+/**
+ * 版本候选:客户端报的版本优先。
+ *
+ * 只问客户端(本机回环,毫秒级)。Data Dragon 的版本列表当最后兜底 ——
+ * 那个接口在国服经常拉不动,不能挡在前面。
+ */
+async function collectVersions(client?: AxiosInstance): Promise<string[]> {
+  return patchCandidates(client).catch(() => []);
 }
 
 function ddragonDataUrl(version: string, file: string): string {
@@ -293,30 +310,42 @@ export function emptyStaticData(): StaticData {
  * 英雄 —— 之前是一个 `Promise.all`,任意一个文件失败就把整份 Data Dragon
  * 丢掉,于是英雄名也一起退成了 LCU 的皮肤名。
  */
-async function loadFromDdragon(): Promise<StaticData | null> {
-  const versions = await fetchDdragonVersions();
-
-  for (const version of versions) {
-    const championsRaw = await fetchJson(ddragonDataUrl(version, 'champion.json'));
-    if (!championsRaw) continue;
-
-    const champions = parseDdragonChampions(championsRaw);
-    if (champions.size === 0) continue;
-
-    const [itemsRaw, runesRaw] = await Promise.all([
-      fetchJson(ddragonDataUrl(version, 'item.json')),
-      fetchJson(ddragonDataUrl(version, 'runesReforged.json'))
-    ]);
-
-    const items = itemsRaw ? parseDdragonItems(itemsRaw) : new Map<number, ItemInfo>();
-    const runes = runesRaw ? parseRunes(runesRaw) : new Map<number, string>();
-
-    // 图标代理退到 Data Dragon 时要用的对照表
-    setIconMeta({ version, championFiles: parseDdragonChampionFiles(championsRaw) });
-
-    return { version, champions, items, runes };
+async function loadFromDdragon(clientVersions: string[]): Promise<StaticData | null> {
+  // 客户端报的版本先试;全都不中再问 Data Dragon 自己的版本列表(慢,兜底)
+  for (const version of clientVersions) {
+    const data = await loadDdragonVersion(version);
+    if (data) return data;
+  }
+  for (const version of await fetchDdragonVersions()) {
+    const data = await loadDdragonVersion(version);
+    if (data) return data;
   }
   return null;
+}
+
+/** 拉某一个版本的 Data Dragon 数据。 */
+async function loadDdragonVersion(version: string): Promise<StaticData | null> {
+  // 版本号先记上 —— 物品图标只需要版本号,不用等 champion.json
+  setIconVersion(version);
+
+  const championsRaw = await fetchJson(ddragonDataUrl(version, 'champion.json'));
+  if (!championsRaw) return null;
+
+  const champions = parseDdragonChampions(championsRaw);
+  if (champions.size === 0) return null;
+
+  const [itemsRaw, runesRaw] = await Promise.all([
+    fetchJson(ddragonDataUrl(version, 'item.json')),
+    fetchJson(ddragonDataUrl(version, 'runesReforged.json'))
+  ]);
+
+  const items = itemsRaw ? parseDdragonItems(itemsRaw) : new Map<number, ItemInfo>();
+  const runes = runesRaw ? parseRunes(runesRaw) : new Map<number, string>();
+
+  // 图标代理退到 Data Dragon 时要用的对照表
+  setChampionFiles(parseDdragonChampionFiles(championsRaw));
+
+  return { version, champions, items, runes };
 }
 
 /** LCU 一路:本机回环,三个文件也是各自独立。 */
@@ -370,14 +399,27 @@ function mergeStaticData(primary: StaticData, fallback: StaticData): StaticData 
  * `lcuClient` 可以不传 —— 那就只有 Data Dragon 一条路,失败就是空数据。
  */
 export async function loadStaticData(lcuClient?: AxiosInstance): Promise<StaticData> {
+  const result = await loadStaticDataInner(lcuClient);
+  console.log(
+    `[staticData] champions=${result.champions.size} items=${result.items.size} ` +
+      `version=${result.version ?? 'none'}`
+  );
+  return result;
+}
+
+async function loadStaticDataInner(lcuClient?: AxiosInstance): Promise<StaticData> {
   if (!lcuClient) {
-    const ddragon = await loadFromDdragon().catch(() => null);
+    const versions = await collectVersions(undefined);
+    const ddragon = await loadFromDdragon(versions).catch(() => null);
     return ddragon ?? emptyStaticData();
   }
 
+  // LCU 的名字和「探版本号」并行 —— 探版本号是本机回环,很快,但没必要让它挡着
   const lcuPromise = loadFromLcu(lcuClient);
   const ddragon = await Promise.race([
-    loadFromDdragon().catch(() => null),
+    collectVersions(lcuClient)
+      .then((versions) => loadFromDdragon(versions))
+      .catch(() => null),
     new Promise<null>((resolve) => {
       const timer = setTimeout(() => resolve(null), DDRAGON_BUDGET_MS);
       timer.unref?.();
