@@ -126,7 +126,7 @@ describe('extractRankedEntriesFromEvent', () => {
       data: [{ queueType: 'RANKED_SOLO_5x5', tier: 'GOLD', division: 'II', wins: 3, losses: 1 }]
     });
     expect(entries).toHaveLength(1);
-    expect(entries[0].display).toBe('华贵黄金 II');
+    expect(entries[0].display).toBe('荣耀黄金 II');
   });
 
   it('queues 包装形状', () => {

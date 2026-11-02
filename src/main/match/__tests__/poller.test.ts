@@ -221,7 +221,7 @@ describe('MatchPoller 的 WebSocket 通道', () => {
     expect(snapshot.rankedSource).toBe('ws');
     expect(snapshot.ranked).toHaveLength(1);
     expect(snapshot.ranked[0].tier).toBe('GOLD');
-    expect(snapshot.ranked[0].display).toBe('华贵黄金 II');
+    expect(snapshot.ranked[0].display).toBe('荣耀黄金 II');
 
     poller.stop();
   });

@@ -8,7 +8,7 @@ import {
 
 describe('formatRankDisplay', () => {
   it('给出中文段位 + 罗马数字', () => {
-    expect(formatRankDisplay('GOLD', 'II')).toBe('华贵黄金 II');
+    expect(formatRankDisplay('GOLD', 'II')).toBe('荣耀黄金 II');
   });
 
   it('大师段位没有小分区时只显示段位名', () => {
@@ -43,7 +43,7 @@ describe('parseRankedEntries', () => {
       }
     ]);
     expect(entries).toHaveLength(1);
-    expect(entries[0].display).toBe('华贵黄金 II');
+    expect(entries[0].display).toBe('荣耀黄金 II');
     expect(entries[0].winrate).toBeCloseTo(0.6);
     expect(entries[0].leaguePoints).toBe(45);
   });
