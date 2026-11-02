@@ -18,10 +18,11 @@
           :class="{ 'is-me': isMe(member) }"
         >
           <img
-            v-if="member.championIconUrl"
+            v-if="member.championIconUrl && !isBroken(member.championIconUrl)"
             class="champ-icon"
             :src="member.championIconUrl"
             :alt="member.championName"
+            @error="markBroken(member.championIconUrl)"
           />
           <span v-else class="champ-icon champ-icon--empty">?</span>
           <span class="champ-name">{{ member.championName }}</span>
@@ -38,10 +39,11 @@
       <div class="champ-row">
         <div v-for="member in session.theirTeam" :key="`their-${member.cellId}`" class="champ">
           <img
-            v-if="member.championIconUrl"
+            v-if="member.championIconUrl && !isBroken(member.championIconUrl)"
             class="champ-icon"
             :src="member.championIconUrl"
             :alt="member.championName"
+            @error="markBroken(member.championIconUrl)"
           />
           <span v-else class="champ-icon champ-icon--empty">?</span>
           <span class="champ-name">{{ member.championName }}</span>
@@ -58,10 +60,11 @@
         <div class="ban-row">
           <div v-for="champ in session.bannedChampions" :key="champ.championId" class="ban-chip">
             <img
-              v-if="champ.championIconUrl"
+              v-if="champ.championIconUrl && !isBroken(champ.championIconUrl)"
               class="ban-icon"
               :src="champ.championIconUrl"
               :alt="champ.championName"
+              @error="markBroken(champ.championIconUrl)"
             />
             <span>{{ champ.championName }}</span>
           </div>
@@ -73,8 +76,11 @@
 
 <script setup lang="ts">
 import type { ChampSelectMember, ChampSelectSession } from '../../../../shared/match';
+import { useBrokenIcons } from '../../composables/useBrokenIcons';
 
 const props = defineProps<{ session: ChampSelectSession }>();
+
+const { isBroken, markBroken } = useBrokenIcons();
 
 const ROLE_LABELS: Record<string, string> = {
   TOP: '上单',

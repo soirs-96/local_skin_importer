@@ -4,10 +4,11 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width,initial-scale=1.0" />
     <!-- 皮肤图标是后端返回的远程 URL(腾讯 CDN / 自建站 / 图片服务器,主机不固定),
-         所以 img-src 必须放开 http(s);script-src 仍然锁死 'self'。 -->
+         所以 img-src 必须放开 http(s);对局助手的英雄/装备图标走 lcuicon:// 自定义协议
+         (主进程从客户端本地资源代理),也要放行;script-src 仍然锁死 'self'。 -->
     <meta
       http-equiv="Content-Security-Policy"
-      content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: http: https:;"
+      content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: http: https: lcuicon:;"
     />
     <title>LOL Skin Importer</title>
   </head>

@@ -1,28 +1,32 @@
 import axios, { AxiosInstance } from 'axios';
+import { lcuIconUrl } from '../../shared/icons';
+import { setIconMeta } from './iconMeta';
 
 /**
- * 静态游戏数据:英雄 / 物品 / 天赋的中文名与图标 URL。
+ * 静态游戏数据:英雄 / 物品 / 天赋的中文名,以及图标 URL。
  *
- * 主源是 Data Dragon(带 zh_CN 语言包),它一次给全:
- *   - 版本号     api/versions.json
- *   - 英雄       cdn/{v}/data/zh_CN/champion.json
- *   - 物品       cdn/{v}/data/zh_CN/item.json
- *   - 天赋       cdn/{v}/data/zh_CN/runesReforged.json
+ * 名字有两个来源:
  *
- * Data Dragon 挂了才退回 LCU 的本地静态资源 —— 但 LCU 那边**只能拿到名字**:
- * 腾讯客户端的 champion-summary.json 里混着一千多条皮肤变体条目
- * (Jade_Annie / PROJECT_Vayne 之类),同一个英雄 id 会出现好几次。
- * 靠「alias 不带皮肤前缀」筛出本体,名字才不会被换成「玉剑传说 安妮」。
+ *   - **Data Dragon**(带 zh_CN 语言包):名字最权威,一次给全;
+ *   - **LCU 本地资源**:本机回环,一定拉得到,只是名字里混着皮肤条目。
  *
- * 图标一律走 Data Dragon 的 CDN URL,渲染进程直接 <img src> 加载 ——
- * 不需要像 pywebview 那套 data: URI 内联(那是 WebView2 拦 file:// 跨域的
- * 权宜之计,Electron 渲染进程没这个限制)。
+ * 两条路**同时跑**:Data Dragon 在国服经常拉不动,只给它 2.5 秒预算,超时就
+ * 用 LCU 的结果 —— 名字可能带点皮肤名,但至少不为空。名字取两份的并集,
+ * Data Dragon 优先。
+ *
+ * 图标不再走 Data Dragon 的 CDN URL —— 外网 CDN 一挂,界面上就是
+ * 「英雄名有、头像和装备全是空的」。现在一律给 `lcuicon://` 自定义协议,
+ * 由主进程从**客户端自带的资源**里取(见 iconAssets.ts)。
  */
 
 const DDRAGON_API_BASE = 'https://ddragon.leagueoflegends.com/api';
 const DDRAGON_CDN_BASE = 'https://ddragon.leagueoflegends.com/cdn';
 const DDRAGON_LOCALE = 'zh_CN';
 const HTTP_TIMEOUT_MS = 15_000;
+/** Data Dragon 的等待预算:超时就用 LCU 的名字。 */
+const DDRAGON_BUDGET_MS = 2_500;
+/** 试试 newest 之外的前一个版本 —— 新版本刚发时 CDN 常常还没同步。 */
+const DDRAGON_VERSION_TRY_COUNT = 2;
 
 /** 腾讯客户端的 champion-summary 里这些前缀代表「某个皮肤」而不是英雄本体。 */
 const SKIN_ALIAS_PREFIXES = ['Jade_', 'PROJECT_', 'Spirit_', 'StarGuardian_'];
@@ -38,7 +42,7 @@ export interface ItemInfo {
 }
 
 export interface StaticData {
-  /** Data Dragon 版本号;null = 拿不到(图标就都没有) */
+  /** Data Dragon 版本号;null = 没拿到(不影响图标,图标走客户端资源) */
   version: string | null;
   champions: Map<number, ChampionInfo>;
   items: Map<number, ItemInfo>;
@@ -54,22 +58,35 @@ function str(v: unknown): string {
 }
 
 function num(v: unknown): number {
-  return typeof v === 'number' && Number.isFinite(v) ? v : 0;
+  if (typeof v === 'number' && Number.isFinite(v)) return v;
+  // 有些版本把 id 写成字符串("266"),照样当数字用
+  if (typeof v === 'string' && v.trim() !== '') {
+    const parsed = Number(v);
+    if (Number.isFinite(parsed)) return parsed;
+  }
+  return 0;
 }
 
 /* -------------------------------------------------------------------------- */
 /*                                  Data Dragon                                 */
 /* -------------------------------------------------------------------------- */
 
-export async function fetchDdragonVersion(): Promise<string | null> {
+/**
+ * 取最近的几个版本号,新的在前。
+ *
+ * 新版本刚发布时 CDN 上的数据文件经常还没传完,这时退回上一个版本就好。
+ */
+export async function fetchDdragonVersions(): Promise<string[]> {
   try {
     const { data } = await axios.get<string[]>(`${DDRAGON_API_BASE}/versions.json`, {
       timeout: HTTP_TIMEOUT_MS
     });
-    const first = Array.isArray(data) ? data[0] : null;
-    return typeof first === 'string' && first ? first : null;
+    if (!Array.isArray(data)) return [];
+    return data
+      .filter((v): v is string => typeof v === 'string' && v !== '')
+      .slice(0, DDRAGON_VERSION_TRY_COUNT);
   } catch {
-    return null;
+    return [];
   }
 }
 
@@ -77,8 +94,38 @@ function ddragonDataUrl(version: string, file: string): string {
   return `${DDRAGON_CDN_BASE}/${version}/data/${DDRAGON_LOCALE}/${file}`;
 }
 
-export function parseDdragonChampions(raw: unknown, version: string): Map<number, ChampionInfo> {
+async function fetchJson(url: string): Promise<unknown | null> {
+  try {
+    const { data } = await axios.get(url, { timeout: HTTP_TIMEOUT_MS });
+    return data;
+  } catch {
+    return null;
+  }
+}
+
+export function parseDdragonChampions(raw: unknown): Map<number, ChampionInfo> {
   const out = new Map<number, ChampionInfo>();
+  if (!Array.isArray(raw)) return out;
+  for (const entry of raw) {
+    if (!isRecord(entry)) continue;
+    const id = num(entry.id);
+    if (!id) continue;
+    out.set(id, {
+      name: str(entry.name),
+      iconUrl: lcuIconUrl('champion', id)
+    });
+  }
+  return out;
+}
+
+/**
+ * 英雄 id → Data Dragon 上的图片文件名(Aatrox.png)。
+ *
+ * 英雄图标在 Data Dragon 上按**英文名**命名,而客户端给的是数字 id,
+ * 图标代理退到 Data Dragon 时需要这份对照表。
+ */
+export function parseDdragonChampionFiles(raw: unknown): Map<number, string> {
+  const out = new Map<number, string>();
   if (!Array.isArray(raw)) return out;
   for (const entry of raw) {
     if (!isRecord(entry)) continue;
@@ -86,26 +133,21 @@ export function parseDdragonChampions(raw: unknown, version: string): Map<number
     if (!id) continue;
     const image = isRecord(entry.image) ? entry.image : {};
     const file = str(image.full);
-    out.set(id, {
-      name: str(entry.name),
-      iconUrl: file ? `${DDRAGON_CDN_BASE}/${version}/img/champion/${file}` : null
-    });
+    if (file) out.set(id, file);
   }
   return out;
 }
 
-export function parseDdragonItems(raw: unknown, version: string): Map<number, ItemInfo> {
+export function parseDdragonItems(raw: unknown): Map<number, ItemInfo> {
   const out = new Map<number, ItemInfo>();
   if (!isRecord(raw)) return out;
   for (const entry of Object.values(raw)) {
     if (!isRecord(entry)) continue;
     const id = num(entry.id);
     if (!id) continue;
-    const image = isRecord(entry.image) ? entry.image : {};
-    const file = str(image.full);
     out.set(id, {
       name: str(entry.name),
-      iconUrl: file ? `${DDRAGON_CDN_BASE}/${version}/img/item/${file}` : null
+      iconUrl: lcuIconUrl('item', id)
     });
   }
   return out;
@@ -138,36 +180,85 @@ export function parseRunes(raw: unknown): Map<number, string> {
 /* -------------------------------------------------------------------------- */
 
 /**
+ * 判断一个 champion-summary 条目有多像「英雄本体」。
+ *
+ * 腾讯客户端的这份数据混着皮肤条目,而且**皮肤条目也挂在英雄 id 上** ——
+ * 同一个 id 会出现好几次。本体条目用这几个信号认:
+ *
+ *   1. `roles` —— 本体条目有角色列表(法师/射手/...),皮肤条目没有;
+ *   2. `skinId` —— 本体没有这个字段(或为 0),皮肤条目有;
+ *   3. alias —— 本体就是英雄名,皮肤条目带皮肤前缀(Jade_ / PROJECT_ ...);
+ *   4. 名字 —— 本体的中文名没有空格,皮肤名是「皮肤名 英雄名」的格式。
+ *
+ * 分值越低越像本体。
+ */
+function lcuBaseScore(entry: Record<string, unknown>, alias: string, name: string): number {
+  let score = 0;
+  if (hasRoles(entry)) score -= 50;
+  if (hasSkinId(entry)) score += 100;
+  if (SKIN_ALIAS_PREFIXES.some((prefix) => alias.startsWith(prefix))) score += 50;
+  if (alias.includes('_')) score += 20;
+  if (name.includes(' ')) score += 10;
+  return score;
+}
+
+function hasRoles(entry: Record<string, unknown>): boolean {
+  const roles = entry.roles;
+  return Array.isArray(roles) && roles.length > 0;
+}
+
+function hasSkinId(entry: Record<string, unknown>): boolean {
+  const raw = entry.skinId;
+  if (raw === undefined || raw === null) return false;
+  const value = typeof raw === 'number' ? raw : Number(raw);
+  return Number.isFinite(value) && value !== 0;
+}
+
+/**
  * 从 LCU 的 champion-summary.json 里挑出「英雄本体」条目。
  *
- * 腾讯客户端的这份数据混着皮肤变体,同一个英雄 id 会出现多次:
- * `Jade_Annie`、`PROJECT_Vayne` 这种 alias 属于皮肤,只有 alias 不带任何
- * 已知皮肤前缀的条目才是本体。挑不出来就退回第一条(名字至少不是空的)。
+ * 挑不出来就退回第一条(名字至少不是空的)。
  */
 export function parseLcuChampions(raw: unknown): Map<number, ChampionInfo> {
-  // 本体条目优先;只有皮肤条目时才退而用皮肤条目兜底(名字至少不是空的)。
-  const base = new Map<number, ChampionInfo>();
-  const skinFallback = new Map<number, ChampionInfo>();
-  if (!Array.isArray(raw)) return base;
+  const out = new Map<number, ChampionInfo>();
+  if (!Array.isArray(raw)) return out;
+
+  const best = new Map<
+    number,
+    { score: number; name: string; alias: string; info: ChampionInfo }
+  >();
 
   for (const entry of raw) {
     if (!isRecord(entry)) continue;
     const id = num(entry.id);
     if (!id) continue;
+
     const alias = str(entry.alias) || str(entry.key) || str(entry.nameId);
-    const info: ChampionInfo = { name: str(entry.name) || alias, iconUrl: null };
-    const isSkinAlias = SKIN_ALIAS_PREFIXES.some((p) => alias.startsWith(p));
-    if (!isSkinAlias) {
-      if (!base.has(id)) base.set(id, info);
-    } else if (!skinFallback.has(id)) {
-      skinFallback.set(id, info);
+    const name = str(entry.name) || alias;
+    const info: ChampionInfo = { name, iconUrl: lcuIconUrl('champion', id) };
+    const score = lcuBaseScore(entry, alias, name);
+
+    const current = best.get(id);
+    if (!current || score < current.score) {
+      best.set(id, { score, name, alias, info });
+      continue;
+    }
+    if (score === current.score && isBetterTie(name, alias, current.name, current.alias)) {
+      best.set(id, { score, name, alias, info });
     }
   }
 
-  for (const [id, info] of skinFallback) {
-    if (!base.has(id)) base.set(id, info);
-  }
-  return base;
+  for (const [id, entry] of best) out.set(id, entry.info);
+  return out;
+}
+
+/**
+ * 同分时的取舍:alias 短的更像本体(本体的 alias 就是英雄名本身),
+ * 再比名字长度。
+ */
+function isBetterTie(name: string, alias: string, otherName: string, otherAlias: string): boolean {
+  if (alias.length !== otherAlias.length) return alias.length < otherAlias.length;
+  return name.length < otherName.length;
 }
 
 export function parseLcuItems(raw: unknown): Map<number, ItemInfo> {
@@ -177,7 +268,7 @@ export function parseLcuItems(raw: unknown): Map<number, ItemInfo> {
     if (!isRecord(entry)) continue;
     const id = num(entry.id);
     if (!id) continue;
-    out.set(id, { name: str(entry.name), iconUrl: null });
+    out.set(id, { name: str(entry.name), iconUrl: lcuIconUrl('item', id) });
   }
   return out;
 }
@@ -186,66 +277,115 @@ export function parseLcuItems(raw: unknown): Map<number, ItemInfo> {
 /*                                   加载                                       */
 /* -------------------------------------------------------------------------- */
 
-async function loadFromDdragon(): Promise<StaticData | null> {
-  const version = await fetchDdragonVersion();
-  if (!version) return null;
-
-  const [championsRaw, itemsRaw, runesRaw] = await Promise.all([
-    axios.get(ddragonDataUrl(version, 'champion.json'), { timeout: HTTP_TIMEOUT_MS }),
-    axios.get(ddragonDataUrl(version, 'item.json'), { timeout: HTTP_TIMEOUT_MS }),
-    axios.get(ddragonDataUrl(version, 'runesReforged.json'), { timeout: HTTP_TIMEOUT_MS })
-  ]);
-
-  const champions = parseDdragonChampions(championsRaw.data, version);
-  const items = parseDdragonItems(itemsRaw.data, version);
-  const runes = parseRunes(runesRaw.data);
-  if (champions.size === 0) return null;
-
-  return { version, champions, items, runes };
-}
-
-/**
- * 拿静态数据。Data Dragon 拿不到时退回 LCU 的本地资源(只有名字,没有图标)。
- *
- * `lcuClient` 可以不传 —— 那就只有 Data Dragon 一条路,失败就是空数据。
- */
-export async function loadStaticData(lcuClient?: AxiosInstance): Promise<StaticData> {
-  const ddragon = await loadFromDdragon().catch(() => null);
-  if (ddragon) return ddragon;
-
-  const empty: StaticData = {
+export function emptyStaticData(): StaticData {
+  return {
     version: null,
     champions: new Map(),
     items: new Map(),
     runes: new Map()
   };
-  if (!lcuClient) return empty;
+}
 
-  try {
-    const { data } = await lcuClient.get('/lol-game-data/assets/v1/champion-summary.json', {
-      timeout: HTTP_TIMEOUT_MS
-    });
-    empty.champions = parseLcuChampions(data);
-  } catch {
-    // 拿不到就算了,界面上只显示英雄 id
+/**
+ * Data Dragon 一路。
+ *
+ * 三个文件**各自独立**:item.json 或 runesReforged.json 拉不到,不影响
+ * 英雄 —— 之前是一个 `Promise.all`,任意一个文件失败就把整份 Data Dragon
+ * 丢掉,于是英雄名也一起退成了 LCU 的皮肤名。
+ */
+async function loadFromDdragon(): Promise<StaticData | null> {
+  const versions = await fetchDdragonVersions();
+
+  for (const version of versions) {
+    const championsRaw = await fetchJson(ddragonDataUrl(version, 'champion.json'));
+    if (!championsRaw) continue;
+
+    const champions = parseDdragonChampions(championsRaw);
+    if (champions.size === 0) continue;
+
+    const [itemsRaw, runesRaw] = await Promise.all([
+      fetchJson(ddragonDataUrl(version, 'item.json')),
+      fetchJson(ddragonDataUrl(version, 'runesReforged.json'))
+    ]);
+
+    const items = itemsRaw ? parseDdragonItems(itemsRaw) : new Map<number, ItemInfo>();
+    const runes = runesRaw ? parseRunes(runesRaw) : new Map<number, string>();
+
+    // 图标代理退到 Data Dragon 时要用的对照表
+    setIconMeta({ version, championFiles: parseDdragonChampionFiles(championsRaw) });
+
+    return { version, champions, items, runes };
   }
+  return null;
+}
+
+/** LCU 一路:本机回环,三个文件也是各自独立。 */
+async function loadFromLcu(client: AxiosInstance): Promise<StaticData> {
+  const out = emptyStaticData();
+
+  const championsRaw = await fetchFromClient(
+    client,
+    '/lol-game-data/assets/v1/champion-summary.json'
+  );
+  if (championsRaw) out.champions = parseLcuChampions(championsRaw);
+
+  const itemsRaw = await fetchFromClient(client, '/lol-game-data/assets/v1/items.json');
+  if (itemsRaw) out.items = parseLcuItems(itemsRaw);
+
+  const runesRaw = await fetchFromClient(client, '/lol-game-data/assets/v1/runesReforged.json');
+  if (runesRaw) out.runes = parseRunes(runesRaw);
+
+  return out;
+}
+
+async function fetchFromClient(client: AxiosInstance, url: string): Promise<unknown | null> {
   try {
-    const { data } = await lcuClient.get('/lol-game-data/assets/v1/items.json', {
-      timeout: HTTP_TIMEOUT_MS
-    });
-    empty.items = parseLcuItems(data);
+    const { data } = await client.get(url, { timeout: HTTP_TIMEOUT_MS });
+    return data;
   } catch {
-    // 同上
+    return null;
   }
-  try {
-    const { data } = await lcuClient.get('/lol-game-data/assets/v1/runesReforged.json', {
-      timeout: HTTP_TIMEOUT_MS
-    });
-    empty.runes = parseRunes(data);
-  } catch {
-    // 同上
+}
+
+/** 两份数据取并集,Data Dragon 优先。 */
+function mergeStaticData(primary: StaticData, fallback: StaticData): StaticData {
+  const champions = new Map(fallback.champions);
+  for (const [id, info] of primary.champions) champions.set(id, info);
+
+  const items = new Map(fallback.items);
+  for (const [id, info] of primary.items) items.set(id, info);
+
+  const runes = new Map(fallback.runes);
+  for (const [id, name] of primary.runes) runes.set(id, name);
+
+  return { version: primary.version, champions, items, runes };
+}
+
+/**
+ * 拿静态数据。
+ *
+ * Data Dragon 和 LCU 同时开跑 —— Data Dragon 只给 2.5 秒预算,超时按 LCU 的算。
+ * 两条路都拿到的部分取并集,Data Dragon 优先。
+ *
+ * `lcuClient` 可以不传 —— 那就只有 Data Dragon 一条路,失败就是空数据。
+ */
+export async function loadStaticData(lcuClient?: AxiosInstance): Promise<StaticData> {
+  if (!lcuClient) {
+    const ddragon = await loadFromDdragon().catch(() => null);
+    return ddragon ?? emptyStaticData();
   }
-  return empty;
+
+  const lcuPromise = loadFromLcu(lcuClient);
+  const ddragon = await Promise.race([
+    loadFromDdragon().catch(() => null),
+    new Promise<null>((resolve) => {
+      const timer = setTimeout(() => resolve(null), DDRAGON_BUDGET_MS);
+      timer.unref?.();
+    })
+  ]);
+
+  const lcu = await lcuPromise;
+  return ddragon ? mergeStaticData(ddragon, lcu) : lcu;
 }
 
 /* -------------------------------------------------------------------------- */

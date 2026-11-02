@@ -367,6 +367,28 @@ export function createLcuClient(port: number, token: string): AxiosInstance {
   });
 }
 
+/**
+ * 进程内共享的 LCU 凭据。
+ *
+ * 轮询器解析一次就会缓存住,别的模块(比如图标代理)直接取这份就行 ——
+ * 不用各自去 spawn 一个 PowerShell 查进程命令行。
+ *
+ * 客户端重启会换端口和 token,轮询器那边作废缓存时会顺手把这份也清掉。
+ */
+let sharedAuth: LcuAuth | null = null;
+
+export function setSharedLcuAuth(auth: LcuAuth | null): void {
+  sharedAuth = auth;
+}
+
+export function getSharedLcuAuth(): LcuAuth | null {
+  return sharedAuth;
+}
+
+export function invalidateSharedLcuAuth(): void {
+  sharedAuth = null;
+}
+
 export async function getCurrentSummoner(client: AxiosInstance): Promise<CurrentSummoner> {
   const { data } = await client.get('/lol-summoner/v1/current-summoner');
   if (!isRecord(data)) {

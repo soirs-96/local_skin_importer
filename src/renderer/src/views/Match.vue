@@ -7,7 +7,7 @@
     <RecommendationCard :available="canRecommend" />
 
     <div class="two-col">
-      <RankedCard :entries="snapshot?.ranked ?? []" />
+      <RankedCard :entries="snapshot?.ranked ?? []" :source="snapshot?.rankedSource ?? null" />
       <RecentMatchesCard :summary="snapshot?.recent ?? null" />
     </div>
 

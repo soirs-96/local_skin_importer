@@ -4,6 +4,7 @@
       <div class="card-header">
         <span class="hx-diamond" />
         <span class="hx-label">排位段位</span>
+        <span v-if="sourceLabel" class="rank-source hx-label">{{ sourceLabel }}</span>
       </div>
     </template>
 
@@ -46,11 +47,26 @@
 </template>
 
 <script setup lang="ts">
+import { computed } from 'vue';
 import type { RankedEntry } from '../../../../shared/match';
 import { queueLabel } from '../../../../shared/rankLabels';
 import { tierIconDataUrl } from '../../../../shared/tierIcon';
 
-defineProps<{ entries: RankedEntry[] }>();
+const props = defineProps<{ entries: RankedEntry[]; source?: string | null }>();
+
+/**
+ * 段位是从哪儿来的。
+ *
+ * 显示出来是有必要的:新版客户端把 /lol-ranked/* 端点删了之后,段位只能走
+ * 事件流兜底,这时候跟「客户端接口」拿到的不是一回事,用户得能看出来。
+ */
+const sourceLabel = computed<string>(() => {
+  const s = props.source;
+  if (!s) return '';
+  if (s === 'ws') return '来源:事件流';
+  if (s === 'summoner-profile') return '来源:召唤师档案';
+  return '来源:客户端接口';
+});
 
 function tierIcon(entry: RankedEntry): string | null {
   return tierIconDataUrl(entry.tier, entry.division);
@@ -62,6 +78,10 @@ function tierIcon(entry: RankedEntry): string | null {
   display: flex;
   align-items: center;
   gap: 10px;
+}
+.rank-source {
+  font-size: 10px;
+  color: var(--hx-text-faint);
 }
 .empty-text {
   font-size: 13px;

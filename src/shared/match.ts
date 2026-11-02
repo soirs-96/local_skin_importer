@@ -8,6 +8,14 @@
 
 export type MatchState = 'idle' | 'lobby' | 'champ_select' | 'in_game';
 
+/**
+ * LCU WebSocket 通道(事件加速)的状态。
+ *
+ * connected = 事件流已连上,状态变化能立刻反映到界面;
+ * disconnected = 没连上,只能靠 2 秒轮询 —— 不是故障,客户端没开时就是这样。
+ */
+export type LcuWsStatus = 'disconnected' | 'connecting' | 'connected';
+
 /** 主进程往渲染进程推对局快照用的 IPC 频道。 */
 export const MATCH_STATE_CHANNEL = 'match:state';
 
@@ -103,6 +111,15 @@ export interface MatchSnapshot {
   champSelect: ChampSelectSession | null;
   ranked: RankedEntry[];
   recent: RecentMatchesSummary | null;
+  /**
+   * 段位是从哪儿来的:
+   *   - `'ws'` —— 客户端删掉了 /lol-ranked/* 端点,段位是从事件流里捞的;
+   *   - `'summoner-profile'` —— 退到召唤师档案;
+   *   - 其余是命中的 HTTP 端点路径;null = 压根没数据。
+   */
+  rankedSource: string | null;
+  /** 事件加速通道的状态 */
+  wsStatus: LcuWsStatus;
   /** 最近一次采集失败的原因;null = 上次采集成功 */
   lastError: string | null;
   /** epoch ms */

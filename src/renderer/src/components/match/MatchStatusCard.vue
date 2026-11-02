@@ -29,6 +29,12 @@
       <span class="mode-value">{{ live.gameMode }}</span>
     </div>
 
+    <div class="ws-row">
+      <span class="hx-label">事件加速</span>
+      <span class="ws-value" :class="wsClass">{{ wsLabel }}</span>
+      <span class="ws-hint">{{ wsHint }}</span>
+    </div>
+
     <div v-if="snapshot?.lastError" class="error-row">
       {{ snapshot.lastError }}
     </div>
@@ -37,7 +43,7 @@
 
 <script setup lang="ts">
 import { computed } from 'vue';
-import type { MatchSnapshot, MatchState } from '../../../../shared/match';
+import type { LcuWsStatus, MatchSnapshot, MatchState } from '../../../../shared/match';
 
 const props = defineProps<{
   snapshot: MatchSnapshot | null;
@@ -70,6 +76,19 @@ const stateClass = computed<string>(() => {
   if (state.value === 'in_game') return 'is-live';
   return 'is-online';
 });
+
+// 事件加速(WebSocket)的状态。没连上不是故障 —— 客户端没开时就是这样,
+// 这时候靠 2 秒轮询顶着,所以额外写一句当前是哪种刷新方式。
+const wsStatus = computed<LcuWsStatus>(() => props.snapshot?.wsStatus ?? 'disconnected');
+const wsLabel = computed<string>(() => {
+  if (wsStatus.value === 'connected') return '已连接';
+  if (wsStatus.value === 'connecting') return '连接中';
+  return '未连接';
+});
+const wsHint = computed<string>(() =>
+  wsStatus.value === 'connected' ? '状态变化实时推送' : '按 2 秒轮询刷新'
+);
+const wsClass = computed<string>(() => (wsStatus.value === 'connected' ? 'is-connected' : 'is-idle'));
 
 function formatDuration(seconds: number): string {
   const total = Math.max(0, Math.floor(seconds));
@@ -129,6 +148,27 @@ function formatDuration(seconds: number): string {
 .mode-value {
   font-size: 12px;
   color: var(--hx-text-dim);
+}
+.ws-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-top: 10px;
+}
+.ws-value {
+  font-size: 13px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+}
+.ws-value.is-connected {
+  color: var(--hx-blue);
+}
+.ws-value.is-idle {
+  color: var(--hx-text-faint);
+}
+.ws-hint {
+  font-size: 11px;
+  color: var(--hx-text-faint);
 }
 .error-row {
   margin-top: 12px;

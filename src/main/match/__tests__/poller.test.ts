@@ -6,6 +6,8 @@ import { getChampSelectSession } from '../champSelect';
 import { getRankedEntries } from '../ranked';
 import { getRecentMatches } from '../recentMatches';
 import { resolveLcuAuthAsync } from '../../lcu';
+import type { LcuWsEvent } from '../lcuWs';
+import type { LcuWsStatus } from '../../../shared/match';
 
 vi.mock('../../lcu', () => {
   class LcuNotRunningError extends Error {}
@@ -14,14 +16,21 @@ vi.mock('../../lcu', () => {
     LcuNotRunningError,
     LcuUnreachableError,
     resolveLcuAuthAsync: vi.fn(),
-    createLcuClient: vi.fn(() => ({ get: vi.fn() }))
+    createLcuClient: vi.fn(() => ({ get: vi.fn() })),
+    setSharedLcuAuth: vi.fn(),
+    getSharedLcuAuth: vi.fn(() => null),
+    invalidateSharedLcuAuth: vi.fn()
   };
 });
 
 vi.mock('../liveClient', () => ({ getAllGameData: vi.fn() }));
 vi.mock('../summoner', () => ({ getMatchSummoner: vi.fn() }));
 vi.mock('../champSelect', () => ({ getChampSelectSession: vi.fn() }));
-vi.mock('../ranked', () => ({ getRankedEntries: vi.fn() }));
+// ranked 的解析函数要留真的 —— lcuWs 靠它从事件载荷里刨段位
+vi.mock('../ranked', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../ranked')>();
+  return { ...actual, getRankedEntries: vi.fn() };
+});
 vi.mock('../recentMatches', () => ({ getRecentMatches: vi.fn() }));
 vi.mock('../staticData', () => ({
   loadStaticData: vi.fn(async () => ({
@@ -29,8 +38,53 @@ vi.mock('../staticData', () => ({
     champions: new Map(),
     items: new Map(),
     runes: new Map()
+  })),
+  emptyStaticData: vi.fn(() => ({
+    version: null,
+    champions: new Map(),
+    items: new Map(),
+    runes: new Map()
   }))
 }));
+
+// 假的 WebSocket 客户端:不连真客户端,只把事件转给轮询器。
+// 用 vi.hoisted 是因为 vi.mock 的工厂函数会被提到文件顶部执行,
+// 那时普通 const 还没初始化,访问会踩到 TDZ。
+const wsClients = vi.hoisted<{ fire: (event: LcuWsEvent) => void }[]>(() => []);
+
+vi.mock('../lcuWs', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../lcuWs')>();
+  class FakeLcuWsClient {
+    private readonly handlers: {
+      onEvent?: (event: LcuWsEvent) => void;
+      onStatus?: (status: LcuWsStatus) => void;
+    };
+
+    constructor(options: {
+      onEvent?: (event: LcuWsEvent) => void;
+      onStatus?: (status: LcuWsStatus) => void;
+    }) {
+      this.handlers = options;
+      wsClients.push({
+        fire: (event: LcuWsEvent) => {
+          this.handlers.onEvent?.(event);
+        }
+      });
+    }
+
+    start(): void {
+      // 假客户端一上来就是「已连接」
+      this.handlers.onStatus?.('connected');
+    }
+
+    stop(): void {}
+
+    getStatus(): LcuWsStatus {
+      return 'connected';
+    }
+  }
+  return { ...actual, LcuWsClient: FakeLcuWsClient };
+});
 
 const liveMock = vi.mocked(getAllGameData);
 const summonerMock = vi.mocked(getMatchSummoner);
@@ -46,8 +100,17 @@ const summoner = {
   summonerId: 42
 };
 
+const flush = async (): Promise<void> => {
+  await new Promise((resolve) => setTimeout(resolve, 0));
+};
+
+function wsFire(event: LcuWsEvent): void {
+  wsClients[wsClients.length - 1]?.fire(event);
+}
+
 beforeEach(() => {
   vi.clearAllMocks();
+  wsClients.length = 0;
   liveMock.mockResolvedValue(null);
   authMock.mockResolvedValue({ port: 1234, token: 'tok' });
   summonerMock.mockResolvedValue(summoner);
@@ -115,5 +178,93 @@ describe('MatchPoller', () => {
     await poller.refreshNow();
     await poller.refreshNow();
     expect(authMock).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('MatchPoller 的 WebSocket 通道', () => {
+  it('状态类事件会立刻唤醒一轮采集', async () => {
+    const poller = new MatchPoller();
+    let emissions = 0;
+    poller.subscribe(() => {
+      emissions += 1;
+    });
+    poller.start();
+    await flush();
+    const before = emissions;
+
+    wsFire({ uri: '/lol-gameflow/v1/session', eventType: 'Update', data: { phase: 'ChampSelect' } });
+    await flush();
+
+    expect(emissions).toBeGreaterThan(before);
+    poller.stop();
+  });
+
+  it('HTTP 段位取不到时用事件流兜底,并标出来源', async () => {
+    rankedMock.mockResolvedValue({ entries: [], source: null });
+    const poller = new MatchPoller();
+    poller.start();
+    await flush();
+    expect(poller.getSnapshot().ranked).toEqual([]);
+
+    wsFire({
+      uri: '/lol-ranked/v1/current-ranked-stats',
+      eventType: 'Update',
+      data: {
+        queues: [
+          { queueType: 'RANKED_SOLO_5x5', tier: 'GOLD', division: 'II', wins: 3, losses: 1 }
+        ]
+      }
+    });
+    await flush();
+
+    const snapshot = poller.getSnapshot();
+    expect(snapshot.rankedSource).toBe('ws');
+    expect(snapshot.ranked).toHaveLength(1);
+    expect(snapshot.ranked[0].tier).toBe('GOLD');
+    expect(snapshot.ranked[0].display).toBe('华贵黄金 II');
+
+    poller.stop();
+  });
+
+  it('HTTP 有段位时不改用事件流', async () => {
+    rankedMock.mockResolvedValue({
+      entries: [
+        {
+          queueType: 'RANKED_SOLO_5x5',
+          tier: 'DIAMOND',
+          division: 'I',
+          leaguePoints: 12,
+          wins: 5,
+          losses: 5,
+          display: '璀璨钻石 I',
+          winrate: 0.5
+        }
+      ],
+      source: '/lol-ranked/v1/current-ranked-stats'
+    });
+    const poller = new MatchPoller();
+    poller.start();
+    await flush();
+
+    wsFire({
+      uri: '/lol-ranked/v1/current-ranked-stats',
+      eventType: 'Update',
+      data: { queues: [{ queueType: 'RANKED_SOLO_5x5', tier: 'GOLD' }] }
+    });
+    await flush();
+
+    const snapshot = poller.getSnapshot();
+    expect(snapshot.rankedSource).toBe('/lol-ranked/v1/current-ranked-stats');
+    expect(snapshot.ranked[0].tier).toBe('DIAMOND');
+
+    poller.stop();
+  });
+
+  it('快照里带上事件加速通道的状态', async () => {
+    const poller = new MatchPoller();
+    poller.start();
+    await flush();
+    expect(poller.getSnapshot().wsStatus).toBe('connected');
+    poller.stop();
   });
 });

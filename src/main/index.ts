@@ -1,6 +1,10 @@
 import { app, BrowserWindow } from 'electron';
 import { join } from 'node:path';
 import { registerIpcHandlers } from './ipc';
+import { registerIconProtocol, registerIconScheme } from './match/iconAssets';
+
+// 自定义协议要先登记成特权协议,这一步必须发生在 app ready 之前
+registerIconScheme();
 
 function createWindow(): void {
   const win = new BrowserWindow({
@@ -45,6 +49,7 @@ function createWindow(): void {
 }
 
 app.whenReady().then(() => {
+  registerIconProtocol();
   registerIpcHandlers();
   createWindow();
 

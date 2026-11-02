@@ -15,10 +15,11 @@
         <span class="result-bar" :class="match.win ? 'is-win' : 'is-lose'" />
 
         <img
-          v-if="match.championIconUrl"
+          v-if="match.championIconUrl && !isBroken(match.championIconUrl)"
           class="champ-icon"
           :src="match.championIconUrl"
           :alt="match.championName"
+          @error="markBroken(match.championIconUrl)"
         />
         <span v-else class="champ-icon champ-icon--empty">?</span>
 
@@ -28,15 +29,17 @@
         </div>
 
         <div class="item-row">
-          <img
-            v-for="item in match.items"
-            :key="item.itemId"
-            class="item-icon"
-            :src="item.iconUrl ?? ''"
-            :alt="item.name"
-            :title="item.name"
-            :class="{ 'is-empty': !item.iconUrl }"
-          />
+          <template v-for="item in match.items" :key="item.itemId">
+            <img
+              v-if="item.iconUrl && !isBroken(item.iconUrl)"
+              class="item-icon"
+              :src="item.iconUrl"
+              :alt="item.name"
+              :title="item.name"
+              @error="markBroken(item.iconUrl)"
+            />
+            <span v-else class="item-icon item-icon--empty" :title="item.name" />
+          </template>
         </div>
 
         <span class="kda">{{ match.kda }}</span>
@@ -49,8 +52,11 @@
 <script setup lang="ts">
 import { computed } from 'vue';
 import type { RecentMatch, RecentMatchesSummary } from '../../../../shared/match';
+import { useBrokenIcons } from '../../composables/useBrokenIcons';
 
 const props = defineProps<{ summary: RecentMatchesSummary | null }>();
+
+const { isBroken, markBroken } = useBrokenIcons();
 
 const summaryText = computed<string>(() => {
   const s = props.summary;
@@ -168,7 +174,7 @@ function formatTime(timestampMs: number): string {
   height: 20px;
   object-fit: cover;
 }
-.item-icon.is-empty {
+.item-icon--empty {
   background: var(--hx-panel-3);
 }
 .kda {

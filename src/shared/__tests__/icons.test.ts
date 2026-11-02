@@ -1,0 +1,33 @@
+import { describe, expect, it } from 'vitest';
+import { ICON_SCHEME, lcuIconUrl, parseLcuIconUrl } from '../icons';
+
+describe('lcuIconUrl', () => {
+  it('英雄和物品各拼一个自定义协议地址', () => {
+    expect(lcuIconUrl('champion', 266)).toBe('lcuicon://champion/266.png');
+    expect(lcuIconUrl('item', 1001)).toBe('lcuicon://item/1001.png');
+  });
+});
+
+describe('parseLcuIconUrl', () => {
+  it('能反解出类型和 id', () => {
+    expect(parseLcuIconUrl('lcuicon://champion/266.png')).toEqual({ kind: 'champion', id: 266 });
+    expect(parseLcuIconUrl('lcuicon://item/1001.png')).toEqual({ kind: 'item', id: 1001 });
+  });
+
+  it('不是图标 URL 就返回 null', () => {
+    expect(parseLcuIconUrl('https://ddragon.leagueoflegends.com/cdn/14.1.1/img/champion/Aatrox.png'))
+      .toBeNull();
+    expect(parseLcuIconUrl('lcuicon://champion/')).toBeNull();
+    expect(parseLcuIconUrl('lcuicon://rune/8000.png')).toBeNull();
+    expect(parseLcuIconUrl('')).toBeNull();
+  });
+
+  it('id 非法时返回 null', () => {
+    expect(parseLcuIconUrl('lcuicon://champion/0.png')).toBeNull();
+    expect(parseLcuIconUrl('lcuicon://champion/abc.png')).toBeNull();
+  });
+
+  it('协议名就是约定的那个', () => {
+    expect(ICON_SCHEME).toBe('lcuicon');
+  });
+});
