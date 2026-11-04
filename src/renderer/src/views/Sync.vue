@@ -152,7 +152,9 @@ const lcuTooltip = computed<string>(() => {
   if (lcuState.value === 'running') {
     return '游戏客户端已连接';
   }
-  return '未检测到游戏客户端';
+  // 灰色只说明「没检测到」,后端会带上两条来源各自失败的原因 —— 直接摊给用户看,
+  // 让他们自己截图反馈,不用来回问「你游戏开了没」。
+  return lcuStatus.value.reason ?? '未检测到游戏客户端';
 });
 
 const canSync = computed<boolean>(

@@ -10,6 +10,7 @@ import {
   findLockfilePath,
   readLockfile,
   collectLcuAuthCandidates,
+  collectLcuAuthCandidatesDetailed,
   resolveLcuAuth,
   isPortAlive,
   readLcuAuthFromProcess,
@@ -264,6 +265,61 @@ describe('collectLcuAuthCandidates', () => {
 
     try {
       expect(() => collectLcuAuthCandidates()).toThrow(LcuNotRunningError);
+    } finally {
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+  });
+});
+
+describe('collectLcuAuthCandidatesDetailed', () => {
+  beforeEach(() => {
+    vi.mocked(execSync).mockReset();
+  });
+
+  it('records why each source failed when both are unavailable', () => {
+    vi.mocked(execSync).mockImplementation(() => {
+      throw new Error('powershell not found');
+    });
+
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'lcu-detailed-'));
+    process.env.LOL_LOCKFILE_PATH = path.join(tmpDir, 'absent');
+
+    try {
+      const err = (() => {
+        try {
+          collectLcuAuthCandidatesDetailed();
+          return null;
+        } catch (e: unknown) {
+          return e;
+        }
+      })();
+
+      expect(err).toBeInstanceOf(LcuNotRunningError);
+      const details = (err as LcuNotRunningError).details;
+      expect(details).toHaveLength(2);
+      expect(details.join('\n')).toContain('process');
+      expect(details.join('\n')).toContain('lockfile');
+      expect(details.join('\n')).toContain('powershell not found');
+    } finally {
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+  });
+
+  it('keeps the working source and records the failed one', () => {
+    vi.mocked(execSync).mockReturnValue(
+      'LeagueClientUx.exe "--riotclient-auth-token=fromProcess" "--riotclient-app-port=11111"'
+    );
+
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'lcu-detailed-'));
+    process.env.LOL_LOCKFILE_PATH = path.join(tmpDir, 'absent');
+
+    try {
+      const bundle = collectLcuAuthCandidatesDetailed();
+      expect(bundle.candidates).toEqual([
+        { port: 11111, token: 'fromProcess', source: 'process' }
+      ]);
+      expect(bundle.failures).toHaveLength(1);
+      expect(bundle.failures[0].source).toBe('lockfile');
     } finally {
       fs.rmSync(tmpDir, { recursive: true, force: true });
     }

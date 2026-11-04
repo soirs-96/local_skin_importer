@@ -24,6 +24,10 @@
             <span class="dev-val mono">{{ port ?? '—' }}</span>
           </div>
           <div class="dev-row">
+            <span class="dev-key">客户端检测详情</span>
+            <span class="dev-val">{{ lcuDetail }}</span>
+          </div>
+          <div class="dev-row">
             <span class="dev-key">登录凭证预览</span>
             <span class="dev-val mono">{{ tokenPreview ?? '未登录' }}</span>
           </div>
@@ -135,6 +139,8 @@ const lcu = ref<LcuStatus>({ running: false });
 const summonerName = computed(() => lcu.value.summoner?.displayName ?? '—');
 const puuid = computed(() => lcu.value.summoner?.puuid ?? '—');
 const port = computed(() => lcu.value.port);
+/** 客户端检测的失败原因 —— 没检测到时是两条来源各自的原因,连不上时是网络错误 */
+const lcuDetail = computed(() => lcu.value.reason ?? lcu.value.error ?? '—');
 
 const coverageText = computed(
   () => `${Math.round(stats.value.skinIdCoverage * 1000) / 10}%`
@@ -169,6 +175,7 @@ async function onCopy(): Promise<void> {
     '[LOL 皮肤助手 · 诊断信息]',
     `时间: ${new Date().toLocaleString()}`,
     `游戏客户端: ${lcu.value.running ? `运行中(端口 ${port.value ?? '—'})` : '未检测到'}`,
+    `客户端检测详情: ${lcuDetail.value}`,
     `游戏账号: ${summonerName.value}`,
     `PUUID: ${puuid.value}`,
     `图鉴条数: ${catalogSize.value}`,

@@ -29,6 +29,11 @@ export interface LcuStatus {
     puuid: string;
   };
   error?: string;
+  /**
+   * 两条来源(进程命令行 / lockfile)各自失败的原因 —— 只在「压根没找到客户端」时给。
+   * 界面上那个灰色圆点只能说明「没检测到」,这个字段才说得出「为什么」。
+   */
+  reason?: string;
 }
 
 /**

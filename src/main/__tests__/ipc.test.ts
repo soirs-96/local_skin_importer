@@ -7,9 +7,12 @@ import { registerIpcHandlers } from '../ipc';
 
 const mocks = vi.hoisted(() => {
   class MockLcuNotRunningError extends Error {
-    constructor(message = 'League client is not running') {
+    readonly details: string[];
+
+    constructor(message = 'League client is not running', details: string[] = []) {
       super(message);
       this.name = 'LcuNotRunningError';
+      this.details = details;
     }
   }
 
@@ -251,6 +254,20 @@ describe('IPC wiring', () => {
     await expect(invoke('lcu:check-status')).resolves.toEqual({ running: false });
   });
 
+  it('lcu:check-status reports why each credential source failed', async () => {
+    mocks.resolveLcuAuth.mockRejectedValue(
+      new mocks.LcuNotRunningError('not running', [
+        'process: LeagueClientUx.exe not found',
+        'lockfile: lockfile not found'
+      ])
+    );
+
+    const outcome = (await invoke('lcu:check-status')) as { running: boolean; reason?: string };
+    expect(outcome.running).toBe(false);
+    expect(outcome.reason).toContain('process');
+    expect(outcome.reason).toContain('lockfile');
+  });
+
   it('lcu:check-status returns running true with the current summoner', async () => {
     const lcuAuth = { port: 1234, token: 'secret' };
     const summoner = { displayName: 'Alice', puuid: 'puuid-1' };
@@ -315,7 +332,8 @@ describe('IPC wiring', () => {
 
     const err = await invoke('lcu:fetch-skins').catch((e: unknown) => e);
     expect(err).toBeInstanceOf(Error);
-    expect((err as Error).message).toBe('League client is not running');
+    // 界面直接弹给用户看,所以得是人话,不是英文原文
+    expect((err as Error).message).toMatch(/游戏客户端/);
     expect((err as Error).name).toBe('LcuNotRunningError');
   });
 

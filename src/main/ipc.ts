@@ -62,6 +62,10 @@ const FRIENDLY_LCU_MESSAGES: Record<string, string> = {
 const LCU_UNREACHABLE_MESSAGE =
   '游戏客户端未运行,或端口已失效(客户端重启后会换端口)。请先启动游戏客户端,等它进到主界面再重试。';
 
+/** 两条来源(进程命令行 / lockfile)都没拿到凭据。 */
+const LCU_NOT_RUNNING_MESSAGE =
+  '未检测到游戏客户端:进程命令行和 lockfile 两条来源都没拿到端口。请确认游戏客户端已经进到主界面。';
+
 function normalizeSyncError(e: unknown): NormalizedSyncError {
   if (axios.isAxiosError(e)) {
     const err = new Error(e.message) as NormalizedSyncError;
@@ -84,6 +88,12 @@ function normalizeLcuError(e: unknown): NormalizedSyncError {
     const err = new Error(LCU_UNREACHABLE_MESSAGE) as NormalizedSyncError;
     err.name = e.name;
     err.code = 'LCU_UNREACHABLE';
+    return err;
+  }
+  if (e instanceof lcu.LcuNotRunningError) {
+    const err = new Error(LCU_NOT_RUNNING_MESSAGE) as NormalizedSyncError;
+    err.name = e.name;
+    err.code = 'LCU_NOT_RUNNING';
     return err;
   }
   if (axios.isAxiosError(e)) {
@@ -133,7 +143,12 @@ export function registerIpcHandlers(): void {
       };
     } catch (error: unknown) {
       if (error instanceof lcu.LcuNotRunningError) {
-        return { running: false };
+        // 两条来源都没拿到凭据 —— 把每条来源的原因带回去。
+        // 界面上只有灰色一个状态,用户截图就能看出是哪条挂的,不用再猜。
+        return {
+          running: false,
+          reason: error.details.length > 0 ? error.details.join(' / ') : undefined
+        };
       }
       return { running: false, error: normalizeLcuError(error).message };
     }

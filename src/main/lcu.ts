@@ -17,11 +17,19 @@ export interface CurrentSummoner {
   puuid: string;
 }
 
-/** Thrown when the lockfile is absent, i.e. the League client is not running. */
+/**
+ * Thrown when the lockfile is absent, i.e. the League client is not running.
+ *
+ * `details` 里是两条来源(进程命令行 / lockfile)各自失败的原因。界面上「没检测到
+ * 客户端」只能显示成灰色的一句话,排查时得知道是哪一条挂的 —— 否则只能靠猜。
+ */
 export class LcuNotRunningError extends Error {
-  constructor(message = 'League client is not running (lockfile not found).') {
+  readonly details: string[];
+
+  constructor(message = 'League client is not running (lockfile not found).', details: string[] = []) {
     super(message);
     this.name = 'LcuNotRunningError';
+    this.details = details;
   }
 }
 
@@ -276,27 +284,83 @@ export function isPortAlive(port: number, timeoutMs = 1000): Promise<boolean> {
  * 光靠「进程查询失败才退 lockfile」会直接拿到死端口。
  */
 export function collectLcuAuthCandidates(): LcuAuthCandidate[] {
+  return collectLcuAuthCandidatesDetailed().candidates;
+}
+
+/** 一条来源没取到时的原因。 */
+export interface LcuSourceFailure {
+  source: LcuAuthSource;
+  reason: string;
+}
+
+/** 两条来源的收集结果 —— 凭据 + 每条来源各自失败的原因。 */
+export interface LcuCandidateBundle {
+  candidates: LcuAuthCandidate[];
+  failures: LcuSourceFailure[];
+}
+
+function describeFailure(e: unknown): string {
+  return e instanceof Error ? e.message : String(e);
+}
+
+/**
+ * {@link collectLcuAuthCandidates} 的详细版:同时记下每条来源失败的原因。
+ *
+ * 两条来源全挂时抛 {@link LcuNotRunningError},details 里带上各自的原因 ——
+ * 界面上「没检测到客户端」只有灰色一个状态,排查时得知道是哪条来源挂的:
+ * 是 lockfile 不在预期路径,还是 PowerShell 查不到进程命令行,修法完全不一样。
+ */
+export function collectLcuAuthCandidatesDetailed(): LcuCandidateBundle {
   const candidates: LcuAuthCandidate[] = [];
-  let firstError: unknown;
+  const failures: LcuSourceFailure[] = [];
 
   try {
     const auth = readLcuAuthFromProcess();
     candidates.push({ ...auth, source: 'process' });
   } catch (e: unknown) {
-    firstError = e;
+    failures.push({ source: 'process', reason: describeFailure(e) });
   }
 
   try {
     const auth = readLockfile(findLockfilePath());
     candidates.push({ ...auth, source: 'lockfile' });
   } catch (e: unknown) {
-    if (firstError === undefined) firstError = e;
+    failures.push({ source: 'lockfile', reason: describeFailure(e) });
   }
 
   if (candidates.length === 0) {
-    throw firstError instanceof Error ? firstError : new LcuNotRunningError();
+    throw new LcuNotRunningError(
+      'League client is not running (no LCU credentials found).',
+      failures.map((f) => `${f.source}: ${f.reason}`)
+    );
   }
-  return candidates;
+  return { candidates, failures };
+}
+
+/** {@link collectLcuAuthCandidatesDetailed} 的异步版 —— 轮询器里用这个。 */
+export async function collectLcuAuthCandidatesDetailedAsync(): Promise<LcuCandidateBundle> {
+  const candidates: LcuAuthCandidate[] = [];
+  const failures: LcuSourceFailure[] = [];
+
+  try {
+    candidates.push({ ...(await readLcuAuthFromProcessAsync()), source: 'process' });
+  } catch (e: unknown) {
+    failures.push({ source: 'process', reason: describeFailure(e) });
+  }
+
+  try {
+    candidates.push({ ...readLockfile(findLockfilePath()), source: 'lockfile' });
+  } catch (e: unknown) {
+    failures.push({ source: 'lockfile', reason: describeFailure(e) });
+  }
+
+  if (candidates.length === 0) {
+    throw new LcuNotRunningError(
+      'League client is not running (no LCU credentials found).',
+      failures.map((f) => `${f.source}: ${f.reason}`)
+    );
+  }
+  return { candidates, failures };
 }
 
 /**
@@ -316,24 +380,7 @@ export async function resolveLcuAuth(): Promise<LcuAuth> {
  * 定时任务里用不起。
  */
 export async function resolveLcuAuthAsync(): Promise<LcuAuth> {
-  const candidates: LcuAuthCandidate[] = [];
-  let firstError: unknown;
-
-  try {
-    candidates.push({ ...(await readLcuAuthFromProcessAsync()), source: 'process' });
-  } catch (e: unknown) {
-    firstError = e;
-  }
-
-  try {
-    candidates.push({ ...readLockfile(findLockfilePath()), source: 'lockfile' });
-  } catch (e: unknown) {
-    if (firstError === undefined) firstError = e;
-  }
-
-  if (candidates.length === 0) {
-    throw firstError instanceof Error ? firstError : new LcuNotRunningError();
-  }
+  const { candidates } = await collectLcuAuthCandidatesDetailedAsync();
   return pickAliveCandidate(candidates);
 }
 
