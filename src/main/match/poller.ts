@@ -73,6 +73,9 @@ export function emptySnapshot(): MatchSnapshot {
 }
 
 function describeError(e: unknown): string {
+  // 裁决层的结论优先 —— 「装的是国际服客户端」比「未检测到游戏客户端」具体得多。
+  const summary = (e as { summary?: unknown } | null)?.summary;
+  if (typeof summary === 'string' && summary.length > 0) return summary;
   if (e instanceof lcu.LcuNotRunningError) return '未检测到游戏客户端,请先启动它。';
   if (e instanceof lcu.LcuUnreachableError) {
     return '游戏客户端端口已失效(客户端重启过),请重新启动客户端。';
@@ -357,7 +360,7 @@ export class MatchPoller {
       };
     }
 
-    const client = lcu.createLcuClient(auth.port, auth.token);
+    const client = lcu.createLcuClient(auth);
 
     let summoner;
     try {

@@ -84,6 +84,15 @@ function normalizeSyncError(e: unknown): NormalizedSyncError {
 
 /** 游戏客户端专属的错误包装:把网络错误码换成用户看得懂的话。 */
 function normalizeLcuError(e: unknown): NormalizedSyncError {
+  // 裁决层的结论优先 —— 「装的是国际服客户端」比「游戏客户端未运行」有用得多。
+  const summary = (e as { summary?: unknown } | null)?.summary;
+  if (typeof summary === 'string' && summary.length > 0) {
+    const err = new Error(summary) as NormalizedSyncError;
+    err.name = e instanceof Error ? e.name : 'LcuError';
+    const code = (e as { code?: unknown }).code;
+    err.code = typeof code === 'string' ? code : 'LCU_UNREACHABLE';
+    return err;
+  }
   if (e instanceof lcu.LcuUnreachableError) {
     const err = new Error(LCU_UNREACHABLE_MESSAGE) as NormalizedSyncError;
     err.name = e.name;
@@ -131,33 +140,39 @@ function assertRedeemPayload(p: unknown): asserts p is RedeemPayload {
 }
 
 export function registerIpcHandlers(): void {
-  ipcMain.handle('lcu:check-status', async () => {
+  // deep = true 时允许扫盘找客户端。用户手点「检测客户端」走深检测,
+  // 界面挂载时的自动检查走浅检测 —— 否则每次开界面都全盘扫一遍。
+  ipcMain.handle('lcu:check-status', async (_event, deep?: boolean) => {
     try {
-      const lcuAuth = await lcu.resolveLcuAuth();
-      const client = lcu.createLcuClient(lcuAuth.port, lcuAuth.token);
-      const summoner = await lcu.getCurrentSummoner(client);
-      return {
-        running: true,
-        port: lcuAuth.port,
-        summoner
-      };
-    } catch (error: unknown) {
-      if (error instanceof lcu.LcuNotRunningError) {
-        // 两条来源都没拿到凭据 —— 把每条来源的原因带回去。
-        // 界面上只有灰色一个状态,用户截图就能看出是哪条挂的,不用再猜。
+      const result = deep === true ? await lcu.detectLcuDeep() : await lcu.detectLcu();
+      if (!result.ok) {
         return {
           running: false,
-          reason: error.details.length > 0 ? error.details.join(' / ') : undefined
+          code: result.code,
+          summary: result.summary,
+          diagnosis: result.diagnosis
         };
       }
-      return { running: false, error: normalizeLcuError(error).message };
+      return {
+        running: true,
+        port: result.auth.port,
+        summoner: result.summoner
+      };
+    } catch (error: unknown) {
+      const normalized = normalizeLcuError(error);
+      return {
+        running: false,
+        error: normalized.message,
+        code: 'unknown' as const,
+        summary: normalized.message
+      };
     }
   });
 
   ipcMain.handle('lcu:fetch-skins', async () => {
     try {
       const lcuAuth = await lcu.resolveLcuAuth();
-      const client = lcu.createLcuClient(lcuAuth.port, lcuAuth.token);
+      const client = lcu.createLcuClient(lcuAuth);
       const summoner = await lcu.getCurrentSummoner(client);
       const owned = await resolveOwnedSkinIds(client);
       return {
@@ -201,7 +216,11 @@ export function registerIpcHandlers(): void {
         };
       }
 
-      const result = await syncOwnedSkins(payload.puuid, payload.summonerName, payload.ownedSkinIds);
+      const result = await syncOwnedSkins(
+        payload.puuid,
+        payload.summonerName,
+        payload.ownedSkinIds
+      );
       // 只在成功后记时间戳 —— 失败不能算「已同步」
       writeSyncState({ lastSyncAt: now });
       return {

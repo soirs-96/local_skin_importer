@@ -19,7 +19,6 @@
 import { app, protocol } from 'electron';
 import axios from 'axios';
 import { Buffer } from 'node:buffer';
-import * as https from 'node:https';
 import * as fs from 'node:fs/promises';
 import * as path from 'node:path';
 import { ICON_SCHEME, parseLcuIconUrl, type IconKind } from '../../shared/icons';
@@ -304,11 +303,7 @@ async function loadIconPathMap(kind: IconKind, auth: LcuAuth): Promise<Map<numbe
   if (cached) return cached;
 
   const raw = await lcuGetJson(auth, LCU_ICON_METADATA[kind]);
-  const entries = Array.isArray(raw)
-    ? raw
-    : isRecord(raw)
-      ? Object.values(raw)
-      : [];
+  const entries = Array.isArray(raw) ? raw : isRecord(raw) ? Object.values(raw) : [];
 
   // 英雄:同一个 id 下还挂着皮肤条目,本体条目(带 roles)的路径才算数
   const base = new Map<number, string>();
@@ -368,16 +363,16 @@ interface LcuFetchResult {
 
 async function tryFetchLcu(auth: LcuAuth, assetPath: string): Promise<LcuFetchResult> {
   try {
-    const { data } = await axios.get<ArrayBuffer>(
-      `https://127.0.0.1:${auth.port}${assetPath}`,
-      {
-        httpsAgent: new https.Agent({ rejectUnauthorized: false }),
-        headers: { Authorization: basicAuthHeader(auth.token) },
-        responseType: 'arraybuffer',
-        timeout: LCU_TIMEOUT_MS,
-        validateStatus: (status) => status === 200
-      }
-    );
+    // 走 createLcuClient 而不是裸 axios:
+    //   1) proxy: false —— 装了代理软件的机器上,裸 axios 会把回环请求丢给代理,必挂;
+    //   2) baseURL 用 auth.protocol / auth.host —— 不再硬编码 https://127.0.0.1;
+    //   3) 自签证书照样放行。
+    const client = createLcuClient(auth);
+    const { data } = await client.get<ArrayBuffer>(assetPath, {
+      responseType: 'arraybuffer',
+      timeout: LCU_TIMEOUT_MS,
+      validateStatus: (status) => status === 200
+    });
     const buffer = Buffer.from(data);
     return { buffer: buffer.length > 0 ? buffer : null, authFailed: false, status: 200 };
   } catch (e: unknown) {
@@ -404,9 +399,11 @@ function readDetail(data: unknown): string | undefined {
 /** GET 一次客户端的 JSON 接口。 */
 async function lcuGetJson(auth: LcuAuth, url: string): Promise<unknown | null> {
   try {
-    const { data } = await axios.get(url, {
-      httpsAgent: new https.Agent({ rejectUnauthorized: false }),
-      headers: { Authorization: basicAuthHeader(auth.token) },
+    // url 是相对路径('/lol-game-data/...') —— 必须有 baseURL 才能拼成绝对地址。
+    // 之前这里用裸 axios.get(相对路径),axios 在 Node 端会直接抛 Invalid URL,
+    // 元数据一次都没加载成功过。
+    const client = createLcuClient(auth);
+    const { data } = await client.get(url, {
       timeout: LCU_TIMEOUT_MS,
       validateStatus: (status) => status === 200
     });
@@ -414,10 +411,6 @@ async function lcuGetJson(auth: LcuAuth, url: string): Promise<unknown | null> {
   } catch {
     return null;
   }
-}
-
-function basicAuthHeader(token: string): string {
-  return `Basic ${Buffer.from(`riot:${token}`, 'latin1').toString('base64')}`;
 }
 
 /** 凭据:优先用轮询器共享的那份,没有就自己解析一次并缓存。 */
@@ -469,7 +462,7 @@ function resolvePatch(): Promise<string> {
       const auth = await resolveAuth();
       if (!auth) return FALLBACK_PATCH;
       try {
-        return await resolvePatchVersion(createLcuClient(auth.port, auth.token));
+        return await resolvePatchVersion(createLcuClient(auth));
       } catch {
         return FALLBACK_PATCH;
       }

@@ -1,6 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { AxiosInstance } from 'axios';
-import * as lcu from '../lcu';
 import * as auth from '../auth';
 import { syncOwnedSkins } from '../backend';
 import { registerIpcHandlers } from '../ipc';
@@ -31,6 +30,8 @@ const mocks = vi.hoisted(() => {
     getAllWindows: vi.fn(() => []),
     clipboardWriteText: vi.fn(),
     resolveLcuAuth: vi.fn(),
+    detectLcu: vi.fn(),
+    detectLcuDeep: vi.fn(),
     createLcuClient: vi.fn(),
     getCurrentSummoner: vi.fn(),
     getInventoryOwnedSkinIds: vi.fn(),
@@ -73,6 +74,8 @@ vi.mock('electron', () => ({
 
 vi.mock('../lcu', () => ({
   resolveLcuAuth: mocks.resolveLcuAuth,
+  detectLcu: mocks.detectLcu,
+  detectLcuDeep: mocks.detectLcuDeep,
   createLcuClient: mocks.createLcuClient,
   getCurrentSummoner: mocks.getCurrentSummoner,
   getInventoryOwnedSkinIds: mocks.getInventoryOwnedSkinIds,
@@ -165,6 +168,8 @@ describe('IPC wiring', () => {
     mocks.ipcMainHandle.mockReset();
     mocks.ipcRendererInvoke.mockReset();
     mocks.resolveLcuAuth.mockReset();
+    mocks.detectLcu.mockReset();
+    mocks.detectLcuDeep.mockReset();
     mocks.createLcuClient.mockReset();
     mocks.getCurrentSummoner.mockReset();
     mocks.getInventoryOwnedSkinIds.mockReset();
@@ -248,68 +253,132 @@ describe('IPC wiring', () => {
     ]);
   });
 
-  it('lcu:check-status returns running false when LCU is not detected', async () => {
-    mocks.resolveLcuAuth.mockRejectedValue(new mocks.LcuNotRunningError());
-
-    await expect(invoke('lcu:check-status')).resolves.toEqual({ running: false });
-  });
-
-  it('lcu:check-status reports why each credential source failed', async () => {
-    mocks.resolveLcuAuth.mockRejectedValue(
-      new mocks.LcuNotRunningError('not running', [
-        'process: LeagueClientUx.exe not found',
-        'lockfile: lockfile not found'
-      ])
-    );
-
-    const outcome = (await invoke('lcu:check-status')) as { running: boolean; reason?: string };
-    expect(outcome.running).toBe(false);
-    expect(outcome.reason).toContain('process');
-    expect(outcome.reason).toContain('lockfile');
-  });
-
   it('lcu:check-status returns running true with the current summoner', async () => {
-    const lcuAuth = { port: 1234, token: 'secret' };
     const summoner = { displayName: 'Alice', puuid: 'puuid-1' };
-    const client = {} as AxiosInstance;
-    mocks.resolveLcuAuth.mockResolvedValue(lcuAuth);
-    mocks.createLcuClient.mockReturnValue(client);
-    mocks.getCurrentSummoner.mockResolvedValue(summoner);
+    mocks.detectLcu.mockResolvedValue({
+      ok: true,
+      auth: { port: 1234, token: 'secret', protocol: 'https', host: '127.0.0.1' },
+      summoner
+    });
 
     await expect(invoke('lcu:check-status')).resolves.toEqual({
       running: true,
       port: 1234,
       summoner
     });
-    expect(mocks.createLcuClient).toHaveBeenCalledWith(1234, 'secret');
-    expect(mocks.getCurrentSummoner).toHaveBeenCalledWith(client);
   });
 
-  it('lcu:check-status reports axios failures without hiding the message', async () => {
-    mocks.resolveLcuAuth.mockResolvedValue({ port: 1234, token: 'secret' });
-    mocks.createLcuClient.mockReturnValue({} as AxiosInstance);
-    mocks.getCurrentSummoner.mockRejectedValue(
-      Object.assign(new Error('connect ECONNREFUSED'), { isAxiosError: true })
-    );
-
-    await expect(invoke('lcu:check-status')).resolves.toEqual({
-      running: false,
-      error: 'connect ECONNREFUSED'
+  it('lcu:check-status reports the failure code and the plain-language summary', async () => {
+    mocks.detectLcu.mockResolvedValue({
+      ok: false,
+      code: 'client-not-running',
+      summary: '没检测到英雄联盟客户端 —— 先打开客户端(进到大厅)再点检测。',
+      diagnosis: {
+        code: 'client-not-running',
+        summary: '没检测到英雄联盟客户端 —— 先打开客户端(进到大厅)再点检测。',
+        channels: [],
+        environment: { proxyVars: [], localAppData: null, electron: 'test', node: 'test' }
+      }
     });
+
+    const outcome = (await invoke('lcu:check-status')) as {
+      running: boolean;
+      code?: string;
+      summary?: string;
+    };
+    expect(outcome.running).toBe(false);
+    expect(outcome.code).toBe('client-not-running');
+    expect(outcome.summary).toContain('没检测到');
   });
 
-  it('lcu:check-status explains a stale client port in plain language', async () => {
-    mocks.resolveLcuAuth.mockRejectedValue(new mocks.LcuUnreachableError());
+  it('lcu:check-status without the deep flag only runs the shallow detection', async () => {
+    mocks.detectLcu.mockResolvedValue({
+      ok: false,
+      code: 'client-not-running',
+      summary: 'x',
+      diagnosis: {
+        code: 'client-not-running',
+        summary: 'x',
+        channels: [],
+        environment: { proxyVars: [], localAppData: null, electron: 'test', node: 'test' }
+      }
+    });
 
-    const outcome = (await invoke('lcu:check-status')) as { running: boolean; error?: string };
+    await invoke('lcu:check-status', {});
+
+    expect(mocks.detectLcu).toHaveBeenCalled();
+    expect(mocks.detectLcuDeep).not.toHaveBeenCalled();
+  });
+
+  it('lcu:check-status with the deep flag runs the deep detection', async () => {
+    mocks.detectLcuDeep.mockResolvedValue({
+      ok: false,
+      code: 'scan-timeout',
+      summary: '没在常见位置找到客户端 —— 可能装在非标准位置。',
+      diagnosis: {
+        code: 'scan-timeout',
+        summary: '没在常见位置找到客户端 —— 可能装在非标准位置。',
+        channels: [],
+        environment: { proxyVars: [], localAppData: null, electron: 'test', node: 'test' }
+      }
+    });
+
+    const outcome = (await invoke('lcu:check-status', {}, true)) as { code?: string };
+    expect(mocks.detectLcuDeep).toHaveBeenCalled();
+    expect(mocks.detectLcu).not.toHaveBeenCalled();
+    expect(outcome.code).toBe('scan-timeout');
+  });
+
+  it('lcu:check-status reports stale credentials in plain language', async () => {
+    mocks.detectLcu.mockResolvedValue({
+      ok: false,
+      code: 'stale-credentials',
+      summary: '客户端重启过、凭据失效 —— 点检测重试。',
+      diagnosis: {
+        code: 'stale-credentials',
+        summary: '客户端重启过、凭据失效 —— 点检测重试。',
+        channels: [],
+        environment: { proxyVars: [], localAppData: null, electron: 'test', node: 'test' }
+      }
+    });
+
+    const outcome = (await invoke('lcu:check-status')) as {
+      running: boolean;
+      code?: string;
+      summary?: string;
+    };
     expect(outcome.running).toBe(false);
-    expect(outcome.error).toMatch(/游戏客户端/);
+    expect(outcome.code).toBe('stale-credentials');
+    expect(outcome.summary).toBe('客户端重启过、凭据失效 —— 点检测重试。');
+  });
+
+  it('lcu:check-status reports not-cn-client for the international client', async () => {
+    mocks.detectLcu.mockResolvedValue({
+      ok: false,
+      code: 'not-cn-client',
+      summary: '装的是国际服客户端 —— 本工具只支持国服,请装国服客户端。',
+      diagnosis: {
+        code: 'not-cn-client',
+        summary: '装的是国际服客户端 —— 本工具只支持国服,请装国服客户端。',
+        channels: [],
+        environment: { proxyVars: [], localAppData: null, electron: 'test', node: 'test' }
+      }
+    });
+
+    const outcome = (await invoke('lcu:check-status')) as { code?: string; summary?: string };
+    expect(outcome.code).toBe('not-cn-client');
+    expect(outcome.summary).toContain('国际服');
   });
 
   it('lcu:fetch-skins returns the summoner and owned skin IDs', async () => {
     const client = {} as AxiosInstance;
     const summoner = { displayName: 'Alice', puuid: 'puuid-1' };
-    mocks.resolveLcuAuth.mockResolvedValue({ port: 1234, token: 'secret' });
+    mocks.resolveLcuAuth.mockResolvedValue({
+      port: 1234,
+      token: 'secret',
+      protocol: 'https',
+      host: '127.0.0.1'
+    });
     mocks.createLcuClient.mockReturnValue(client);
     mocks.getCurrentSummoner.mockResolvedValue(summoner);
     mocks.resolveOwnedSkinIds.mockResolvedValue({
@@ -325,6 +394,9 @@ describe('IPC wiring', () => {
       catalogFiltered: true
     });
     expect(mocks.resolveOwnedSkinIds).toHaveBeenCalledWith(client);
+    expect(mocks.createLcuClient).toHaveBeenCalledWith(
+      expect.objectContaining({ port: 1234, token: 'secret' })
+    );
   });
 
   it('lcu:fetch-skins propagates LCU-not-detected error as a real Error', async () => {
@@ -338,7 +410,12 @@ describe('IPC wiring', () => {
   });
 
   it('lcu:fetch-skins turns a refused connection into a readable message', async () => {
-    mocks.resolveLcuAuth.mockResolvedValue({ port: 1234, token: 'secret' });
+    mocks.resolveLcuAuth.mockResolvedValue({
+      port: 1234,
+      token: 'secret',
+      protocol: 'https',
+      host: '127.0.0.1'
+    });
     mocks.createLcuClient.mockReturnValue({} as AxiosInstance);
     mocks.getCurrentSummoner.mockRejectedValue(
       Object.assign(new Error('connect ECONNREFUSED 127.0.0.1:55102'), {
@@ -372,7 +449,12 @@ describe('IPC wiring', () => {
       response: { status: 500, data: { message: 'oops' } },
       code: 'ERR_BAD_RESPONSE'
     });
-    mocks.resolveLcuAuth.mockResolvedValue({ port: 1234, token: 'secret' });
+    mocks.resolveLcuAuth.mockResolvedValue({
+      port: 1234,
+      token: 'secret',
+      protocol: 'https',
+      host: '127.0.0.1'
+    });
     mocks.createLcuClient.mockReturnValue({} as AxiosInstance);
     mocks.getCurrentSummoner.mockRejectedValue(axiosError);
 

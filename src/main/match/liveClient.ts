@@ -40,7 +40,9 @@ export async function getAllGameData(
     const response = await axios.get(`${LIVE_CLIENT_BASE}/liveclientdata/allgamedata`, {
       httpsAgent: LIVE_CLIENT_AGENT,
       timeout: timeoutMs,
-      validateStatus: () => true
+      validateStatus: () => true,
+      // 本机回环请求不能走代理 —— 装了代理软件的机器上,代理会直接接管这个请求。
+      proxy: false
     });
     if (response.status !== 200) return null;
     const data = response.data;

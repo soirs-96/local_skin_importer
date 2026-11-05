@@ -1,10 +1,7 @@
 import { contextBridge, ipcRenderer } from 'electron';
 import { MATCH_STATE_CHANNEL } from '../shared/match';
-import type {
-  LlmStatus,
-  MatchSnapshot,
-  RecommendationState
-} from '../shared/match';
+import type { LlmStatus, MatchSnapshot, RecommendationState } from '../shared/match';
+import type { LcuDiagnosis, LcuFailureCode } from '../main/lcu/types';
 
 export type {
   ChampSelectMember,
@@ -21,6 +18,8 @@ export type {
   RecommendationState
 } from '../shared/match';
 
+export type { LcuChannelReport, LcuDiagnosis, LcuFailureCode } from '../main/lcu/types';
+
 export interface LcuStatus {
   running: boolean;
   port?: number;
@@ -29,11 +28,12 @@ export interface LcuStatus {
     puuid: string;
   };
   error?: string;
-  /**
-   * 两条来源(进程命令行 / lockfile)各自失败的原因 —— 只在「压根没找到客户端」时给。
-   * 界面上那个灰色圆点只能说明「没检测到」,这个字段才说得出「为什么」。
-   */
-  reason?: string;
+  /** 失败分类码 —— 界面据此决定文案与图标。 */
+  code?: LcuFailureCode;
+  /** 一句话结论,直接给用户看。 */
+  summary?: string;
+  /** 完整诊断明细,开发者面板用。 */
+  diagnosis?: LcuDiagnosis;
 }
 
 /**
@@ -119,7 +119,13 @@ function invoke<T>(channel: string, ...args: unknown[]): Promise<T> {
 }
 
 const api = {
-  checkLcu: (): Promise<LcuStatus> => invoke('lcu:check-status'),
+  /**
+   * 检测游戏客户端。
+   * deep = true 时允许扫盘找客户端(用户手点按钮时用);
+   * 不传时是浅检测(界面挂载时的自动检查用)。
+   */
+  checkLcu: (deep?: boolean): Promise<LcuStatus> =>
+    deep === true ? invoke('lcu:check-status', true) : invoke('lcu:check-status'),
   fetchSkins: (): Promise<FetchSkinsResult> => invoke('lcu:fetch-skins'),
   redeemCode: (code: string): Promise<AuthStatus> =>
     invoke('auth:login', { code }),

@@ -10,8 +10,16 @@ import type { LcuWsEvent } from '../lcuWs';
 import type { LcuWsStatus } from '../../../shared/match';
 
 vi.mock('../../lcu', () => {
-  class LcuNotRunningError extends Error {}
-  class LcuUnreachableError extends Error {}
+  // 错误类要带上裁决层给的 code / summary —— 轮询器优先显示 summary。
+  class LcuNotRunningError extends Error {
+    readonly code = 'client-not-running';
+    readonly summary = '未检测到游戏客户端,请先启动它。';
+    readonly details: string[] = [];
+  }
+  class LcuUnreachableError extends Error {
+    readonly code = 'stale-credentials';
+    readonly summary = '游戏客户端端口已失效(客户端重启过),请重新启动客户端。';
+  }
   return {
     LcuNotRunningError,
     LcuUnreachableError,
@@ -112,7 +120,7 @@ beforeEach(() => {
   vi.clearAllMocks();
   wsClients.length = 0;
   liveMock.mockResolvedValue(null);
-  authMock.mockResolvedValue({ port: 1234, token: 'tok' });
+  authMock.mockResolvedValue({ port: 1234, token: 'tok', protocol: 'https', host: '127.0.0.1' });
   summonerMock.mockResolvedValue(summoner);
   champSelectMock.mockResolvedValue(null);
   rankedMock.mockResolvedValue({ entries: [], source: '/lol-ranked/v1/current-ranked-stats' });
@@ -179,6 +187,17 @@ describe('MatchPoller', () => {
     await poller.refreshNow();
     expect(authMock).toHaveBeenCalledTimes(1);
   });
+
+  it('错误优先显示裁决层给的中文结论', async () => {
+    const err = new Error('raw');
+    (err as unknown as { summary: string; code: string }).summary =
+      '装的是国际服客户端 —— 本工具只支持国服,请装国服客户端。';
+    (err as unknown as { summary: string; code: string }).code = 'not-cn-client';
+    authMock.mockRejectedValue(err);
+    const poller = new MatchPoller();
+    const snapshot = await poller.refreshNow();
+    expect(snapshot.lastError).toContain('国际服');
+  });
 });
 
 describe('MatchPoller 的 WebSocket 通道', () => {
@@ -192,7 +211,11 @@ describe('MatchPoller 的 WebSocket 通道', () => {
     await flush();
     const before = emissions;
 
-    wsFire({ uri: '/lol-gameflow/v1/session', eventType: 'Update', data: { phase: 'ChampSelect' } });
+    wsFire({
+      uri: '/lol-gameflow/v1/session',
+      eventType: 'Update',
+      data: { phase: 'ChampSelect' }
+    });
     await flush();
 
     expect(emissions).toBeGreaterThan(before);
@@ -210,9 +233,7 @@ describe('MatchPoller 的 WebSocket 通道', () => {
       uri: '/lol-ranked/v1/current-ranked-stats',
       eventType: 'Update',
       data: {
-        queues: [
-          { queueType: 'RANKED_SOLO_5x5', tier: 'GOLD', division: 'II', wins: 3, losses: 1 }
-        ]
+        queues: [{ queueType: 'RANKED_SOLO_5x5', tier: 'GOLD', division: 'II', wins: 3, losses: 1 }]
       }
     });
     await flush();

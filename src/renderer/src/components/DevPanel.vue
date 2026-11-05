@@ -139,8 +139,31 @@ const lcu = ref<LcuStatus>({ running: false });
 const summonerName = computed(() => lcu.value.summoner?.displayName ?? '—');
 const puuid = computed(() => lcu.value.summoner?.puuid ?? '—');
 const port = computed(() => lcu.value.port);
-/** 客户端检测的失败原因 —— 没检测到时是两条来源各自的原因,连不上时是网络错误 */
-const lcuDetail = computed(() => lcu.value.reason ?? lcu.value.error ?? '—');
+/** 客户端检测的失败原因 —— 一句话结论 + 内部错误。 */
+const lcuDetail = computed(() => lcu.value.summary ?? lcu.value.error ?? '—');
+
+/** 客户端诊断明细 —— 每条通道各自的结果,排查时最有用。 */
+const lcuDiagnosisText = computed<string>(() => {
+  const d = lcu.value.diagnosis;
+  if (!d) return '';
+  const lines = d.channels.map((c) => {
+    const probe = c.candidates
+      .map((x) => x.port + '(' + x.origin + '/' + x.probe + ')')
+      .join(', ');
+    return '- ' + c.source + ': ' + c.detail + (probe ? ' | 候选: ' + probe : '');
+  });
+  const env = d.environment;
+  lines.push(
+    '- 环境: proxy=' +
+      (env.proxyVars.length > 0 ? env.proxyVars.join(',') : '无') +
+      ' electron=' +
+      env.electron +
+      ' node=' +
+      env.node
+  );
+  if (d.error) lines.push('- 内部异常: ' + d.error);
+  return lines.join('\n');
+});
 
 const coverageText = computed(
   () => `${Math.round(stats.value.skinIdCoverage * 1000) / 10}%`
@@ -158,7 +181,7 @@ async function onOpen(): Promise<void> {
 
 async function refreshLcu(): Promise<void> {
   try {
-    lcu.value = await window.api.checkLcu();
+    lcu.value = await window.api.checkLcu(true);
   } catch (e: unknown) {
     lcu.value = { running: false, error: (e as { message?: string }).message };
   }
@@ -171,6 +194,7 @@ async function onReload(): Promise<void> {
 }
 
 async function onCopy(): Promise<void> {
+  const diagnosis = lcuDiagnosisText.value;
   const text = [
     '[LOL 皮肤助手 · 诊断信息]',
     `时间: ${new Date().toLocaleString()}`,
@@ -184,7 +208,8 @@ async function onCopy(): Promise<void> {
     `皮肤 ID 覆盖率: ${coverageText.value}`,
     `皮肤 ID 字段: ${skinIdFieldPresent.value ? '后端已升级' : '后端未升级'}`,
     `上次同步: ${lastSyncText.value}`,
-    `图鉴原始记录数: ${skins.value.length}`
+    `图鉴原始记录数: ${skins.value.length}`,
+    ...(diagnosis ? ['客户端诊断明细:', diagnosis] : [])
   ].join('\n');
   await window.api.copyText(text);
   ElMessage.success('诊断信息已复制到剪贴板');

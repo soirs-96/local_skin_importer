@@ -8,7 +8,13 @@
           <span class="status-label hx-label">游戏客户端</span>
         </div>
         <div class="status-actions">
-          <el-button class="hx-gold" :loading="lcuChecking" @click="onCheckLcu">检测客户端</el-button>
+          <el-button
+            class="hx-gold"
+            :loading="lcuChecking"
+            @click="onCheckLcu(true)"
+          >
+            检测客户端
+          </el-button>
         </div>
       </div>
       <div v-if="lcuStatus.running" class="summoner-row">
@@ -152,9 +158,8 @@ const lcuTooltip = computed<string>(() => {
   if (lcuState.value === 'running') {
     return '游戏客户端已连接';
   }
-  // 灰色只说明「没检测到」,后端会带上两条来源各自失败的原因 —— 直接摊给用户看,
-  // 让他们自己截图反馈,不用来回问「你游戏开了没」。
-  return lcuStatus.value.reason ?? '未检测到游戏客户端';
+  // 灰色只说明「没检测到」,后端给的是一句能照着做的中文结论。
+  return lcuStatus.value.summary ?? lcuStatus.value.error ?? '未检测到游戏客户端';
 });
 
 const canSync = computed<boolean>(
@@ -179,13 +184,17 @@ function describeError(e: unknown): string {
   return err.message ?? '未知错误';
 }
 
-async function onCheckLcu(): Promise<void> {
+async function onCheckLcu(deep = false): Promise<void> {
   lcuChecking.value = true;
   lastFetchError.value = null;
   try {
-    const s = await window.api.checkLcu();
+    const s = await window.api.checkLcu(deep);
     lcuStatus.value = s;
-    pushLog('INFO', `LCU check: running=${s.running}${s.error ? ` error=${s.error}` : ''}`);
+    pushLog(
+      'INFO',
+      `LCU check(deep=${deep}): running=${s.running}` +
+        `${s.code ? ' code=' + s.code : ''}${s.summary ? ' summary=' + s.summary : ''}`
+    );
     if (s.error) {
       lastFetchError.value = new Error(s.error);
     }
@@ -285,6 +294,8 @@ async function onSync(options: { auto?: boolean } = {}): Promise<void> {
 
 onMounted(async () => {
   await auth.refresh();
+  // 挂载时的自动检查走浅检测 —— 每次开界面都扫全盘太重。
+  // 用户手点按钮才是深检测。
   await onCheckLcu();
   if (lcuStatus.value.running) {
     await onFetchSkins();
