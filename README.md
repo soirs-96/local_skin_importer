@@ -258,6 +258,19 @@ WeGame 的启动参数在重启后才会刷新。
 界面上的版本号、诊断信息里的版本号都会自动跟着变，不用再手动同步别处。
 本工具**没有自动更新**，用户需要重新下载安装包。
 
+**国内网络打包**：不需要额外操作。`electron-builder.yml` 里配了
+`electronDist: node_modules/electron/dist`，打包器直接复用 `npm install` 装好的 Electron，
+不联网下载。
+
+> 之前默认行为是从 GitHub 拉 `electron-v<版本>-win32-x64.zip`，国内网络会卡在
+> `connect ETIMEDOUT 20.205.243.166:443`。改用本地 dist 就没有这个问题了。
+>
+> NSIS 工具（`nsis-3.0.4.1` / `nsis-resources-3.4.1`）首次打包会自动下载并缓存到
+> `%LOCALAPPDATA%\electron-builder\Cache`，之后就离线可用。
+>
+> electron-builder 26 改 Windows 资源（版本号、图标）用的是纯 JS 的 `resedit` 包，
+> **不再需要** winCodeSign / rcedit —— 不用签名就不会碰它。
+
 ### 配套的推广素材
 
 小程序侧的推广文案在 `wechat_rating_program/docs/推广文案-小黑盒.md`，
