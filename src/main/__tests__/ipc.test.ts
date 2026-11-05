@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { AxiosInstance } from 'axios';
+import type { DevLogLine } from '../../shared/dev';
 import * as auth from '../auth';
 import { syncOwnedSkins } from '../backend';
 import { registerIpcHandlers } from '../ipc';
@@ -57,7 +58,10 @@ const mocks = vi.hoisted(() => {
     requestRecommendation: vi.fn(),
     getLlmStatus: vi.fn(),
     saveLlmApiKey: vi.fn(),
-    clearLlmApiKey: vi.fn()
+    clearLlmApiKey: vi.fn(),
+    devLoggerAttach: vi.fn(),
+    devLoggerDetach: vi.fn(),
+    devLoggerTakeBacklog: vi.fn((_afterSeq: number): DevLogLine[] => [])
   };
 });
 
@@ -135,6 +139,12 @@ vi.mock('../llm', () => ({
   clearLlmApiKey: mocks.clearLlmApiKey
 }));
 
+vi.mock('../devLogger', () => ({
+  attachConsole: mocks.devLoggerAttach,
+  detachConsole: mocks.devLoggerDetach,
+  takeConsoleBacklog: mocks.devLoggerTakeBacklog
+}));
+
 // Importing the preload module is itself the behavior under test: it exposes the bridge.
 await import('../../preload/index');
 
@@ -151,6 +161,8 @@ type ExposedApi = {
   fetchMyOwned: () => unknown;
   openDevTools: () => unknown;
   copyText: (text: string) => unknown;
+  attachConsole: (afterSeq?: number) => unknown;
+  detachConsole: () => unknown;
 };
 
 function handlerFor(channel: string): Handler {
@@ -194,6 +206,10 @@ describe('IPC wiring', () => {
     mocks.getLlmStatus.mockReset();
     mocks.saveLlmApiKey.mockReset();
     mocks.clearLlmApiKey.mockReset();
+    mocks.devLoggerAttach.mockReset();
+    mocks.devLoggerDetach.mockReset();
+    mocks.devLoggerTakeBacklog.mockReset();
+    mocks.devLoggerTakeBacklog.mockReturnValue([]);
     mocks.getFocusedWindow.mockReset();
     mocks.clipboardWriteText.mockReset();
     mocks.readSyncState.mockReturnValue({ lastSyncAt: null });
@@ -216,6 +232,8 @@ describe('IPC wiring', () => {
     api.fetchMyOwned();
     api.openDevTools();
     api.copyText('诊断信息');
+    api.attachConsole(5);
+    api.detachConsole();
 
     expect(mocks.ipcRendererInvoke.mock.calls).toEqual([
       ['lcu:check-status'],
@@ -227,11 +245,13 @@ describe('IPC wiring', () => {
       ['catalog:fetch-all'],
       ['catalog:fetch-owned'],
       ['dev:open-devtools'],
-      ['dev:copy-text', '诊断信息']
+      ['dev:copy-text', '诊断信息'],
+      ['dev:console-attach', 5],
+      ['dev:console-detach']
     ]);
   });
 
-  it('registers all 17 ipc channels on call to registerIpcHandlers', () => {
+  it('registers all 19 ipc channels on call to registerIpcHandlers', () => {
     expect(mocks.ipcMainHandle.mock.calls.map(([channel]) => channel)).toEqual([
       'lcu:check-status',
       'lcu:fetch-skins',
@@ -243,6 +263,8 @@ describe('IPC wiring', () => {
       'catalog:fetch-owned',
       'dev:open-devtools',
       'dev:copy-text',
+      'dev:console-attach',
+      'dev:console-detach',
       'match:get-state',
       'match:refresh',
       'match:get-recommendation',
@@ -624,6 +646,25 @@ describe('IPC wiring', () => {
       message: 'invalid text'
     });
     expect(mocks.clipboardWriteText).not.toHaveBeenCalled();
+  });
+
+  it('dev:console-attach hangs the listener on and hands back the backlog', async () => {
+    const backlog: DevLogLine[] = [{ seq: 1, ts: 1000, level: 'INFO', src: 'main', msg: '启动完成' }];
+    mocks.devLoggerTakeBacklog.mockReturnValue(backlog);
+
+    await expect(invoke('dev:console-attach', {}, 7)).resolves.toEqual(backlog);
+    expect(mocks.devLoggerAttach).toHaveBeenCalledOnce();
+    expect(mocks.devLoggerTakeBacklog).toHaveBeenCalledWith(7);
+  });
+
+  it('dev:console-attach defaults to the whole backlog when no cursor is given', async () => {
+    await invoke('dev:console-attach', {});
+    expect(mocks.devLoggerTakeBacklog).toHaveBeenCalledWith(0);
+  });
+
+  it('dev:console-detach releases the listener', async () => {
+    await expect(invoke('dev:console-detach', {})).resolves.toEqual({ ok: true });
+    expect(mocks.devLoggerDetach).toHaveBeenCalledOnce();
   });
 
   it('match:get-state wakes the poller up and returns the current snapshot', async () => {

@@ -46,7 +46,7 @@
 安装包在仓库的 `release/<版本号>/` 目录下，文件名形如：
 
 ```
-LOL Skin Importer-0.2.0-x64.exe
+LOL Skin Importer-0.2.1-x64.exe
 ```
 
 双击运行 → 一路 `下一步` → `安装` → `完成`。
@@ -251,6 +251,17 @@ WeGame 的启动参数在重启后才会刷新。
   - 界面上的版本号读的是 [`package.json`](package.json) 的 `version`，
     **不要在代码里再写死一份** —— 写死过一次，结果打包升了版本、界面还显示旧版本号
 - 自检：`npm test`（vitest）、`npm run typecheck`、`npm run pack`（出安装包到 `release/<版本号>/`）
+
+### 开发日志控制台
+
+顶栏有个「开发日志」按钮，点它输口令就能开一个底部控制台，实时打印两个进程里
+`console.log / warn / error` 的输出，外加未捕获的异常和未处理的 Promise 拒绝。
+
+- 渲染进程的日志从应用启动就开始采集；主进程的日志在主进程里留一份历史，
+  打开控制台时一起拉回来 —— 所以**先复现问题、再打开控制台也能看到刚才的报错**。
+- 级别可过滤（错误 / 警告 / 信息），「复制」把当前看到的行复制到剪贴板。
+- 口令写在 [`src/renderer/src/config/dev.ts`](src/renderer/src/config/dev.ts) 的
+  `CONSOLE_PASSWORD`；开发者面板的口令是同文件里的 `DEV_PASSWORD`，两者不是一回事。
 
 ### 发版
 

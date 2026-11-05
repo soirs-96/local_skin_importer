@@ -12,6 +12,7 @@ import {
   requestRecommendation
 } from './match/recommendationService';
 import { clearLlmApiKey, getLlmStatus, saveLlmApiKey } from './llm';
+import * as devLogger from './devLogger';
 import { MATCH_STATE_CHANNEL } from '../shared/match';
 
 interface RedeemPayload {
@@ -258,6 +259,17 @@ export function registerIpcHandlers(): void {
   ipcMain.handle('dev:copy-text', async (_event, text: string) => {
     if (typeof text !== 'string') throw new Error('invalid text');
     clipboard.writeText(text);
+    return { ok: true as const };
+  });
+
+  // 开发日志控制台。渲染进程打开控制台时来挂上,顺手把之前的历史捞回去。
+  ipcMain.handle('dev:console-attach', async (_event, afterSeq?: number) => {
+    devLogger.attachConsole();
+    return devLogger.takeConsoleBacklog(typeof afterSeq === 'number' ? afterSeq : 0);
+  });
+
+  ipcMain.handle('dev:console-detach', async () => {
+    devLogger.detachConsole();
     return { ok: true as const };
   });
 

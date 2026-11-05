@@ -11,6 +11,7 @@
         <router-link to="/match" class="tab">对局助手</router-link>
       </nav>
       <span class="spacer" />
+      <el-button size="small" text class="hx-gold" @click="openConsole">开发日志</el-button>
       <span v-if="loggedIn" class="auth-info">已登录</span>
       <el-button
         v-if="loggedIn"
@@ -28,6 +29,7 @@
       <router-view />
     </main>
 
+    <DevConsole />
     <DevPanel />
   </div>
 </template>
@@ -36,13 +38,16 @@
 import { onMounted } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
 import { storeToRefs } from 'pinia';
+import DevConsole from './components/DevConsole.vue';
 import DevPanel from './components/DevPanel.vue';
 import { useAuthStore } from './stores/auth';
+import { useConsoleEntry } from './composables/useConsoleEntry';
 
 const router = useRouter();
 const route = useRoute();
 const auth = useAuthStore();
 const { loggedIn } = storeToRefs(auth);
+const { openConsole } = useConsoleEntry();
 
 function goLogin(): void {
   void router.push('/login');

@@ -1,6 +1,8 @@
 import { contextBridge, ipcRenderer } from 'electron';
 import { MATCH_STATE_CHANNEL } from '../shared/match';
 import type { LlmStatus, MatchSnapshot, RecommendationState } from '../shared/match';
+import { DEV_LOG_CHANNEL } from '../shared/dev';
+import type { DevLogLine } from '../shared/dev';
 import type { LcuDiagnosis, LcuFailureCode } from '../main/lcu/types';
 
 export type {
@@ -138,6 +140,26 @@ const api = {
   openDevTools: (): Promise<{ ok: true }> => invoke('dev:open-devtools'),
   /** 把一段文本写进系统剪贴板(开发者面板的「复制诊断信息」用) */
   copyText: (text: string): Promise<{ ok: true }> => invoke('dev:copy-text', text),
+
+  // ---- 开发日志控制台 --------------------------------------------------------
+  /**
+   * 开始收主进程的日志,并把之前的历史捞回来。
+   * afterSeq = 已经知道的最后一条序号,主进程只给更新的那些。
+   */
+  attachConsole: (afterSeq?: number): Promise<DevLogLine[]> =>
+    invoke('dev:console-attach', afterSeq ?? 0),
+  /** 停止收主进程的日志(控制台关掉时调) */
+  detachConsole: (): Promise<{ ok: true }> => invoke('dev:console-detach'),
+  /** 订阅主进程推来的日志,返回取消订阅的函数 */
+  onDevLog: (cb: (line: DevLogLine) => void): (() => void) => {
+    const listener = (_e: Electron.IpcRendererEvent, line: DevLogLine): void => {
+      cb(line);
+    };
+    ipcRenderer.on(DEV_LOG_CHANNEL, listener);
+    return () => {
+      ipcRenderer.removeListener(DEV_LOG_CHANNEL, listener);
+    };
+  },
 
   // ---- 对局助手 ------------------------------------------------------------
   /** 取一次当前快照(同时会把主进程轮询器唤醒) */
