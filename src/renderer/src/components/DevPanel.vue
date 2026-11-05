@@ -28,6 +28,14 @@
             <span class="dev-val">{{ lcuDetail }}</span>
           </div>
           <div class="dev-row">
+            <span class="dev-key">失败分类码</span>
+            <span class="dev-val mono">{{ lcuCode }}</span>
+          </div>
+          <div class="dev-row">
+            <span class="dev-key">应用版本</span>
+            <span class="dev-val mono">{{ APP_VERSION }}</span>
+          </div>
+          <div class="dev-row">
             <span class="dev-key">登录凭证预览</span>
             <span class="dev-val mono">{{ tokenPreview ?? '未登录' }}</span>
           </div>
@@ -108,6 +116,7 @@ import { useDevStore } from '../stores/dev';
 import { useLogStore } from '../stores/log';
 import { parseServerTime } from '../composables/skinCatalogLogic';
 import { useSkinCatalog } from '../composables/useSkinCatalog';
+import { APP_VERSION } from '../config/dev';
 import type { LcuStatus } from '../../../preload/index';
 
 const dev = useDevStore();
@@ -141,6 +150,8 @@ const puuid = computed(() => lcu.value.summoner?.puuid ?? '—');
 const port = computed(() => lcu.value.port);
 /** 客户端检测的失败原因 —— 一句话结论 + 内部错误。 */
 const lcuDetail = computed(() => lcu.value.summary ?? lcu.value.error ?? '—');
+/** 失败分类码 —— 截图发出来就能定位是哪一类问题。 */
+const lcuCode = computed(() => lcu.value.code ?? '—');
 
 /** 客户端诊断明细 —— 每条通道各自的结果,排查时最有用。 */
 const lcuDiagnosisText = computed<string>(() => {
@@ -198,7 +209,9 @@ async function onCopy(): Promise<void> {
   const text = [
     '[LOL 皮肤助手 · 诊断信息]',
     `时间: ${new Date().toLocaleString()}`,
+    `应用版本: ${APP_VERSION}`,
     `游戏客户端: ${lcu.value.running ? `运行中(端口 ${port.value ?? '—'})` : '未检测到'}`,
+    `客户端失败分类: ${lcuCode.value}`,
     `客户端检测详情: ${lcuDetail.value}`,
     `游戏账号: ${summonerName.value}`,
     `PUUID: ${puuid.value}`,

@@ -184,10 +184,57 @@ describe('detectLcu', () => {
     expect(result.summary).toBe(FAILURE_SUMMARIES['stale-credentials']);
   });
 
-  it('国际服客户端判为 not-cn-client', async () => {
+  it('读到国际服目录下的 lockfile、探测不是 LCU 时判为 not-cn-client', async () => {
+    // 进程命令行区分不了国服和国际服 —— 能分开的只有 lockfile 的安装路径:
+    // 国际服在 `Riot Games\` 下面,国服在 `wegameapps\英雄联盟\` 下面。
+    const deps = makeDeps({
+      readLockfiles: vi.fn(async () => ({
+        candidates: [
+          {
+            port: 2222,
+            token: 'riotTok',
+            protocol: 'https' as const,
+            host: '127.0.0.1',
+            origin: 'riot' as const,
+            source: 'lockfile' as const
+          }
+        ],
+        tried: ['C:\\Users\\x\\AppData\\Local\\Riot Games\\League of Legends\\lockfile']
+      })),
+      probe: vi.fn(probeBy('not-lcu'))
+    });
+
+    const result = await detectLcu(deps);
+
+    if (result.ok) throw new Error('unreachable');
+    expect(result.code).toBe('not-cn-client');
+  });
+
+  it('Riot 参数来自进程命令行时,不足以判成国际服客户端', async () => {
+    // 国服 LeagueClientUx.exe 的命令行里本来就带 --riotclient-* 这一对参数。
+    // 只凭它就告诉用户「你装的是国际服」,是在冤枉国服用户。
     const deps = makeDeps({
       queryProcesses: vi.fn(async () => ({
         processes: [{ executablePath: '', commandLine: RIOT_CMD }],
+        gameProcesses: [],
+        exeDirs: [],
+        liveProcess: false,
+        detail: '只找到 1 个 Riot 客户端进程,没找到游戏客户端进程'
+      })),
+      probe: vi.fn(probeBy('not-lcu'))
+    });
+
+    const result = await detectLcu(deps);
+
+    if (result.ok) throw new Error('unreachable');
+    expect(result.code).not.toBe('not-cn-client');
+  });
+
+  it('同时存在国服和国际服候选时,国际服探测失败不能判为国际服客户端', async () => {
+    // 国服客户端也带 --riotclient-* 参数,把它探测失败当成国际服是在冤枉国服用户。
+    const deps = makeDeps({
+      queryProcesses: vi.fn(async () => ({
+        processes: [{ executablePath: '', commandLine: BOTH_CMD }],
         exeDirs: [],
         liveProcess: true,
         detail: 'found'
@@ -198,7 +245,7 @@ describe('detectLcu', () => {
     const result = await detectLcu(deps);
 
     if (result.ok) throw new Error('unreachable');
-    expect(result.code).toBe('not-cn-client');
+    expect(result.code).toBe('not-a-lcu');
   });
 
   it('国服端口连上的不是 LCU 时判为 not-a-lcu', async () => {
@@ -237,6 +284,80 @@ describe('detectLcu', () => {
 
   it('没有活进程也没有候选判为 client-not-running', async () => {
     const result = await detectLcu(makeDeps());
+
+    if (result.ok) throw new Error('unreachable');
+    expect(result.code).toBe('client-not-running');
+  });
+
+  it('进程查询失败时判为 client-query-failed,而不是「没检测到客户端」', async () => {
+    // 这是用户最常踩的坑:PowerShell 被安全软件拦了,明明开着客户端却被告知没客户端。
+    const deps = makeDeps({
+      queryProcesses: vi.fn(async () => ({
+        processes: [],
+        gameProcesses: [],
+        exeDirs: [],
+        liveProcess: false,
+        queryFailed: true,
+        detail: 'PowerShell 查询失败:超时'
+      }))
+    });
+
+    const result = await detectLcu(deps);
+
+    if (result.ok) throw new Error('unreachable');
+    expect(result.code).toBe('client-query-failed');
+    expect(result.summary).toBe(FAILURE_SUMMARIES['client-query-failed']);
+  });
+
+  it('进程查询失败但扫盘找到了客户端,以扫盘结果为准', async () => {
+    const deps = makeDeps({
+      queryProcesses: vi.fn(async () => ({
+        processes: [],
+        gameProcesses: [],
+        exeDirs: [],
+        liveProcess: false,
+        queryFailed: true,
+        detail: 'PowerShell 查询失败'
+      })),
+      scanForClients: vi.fn(async () => ({
+        candidates: [
+          {
+            port: 3333,
+            token: 'scanTok',
+            protocol: 'https' as const,
+            host: '127.0.0.1',
+            origin: 'cn' as const,
+            source: 'disk-scan' as const
+          }
+        ],
+        paths: ['E:\\a\\lockfile'],
+        timedOut: false,
+        detail: '磁盘扫描完成'
+      })),
+      probe: vi.fn(probeBy('alive'))
+    });
+
+    const result = await detectLcuDeep(deps);
+
+    if (!result.ok) throw new Error('expected ok');
+    expect(result.auth.port).toBe(3333);
+  });
+
+  it('只有 Riot 客户端进程、没有游戏客户端进程时不算「客户端在跑」', async () => {
+    // Riot 客户端那层进程在游戏没开的时候也在跑 —— 算成「在跑」的话,
+    // 用户会被告知「找到了客户端但它还没准备好」,而实际上他根本没开游戏。
+    const deps = makeDeps({
+      queryProcesses: vi.fn(async () => ({
+        processes: [{ executablePath: '', commandLine: RIOT_CMD }],
+        gameProcesses: [],
+        exeDirs: [],
+        liveProcess: false,
+        detail: '只找到 1 个 Riot 客户端进程,没找到游戏客户端进程'
+      })),
+      probe: vi.fn(probeBy('dead'))
+    });
+
+    const result = await detectLcu(deps);
 
     if (result.ok) throw new Error('unreachable');
     expect(result.code).toBe('client-not-running');

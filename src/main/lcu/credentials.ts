@@ -130,6 +130,8 @@ interface CandidateStage {
   liveProcess: boolean;
   paths?: string[];
   timedOut?: boolean;
+  /** PowerShell 查询失败 —— 我们根本没查成,不能断言「客户端没启动」。 */
+  queryFailed?: boolean;
 }
 
 /**
@@ -158,6 +160,10 @@ async function* stageSequence(
 
   // C1 进程命令行。国服和国际服分成两批,国服在前 —— 国际服的 Riot Client API
   // 对游戏端点一律 404,实测就能识破,但没必要让它抢在国服前面。
+  //
+  // **候选从全部客户端进程里取**(不只是游戏客户端那两个)—— 有的机器上
+  // 持有端口的是 LeagueClient.exe 而不是 LeagueClientUx.exe,只认一个名字
+  // 就等于漏掉一条能自愈的路。
   const proc = await deps.queryProcesses();
   const cnCandidates: LcuCandidate[] = [];
   const riotCandidates: LcuCandidate[] = [];
@@ -172,7 +178,8 @@ async function* stageSequence(
     source: 'process',
     candidates: cnCandidates,
     detail: proc.detail,
-    liveProcess: proc.liveProcess
+    liveProcess: proc.liveProcess,
+    queryFailed: proc.queryFailed === true
   };
 
   // C2 lockfile 候选集:exe 派生路径 + 常见安装位置
@@ -251,12 +258,41 @@ async function* stageSequence(
 function classify(
   records: ProbeRecord[],
   liveProcess: boolean,
-  scanTimedOut: boolean
+  scanTimedOut: boolean,
+  queryFailed: boolean
 ): LcuFailureCode {
+  /**
+   * 有没有国服候选(`--app-port` + `--remoting-auth-token`,或国服目录下的 lockfile)。
+   *
+   * 只要有一个,就说明这台机器上装的是国服客户端 —— 「装的是国际服客户端」
+   * 这个结论不成立。
+   */
+  const hasCnCandidate = records.some((r) => r.origin === 'cn');
+
   if (records.some((r) => r.probe === 'unauthorized')) return 'stale-credentials';
-  if (records.some((r) => r.origin === 'riot' && r.probe === 'not-lcu')) return 'not-cn-client';
-  if (records.some((r) => r.origin === 'cn' && r.probe === 'not-lcu')) return 'not-a-lcu';
+  /**
+   * 「装的是国际服客户端」需要**同时**满足两个前提:
+   *   1. 一个国服候选都没有;
+   *   2. 有一条 **lockfile 通道**读出来的 Riot 候选,探测下来不是游戏客户端接口。
+   *
+   * 前提 2 是国服优先的关键。进程命令行区分不了国服和国际服 ——
+   * 国服 `LeagueClientUx.exe` 的命令行里本来就带 `--riotclient-*` 这一对参数,
+   * 只看「有没有国服候选」会把国服用户判成国际服。能分开的只有 lockfile 的
+   * **安装路径**:国服在 `wegameapps\英雄联盟\`,国际服在 `Riot Games\`。
+   * 读到 Riot 目录下的 lockfile,才是「这台机器装的是国际服客户端」的硬证据。
+   */
+  if (
+    !hasCnCandidate &&
+    records.some((r) => r.origin === 'riot' && r.source === 'lockfile' && r.probe === 'not-lcu')
+  ) {
+    return 'not-cn-client';
+  }
+  if (hasCnCandidate && records.some((r) => r.origin === 'cn' && r.probe === 'not-lcu')) {
+    return 'not-a-lcu';
+  }
   if (liveProcess) return 'client-starting';
+  // 查询本身失败 —— 我们没查成,不能断言「客户端没启动」。
+  if (queryFailed) return 'client-query-failed';
   if (scanTimedOut) return 'scan-timeout';
   return 'client-not-running';
 }
@@ -279,10 +315,12 @@ async function detectInner(
   const probed = new Set<string>();
   let liveProcess = false;
   let scanTimedOut = false;
+  let queryFailed = false;
 
   for await (const stage of stageSequence(deps, allowDiskScan)) {
     if (stage.liveProcess) liveProcess = true;
     if (stage.timedOut) scanTimedOut = true;
+    if (stage.queryFailed) queryFailed = true;
 
     if (stage.source === 'disk-scan' && stage.paths && stage.paths.length > 0) {
       // 扫到的路径存下来,下次检测就不用再扫一遍。
@@ -339,7 +377,7 @@ async function detectInner(
     });
   }
 
-  const code = classify(records, liveProcess, scanTimedOut);
+  const code = classify(records, liveProcess, scanTimedOut, queryFailed);
   const summary = FAILURE_SUMMARIES[code];
   const diagnosis: LcuDiagnosis = {
     code,

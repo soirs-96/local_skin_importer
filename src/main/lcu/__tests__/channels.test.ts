@@ -26,6 +26,7 @@ import {
   clearMemoryAuth,
   readEnvironment,
   scanLockfileCandidates,
+  pickGameClient,
   PS_QUERY_SCRIPT
 } from '../channels';
 
@@ -34,12 +35,76 @@ describe('PS_QUERY_SCRIPT', () => {
     expect(PS_QUERY_SCRIPT).toContain('ToBase64String');
   });
 
-  it('按名字过滤 LeagueClientUx.exe', () => {
-    expect(PS_QUERY_SCRIPT).toContain('LeagueClientUx.exe');
+  it('一次查询捞出全部客户端相关进程名', () => {
+    // 只认 LeagueClientUx.exe 的话,持有端口的是 LeagueClient.exe 的机器就查不到。
+    for (const name of [
+      'LeagueClientUx.exe',
+      'LeagueClient.exe',
+      'RiotClientUx.exe',
+      'RiotClientServices.exe'
+    ]) {
+      expect(PS_QUERY_SCRIPT).toContain(`Name='${name}'`);
+    }
+  });
+
+  it('进程名用 OR 连在同一个 WMI 过滤器里', () => {
+    expect(PS_QUERY_SCRIPT).toContain(' OR ');
   });
 
   it('用分隔符把 exe 路径和命令行拼在一起', () => {
     expect(PS_QUERY_SCRIPT).toContain('[char]31');
+  });
+});
+
+describe('pickGameClient', () => {
+  it('只有游戏客户端进程才算客户端在跑', () => {
+    const r = pickGameClient([
+      {
+        executablePath: 'C:\\Riot\\LeagueClientUx.exe',
+        commandLine: 'LeagueClientUx.exe --app-port=1'
+      }
+    ]);
+    expect(r.liveProcess).toBe(true);
+    expect(r.gameProcesses).toHaveLength(1);
+    expect(r.detail).toContain('游戏客户端进程');
+  });
+
+  it('Riot 客户端那层进程不算客户端在跑', () => {
+    // 游戏没开时它们也在跑 —— 算进去用户会被误告知「客户端还没准备好」。
+    const r = pickGameClient([
+      {
+        executablePath: 'C:\\Riot\\RiotClientUx.exe',
+        commandLine: 'RiotClientUx.exe --riotclient-app-port=1'
+      },
+      {
+        executablePath: 'C:\\Riot\\RiotClientServices.exe',
+        commandLine: 'RiotClientServices.exe'
+      }
+    ]);
+    expect(r.liveProcess).toBe(false);
+    expect(r.gameProcesses).toHaveLength(0);
+    expect(r.detail).toContain('Riot 客户端进程');
+  });
+
+  it('lockfile 目录只从游戏客户端进程推', () => {
+    const r = pickGameClient([
+      {
+        executablePath: 'C:\\Riot\\RiotClientUx.exe',
+        commandLine: 'RiotClientUx.exe'
+      },
+      {
+        executablePath: 'E:\\wegameapps\\英雄联盟\\LeagueClient.exe',
+        commandLine: 'LeagueClient.exe --app-port=1'
+      }
+    ]);
+    expect(r.exeDirs).toEqual(['E:\\wegameapps\\英雄联盟']);
+  });
+
+  it('一个进程都没查到时是「没查到」而不是「只有 Riot 进程」', () => {
+    const r = pickGameClient([]);
+    expect(r.liveProcess).toBe(false);
+    expect(r.exeDirs).toEqual([]);
+    expect(r.detail).toBe('没查到客户端进程');
   });
 });
 

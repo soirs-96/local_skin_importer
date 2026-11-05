@@ -31,9 +31,16 @@ export interface LcuCandidate extends LcuAuth {
 /** 一次实测的结论。 */
 export type LcuProbeOutcome = 'alive' | 'dead' | 'unauthorized' | 'not-lcu' | 'not-ready';
 
-/** 检测失败的原因分类。界面上的一句话结论由它决定。 */
+/**
+ * 检测失败的原因分类。界面上的一句话结论由它决定。
+ *
+ * `client-not-running` 和 `client-query-failed` 必须分开:
+ * 前者是「查了,确实没有」,后者是「连查都没查成」(PowerShell 被拦/超时)。
+ * 混在一起的话,用户明明开着客户端也会被告知「没检测到客户端」。
+ */
 export type LcuFailureCode =
   | 'client-not-running'
+  | 'client-query-failed'
   | 'client-starting'
   | 'stale-credentials'
   | 'not-cn-client'
@@ -44,6 +51,7 @@ export type LcuFailureCode =
 /** 全部失败分类码,顺序即优先级。 */
 export const FAILURE_CODES: readonly LcuFailureCode[] = [
   'client-not-running',
+  'client-query-failed',
   'client-starting',
   'stale-credentials',
   'not-cn-client',
@@ -60,6 +68,8 @@ export const FAILURE_CODES: readonly LcuFailureCode[] = [
  */
 export const FAILURE_SUMMARIES: Record<LcuFailureCode, string> = {
   'client-not-running': '没检测到英雄联盟客户端 —— 先打开客户端(进到大厅)再点检测。',
+  'client-query-failed':
+    '没能查询客户端进程 —— 可能被安全软件或系统策略拦截,请检查后重试。',
   'client-starting': '找到了客户端但它还没准备好 —— 等 5 秒再点检测。',
   'stale-credentials': '客户端重启过、凭据失效 —— 点检测重试。',
   'not-cn-client': '装的是国际服客户端 —— 本工具只支持国服,请装国服客户端。',

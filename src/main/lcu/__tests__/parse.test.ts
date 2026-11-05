@@ -4,7 +4,10 @@ import {
   parseCommandLineCandidates,
   parseLockfileText,
   parseProcessOutput,
-  executableDirOf
+  executableDirOf,
+  isGameClientProcess,
+  processNameOf,
+  LCU_PROCESS_NAMES
 } from '../parse';
 
 const SEP = String.fromCharCode(31);
@@ -178,5 +181,80 @@ describe('executableDirOf', () => {
 
   it('推不出来时返回 null', () => {
     expect(executableDirOf({ executablePath: '', commandLine: '' })).toBeNull();
+  });
+});
+
+describe('processNameOf', () => {
+  it('从 exe 路径取文件名', () => {
+    expect(
+      processNameOf({
+        executablePath: 'E:\\wegameapps\\英雄联盟\\LeagueClientUx.exe',
+        commandLine: 'LeagueClientUx.exe --app-port=1'
+      })
+    ).toBe('LeagueClientUx.exe');
+  });
+
+  it('exe 路径为空时从命令行第一个 token 取', () => {
+    expect(
+      processNameOf({
+        executablePath: '',
+        commandLine: '"E:\\wegameapps\\英雄联盟\\LeagueClient.exe" --app-port=1'
+      })
+    ).toBe('LeagueClient.exe');
+  });
+
+  it('取不到就是空串', () => {
+    expect(processNameOf({ executablePath: '', commandLine: '' })).toBe('');
+  });
+});
+
+describe('isGameClientProcess', () => {
+  it('LeagueClientUx.exe 和 LeagueClient.exe 算游戏客户端', () => {
+    expect(
+      isGameClientProcess({
+        executablePath: 'C:\\Riot\\LeagueClientUx.exe',
+        commandLine: 'LeagueClientUx.exe --app-port=1'
+      })
+    ).toBe(true);
+    expect(
+      isGameClientProcess({
+        executablePath: 'C:\\Riot\\LeagueClient.exe',
+        commandLine: 'LeagueClient.exe --app-port=1'
+      })
+    ).toBe(true);
+  });
+
+  it('Riot 客户端那层进程不算游戏客户端', () => {
+    // 它们在游戏没开的时候也在跑 —— 算进去的话用户会被误告知「客户端还没准备好」。
+    expect(
+      isGameClientProcess({
+        executablePath: 'C:\\Riot\\RiotClientUx.exe',
+        commandLine: 'RiotClientUx.exe --riotclient-app-port=1'
+      })
+    ).toBe(false);
+    expect(
+      isGameClientProcess({
+        executablePath: 'C:\\Riot\\RiotClientServices.exe',
+        commandLine: 'RiotClientServices.exe'
+      })
+    ).toBe(false);
+  });
+
+  it('名字大小写不敏感', () => {
+    expect(
+      isGameClientProcess({
+        executablePath: 'C:\\Riot\\leagueclientux.exe',
+        commandLine: 'leagueclientux.exe'
+      })
+    ).toBe(true);
+  });
+});
+
+describe('LCU_PROCESS_NAMES', () => {
+  it('包含国服和国际服会用到的进程名', () => {
+    expect(LCU_PROCESS_NAMES).toContain('LeagueClientUx.exe');
+    expect(LCU_PROCESS_NAMES).toContain('LeagueClient.exe');
+    expect(LCU_PROCESS_NAMES).toContain('RiotClientUx.exe');
+    expect(LCU_PROCESS_NAMES).toContain('RiotClientServices.exe');
   });
 });

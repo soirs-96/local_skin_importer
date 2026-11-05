@@ -10,6 +10,8 @@ import * as path from 'node:path';
 import { app } from 'electron';
 import {
   executableDirOf,
+  isGameClientProcess,
+  LCU_PROCESS_NAMES,
   parseLockfileText,
   parseProcessOutput,
   type LcuProcessInfo
@@ -18,14 +20,19 @@ import { listDriveRoots, scanForLockfiles } from './scan';
 import type { LcuAuth, LcuAuthOrigin, LcuCandidate, LcuEnvironment } from './types';
 
 /**
- * 查 LeagueClientUx.exe 的命令行。
+ * 查客户端相关进程的命令行。
+ *
+ * 一次 WMI 查询把四个进程名全捞出来(用 OR 连起来)—— 一次 spawn 的成本,
+ * 不能为了多查一个名字就多开一次 PowerShell。
  *
  * 输出走 base64 —— 安装路径可能是中文(`E:\wegameapps\英雄联盟\`),
  * 直接走管道会被控制台代码页毁掉。base64 是纯 ASCII,不受影响。
  */
 export const PS_QUERY_SCRIPT =
   '[Console]::OutputEncoding = [System.Text.Encoding]::UTF8; ' +
-  `Get-CimInstance Win32_Process -Filter "Name='LeagueClientUx.exe'" | ` +
+  `Get-CimInstance Win32_Process -Filter "${LCU_PROCESS_NAMES.map(
+    (n) => `Name='${n}'`
+  ).join(' OR ')}" | ` +
   'ForEach-Object { [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes(' +
   '($_.ExecutablePath + [char]31 + $_.CommandLine))) }';
 
@@ -104,12 +111,60 @@ export function runPowerShell(script: string, timeoutMs = PS_TIMEOUT_MS): Promis
 
 /** C1 通道的结果。 */
 export interface ProcessChannelResult {
+  /** 查到的全部客户端相关进程。 */
   processes: LcuProcessInfo[];
-  /** 从进程推出来的 exe 目录,lockfile 就在那儿。 */
+  /**
+   * 其中属于**游戏客户端**的进程(LeagueClientUx.exe / LeagueClient.exe)。
+   *
+   * `liveProcess` 以它为准 —— Riot 客户端那层进程在游戏没开的时候也在跑,
+   * 把它算进「客户端在跑」会让用户没开游戏也被告知「客户端还没准备好」。
+   */
+  gameProcesses?: LcuProcessInfo[];
+  /** 从游戏客户端进程推出来的 exe 目录,lockfile 就在那儿。 */
   exeDirs: string[];
-  /** 有没有查到活的 LeagueClientUx.exe 进程。 */
+  /** 有没有查到活的游戏客户端进程。 */
+  liveProcess: boolean;
+  /**
+   * PowerShell 查询本身失败(被安全软件拦、超时、PowerShell 不可用)。
+   *
+   * 这跟「查到了但没有进程」是两回事 —— 前者我们根本没查成,
+   * 不能拿它去断言「客户端没启动」。
+   */
+  queryFailed?: boolean;
+  detail: string;
+}
+
+/**
+ * 从进程列表里挑出**游戏客户端**进程,并推出 lockfile 所在目录。
+ *
+ * 纯函数 —— 不碰 IO,所以能直接单测。
+ *
+ * lockfile 只跟着游戏客户端走 —— Riot 客户端那层目录里没有。
+ */
+export function pickGameClient(processes: LcuProcessInfo[]): {
+  gameProcesses: LcuProcessInfo[];
+  exeDirs: string[];
   liveProcess: boolean;
   detail: string;
+} {
+  const gameProcesses = processes.filter(isGameClientProcess);
+
+  const exeDirs: string[] = [];
+  for (const info of gameProcesses) {
+    const dir = executableDirOf(info);
+    if (dir && !exeDirs.includes(dir)) exeDirs.push(dir);
+  }
+
+  let detail: string;
+  if (gameProcesses.length > 0) {
+    detail = '找到 ' + gameProcesses.length + ' 个游戏客户端进程';
+  } else if (processes.length > 0) {
+    detail = '只找到 ' + processes.length + ' 个 Riot 客户端进程,没找到游戏客户端进程';
+  } else {
+    detail = '没查到客户端进程';
+  }
+
+  return { gameProcesses, exeDirs, liveProcess: gameProcesses.length > 0, detail };
 }
 
 /** 查一次进程,拿回 exe 路径和命令行。 */
@@ -120,28 +175,18 @@ export async function queryLcuProcesses(): Promise<ProcessChannelResult> {
   } catch (e: unknown) {
     return {
       processes: [],
+      gameProcesses: [],
       exeDirs: [],
       liveProcess: false,
+      queryFailed: true,
       detail: 'PowerShell 查询失败:' + describeError(e)
     };
   }
 
   const processes = parseProcessOutput(out);
-  const exeDirs: string[] = [];
-  for (const info of processes) {
-    const dir = executableDirOf(info);
-    if (dir && !exeDirs.includes(dir)) exeDirs.push(dir);
-  }
+  const { gameProcesses, exeDirs, liveProcess, detail } = pickGameClient(processes);
 
-  return {
-    processes,
-    exeDirs,
-    liveProcess: processes.length > 0,
-    detail:
-      processes.length > 0
-        ? '找到 ' + processes.length + ' 个 LeagueClientUx.exe 进程'
-        : 'LeagueClientUx.exe 没在运行'
-  };
+  return { processes, gameProcesses, exeDirs, liveProcess, detail };
 }
 
 /** lockfile 读出来的结果。 */

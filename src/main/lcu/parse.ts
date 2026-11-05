@@ -10,6 +10,33 @@ import type { LcuAuth, LcuAuthOrigin, LcuProtocol } from './types';
 /** LCU 监听在本机回环地址上。 */
 export const DEFAULT_HOST = '127.0.0.1';
 
+/**
+ * 要查询的客户端相关进程名。
+ *
+ * 查的不止 `LeagueClientUx.exe` 一个 —— 国服 WeGame 和国际服的进程组合不一样,
+ * 只认一个名字的话,进程名对不上就等于「没装客户端」。
+ *
+ * `LeagueClient.exe` 是游戏客户端本体,它才是真正持有 LCU 端口的那个进程;
+ * `RiotClientUx.exe` / `RiotClientServices.exe` 是 Riot 客户端那一层。
+ */
+export const LCU_PROCESS_NAMES: readonly string[] = [
+  'LeagueClientUx.exe',
+  'LeagueClient.exe',
+  'RiotClientUx.exe',
+  'RiotClientServices.exe'
+];
+
+/**
+ * 游戏客户端的进程名 —— **只有这些算「游戏客户端在跑」**。
+ *
+ * Riot 客户端那层进程在游戏没开的时候也在跑,把它算成「客户端在跑」的话,
+ * 用户明明没开游戏也会被告知「找到了客户端但它还没准备好」。
+ */
+export const GAME_CLIENT_PROCESS_NAMES: readonly string[] = [
+  'LeagueClientUx.exe',
+  'LeagueClient.exe'
+];
+
 /** exe 路径与命令行之间的分隔符。用 fromCharCode 写,避免转义被工具吞掉。 */
 export const FIELD_SEPARATOR = String.fromCharCode(31);
 
@@ -186,4 +213,22 @@ export function executableDirOf(info: LcuProcessInfo): string | null {
   if (!exe) return null;
   const dir = exe.replace(/[\\/]+$/, '').replace(/[\\/][^\\/]*$/, '');
   return dir ? dir : null;
+}
+
+/** 进程名(不含目录)。取不到就是空串。 */
+export function processNameOf(info: LcuProcessInfo): string {
+  const exe = info.executablePath || firstToken(info.commandLine);
+  const idx = Math.max(exe.lastIndexOf('\\'), exe.lastIndexOf('/'));
+  return idx >= 0 ? exe.slice(idx + 1) : exe;
+}
+
+/**
+ * 这个进程是不是游戏客户端本体。
+ *
+ * 判据是进程名 —— 命令行参数不能用来判:国际服和国际服之外的各种启动方式
+ * 带的参数组合太多,按参数判会把「Riot 客户端在跑」误当成「游戏客户端在跑」。
+ */
+export function isGameClientProcess(info: LcuProcessInfo): boolean {
+  const name = processNameOf(info).toLowerCase();
+  return GAME_CLIENT_PROCESS_NAMES.some((n) => n.toLowerCase() === name);
 }

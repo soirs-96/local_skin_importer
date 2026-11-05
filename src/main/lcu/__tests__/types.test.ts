@@ -26,9 +26,10 @@ describe('失败分类词汇表', () => {
     }
   });
 
-  it('分类码是联合类型里声明的那七个', () => {
+  it('分类码是联合类型里声明的那八个', () => {
     const expected: LcuFailureCode[] = [
       'client-not-running',
+      'client-query-failed',
       'client-starting',
       'stale-credentials',
       'not-cn-client',
@@ -37,5 +38,13 @@ describe('失败分类词汇表', () => {
       'unknown'
     ];
     expect([...FAILURE_CODES].sort()).toEqual([...expected].sort());
+  });
+
+  it('「没查到进程」和「没查成」是两回事,文案必须不同', () => {
+    // 混在一起的话,用户明明开着客户端也会被告知「没检测到客户端」。
+    expect(FAILURE_SUMMARIES['client-not-running']).not.toBe(
+      FAILURE_SUMMARIES['client-query-failed']
+    );
+    expect(FAILURE_SUMMARIES['client-query-failed']).toMatch(/拦截|策略/);
   });
 });
