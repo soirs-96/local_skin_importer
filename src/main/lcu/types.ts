@@ -67,9 +67,10 @@ export const FAILURE_CODES: readonly LcuFailureCode[] = [
  * 而不是让人看完再去猜。也写给开发者看 —— 截图发出来就能定位问题。
  */
 export const FAILURE_SUMMARIES: Record<LcuFailureCode, string> = {
-  'client-not-running': '没检测到英雄联盟客户端 —— 先打开客户端(进到大厅)再点检测。',
+  'client-not-running':
+    '没检测到英雄联盟客户端 —— 确认客户端已进到大厅再点检测;若客户端确实开着,请点顶部「开发日志」把日志发给我们。',
   'client-query-failed':
-    '没能查询客户端进程 —— 可能被安全软件或系统策略拦截,请检查后重试。',
+    '没能查询客户端进程 —— 可能被安全软件拦截,或客户端以管理员身份运行(试试右键本程序「以管理员身份运行」)。',
   'client-starting': '找到了客户端但它还没准备好 —— 等 5 秒再点检测。',
   'stale-credentials': '客户端重启过、凭据失效 —— 点检测重试。',
   'not-cn-client': '装的是国际服客户端 —— 本工具只支持国服,请装国服客户端。',

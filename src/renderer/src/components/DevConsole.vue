@@ -29,7 +29,12 @@
     </header>
 
     <div ref="bodyEl" class="dc-body">
-      <div v-if="shown.length === 0" class="dc-empty">暂无输出</div>
+      <div class="dc-hint">
+        日志来自主进程。进「皮肤同步」页点一次「检测客户端」，这里会实时打印每条发现通道的结果。
+      </div>
+      <div v-if="shown.length === 0" class="dc-empty">
+        {{ lines.length === 0 ? '还没有任何日志' : '当前筛选条件下没有输出' }}
+      </div>
       <div
         v-for="(line, i) in shown"
         :key="`${line.ts}-${i}`"
@@ -207,6 +212,14 @@ function onClose(): void {
   font-family: 'Menlo', 'Consolas', monospace;
   font-size: 12px;
   line-height: 1.5;
+}
+.dc-hint {
+  color: var(--hx-text-faint);
+  font-size: 11px;
+  line-height: 1.6;
+  margin-bottom: 6px;
+  padding-bottom: 6px;
+  border-bottom: 1px dashed var(--hx-line);
 }
 .dc-empty {
   color: var(--hx-text-faint);

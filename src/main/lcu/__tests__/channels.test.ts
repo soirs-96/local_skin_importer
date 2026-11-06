@@ -24,9 +24,12 @@ import {
   readMemoryAuth,
   writeMemoryAuth,
   clearMemoryAuth,
+  explainQueryError,
   readEnvironment,
   scanLockfileCandidates,
   pickGameClient,
+  PERMISSION_MARKER,
+  PS_FALLBACK_SCRIPT,
   PS_QUERY_SCRIPT
 } from '../channels';
 
@@ -53,6 +56,65 @@ describe('PS_QUERY_SCRIPT', () => {
 
   it('用分隔符把 exe 路径和命令行拼在一起', () => {
     expect(PS_QUERY_SCRIPT).toContain('[char]31');
+  });
+
+  it('把查询错误收集起来 —— 静默失败会被当成「客户端没开」', () => {
+    // WMI 被拦时 Get-CimInstance 什么都不吐,只看退出码就分不清
+    // 「没查成」和「客户端没开」,用户会被误导。
+    expect(PS_QUERY_SCRIPT).toContain('-ErrorVariable');
+    expect(PS_QUERY_SCRIPT).toContain('exit 1');
+  });
+
+  it('「一个都没匹配到」不算查询失败', () => {
+    // Get-CimInstance -Filter 找不到东西时自己会报 No matching ——
+    // 那不是失败,是客户端确实没开。
+    expect(PS_QUERY_SCRIPT).toContain('No matching');
+  });
+
+  it('兜底查询走 Get-Process,绕开 WMI', () => {
+    expect(PS_FALLBACK_SCRIPT).toContain('Get-Process');
+    expect(PS_FALLBACK_SCRIPT).not.toContain('Get-CimInstance');
+    // 兜底只拿得到 exe 路径,拿不到命令行 —— 但路径够推出 lockfile。
+    expect(PS_FALLBACK_SCRIPT).toContain('GetBytes');
+  });
+
+  it('「看到了进程但读不到详情」要报成失败,不能当成「客户端没开」', () => {
+    // 客户端以管理员身份运行时,WMI 的 ExecutablePath / CommandLine 是空的。
+    // 旧代码把这种记录过滤掉,结果就是「进程明明在跑,却说没检测到客户端」。
+    expect(PS_QUERY_SCRIPT).toContain('LCU_QUERY_ERROR: PERMISSION');
+    expect(PS_QUERY_SCRIPT).toContain('$gameReadable -eq 0');
+    expect(PS_FALLBACK_SCRIPT).toContain('LCU_QUERY_ERROR: PERMISSION');
+    expect(PS_FALLBACK_SCRIPT).toContain('$gameReadable -eq 0');
+  });
+
+  it('权限判断只看游戏客户端那两个进程', () => {
+    // Riot 的系统级服务进程对普通用户也读不到路径 —— 拿它判定的话,
+    // 「客户端确实没开」会被误报成「权限不足」。
+    expect(PS_QUERY_SCRIPT).toContain("$p.Name -eq 'LeagueClientUx.exe'");
+    expect(PS_QUERY_SCRIPT).toContain("$p.Name -eq 'LeagueClient.exe'");
+    expect(PS_QUERY_SCRIPT).not.toContain("$p.Name -eq 'RiotClientServices.exe'");
+    expect(PS_FALLBACK_SCRIPT).toContain("$p.ProcessName -eq 'LeagueClientUx'");
+    expect(PS_FALLBACK_SCRIPT).not.toContain("$p.ProcessName -eq 'RiotClientServices'");
+  });
+
+  it('脚本里不写中文 —— stdin 的编码跟着控制台代码页走,会被读成乱码', () => {
+    // 中文结论由 TS 层翻译(PERMISSION_MARKER),不靠脚本里的常量。
+    expect(/[一-鿿]/.test(PS_QUERY_SCRIPT)).toBe(false);
+    expect(/[一-鿿]/.test(PS_FALLBACK_SCRIPT)).toBe(false);
+  });
+});
+
+describe('explainQueryError', () => {
+  it('权限不足要给出用户侧解法,而不是泛泛的「查询失败」', () => {
+    const out = explainQueryError('PowerShell exited with 1: ' + PERMISSION_MARKER);
+    expect(out).toContain('权限不足');
+    expect(out).toContain('管理员');
+  });
+
+  it('其它报错原样透出', () => {
+    expect(explainQueryError('PowerShell query timed out.')).toBe(
+      'PowerShell query timed out.'
+    );
   });
 });
 
@@ -267,5 +329,22 @@ describe('scanLockfileCandidates', () => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), 'lcu-chan-'));
     const result = await scanLockfileCandidates([root]);
     expect(result.candidates).toEqual([]);
+  });
+
+  it('非标准安装路径也能扫到 —— 白名单挡不住用户装哪', async () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'lcu-chan-'));
+    const dir = path.join(root, 'game', 'LOL', '英雄联盟');
+    fs.mkdirSync(dir, { recursive: true });
+    fs.writeFileSync(
+      path.join(dir, 'lockfile'),
+      'LeagueClientUx:12345:9999:secret-token:https',
+      'utf8'
+    );
+
+    const result = await scanLockfileCandidates([root]);
+
+    expect(result.candidates.length).toBe(1);
+    expect(result.candidates[0].port).toBe(9999);
+    expect(result.candidates[0].origin).toBe('cn');
   });
 });

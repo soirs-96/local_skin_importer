@@ -160,6 +160,8 @@ export function registerIpcHandlers(): void {
         summoner: result.summoner
       };
     } catch (error: unknown) {
+      // 这条路径在界面上只表现为「检测失败」,不留日志就等于没有线索。
+      console.error('[LCU] 检测调用失败', error);
       const normalized = normalizeLcuError(error);
       return {
         running: false,

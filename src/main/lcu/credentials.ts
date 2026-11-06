@@ -317,7 +317,21 @@ async function detectInner(
   let scanTimedOut = false;
   let queryFailed = false;
 
+  // 每条通道说了什么都打出来 —— 用户报障时截图就有用了,
+  // 不用再让人去开发者面板里翻「复制诊断信息」。
+  console.info('[LCU] 开始检测 · 深检测=' + (allowDiskScan ? '是' : '否'));
+
   for await (const stage of stageSequence(deps, allowDiskScan)) {
+    console.info(
+      '[LCU] 通道 ' +
+        stage.source +
+        ' · ' +
+        stage.detail +
+        ' · 候选 ' +
+        stage.candidates.length +
+        (stage.liveProcess ? ' · 客户端进程在跑' : '')
+    );
+
     if (stage.liveProcess) liveProcess = true;
     if (stage.timedOut) scanTimedOut = true;
     if (stage.queryFailed) queryFailed = true;
@@ -335,6 +349,9 @@ async function detectInner(
       probed.add(key);
 
       const result = await deps.probe(candidate);
+      console.info(
+        '[LCU] 探测 端口' + candidate.port + '(' + candidate.origin + ') → ' + result.outcome
+      );
       records.push({
         origin: candidate.origin,
         port: candidate.port,
@@ -356,6 +373,15 @@ async function detectInner(
         host: candidate.host
       };
       deps.writeMemoryAuth(auth, candidate.origin);
+      const summoner = safeSummoner(result.body);
+      console.info(
+        '[LCU] 检测成功 · 端口 ' +
+          candidate.port +
+          ' · 来源 ' +
+          stage.source +
+          ' · 召唤师 ' +
+          summoner.displayName
+      );
       reports.push({
         source: stage.source,
         ok: true,
@@ -364,7 +390,7 @@ async function detectInner(
         candidates: probeRecords,
         paths: stage.paths
       });
-      return { ok: true, auth, summoner: safeSummoner(result.body) };
+      return { ok: true, auth, summoner };
     }
 
     reports.push({
@@ -379,6 +405,7 @@ async function detectInner(
 
   const code = classify(records, liveProcess, scanTimedOut, queryFailed);
   const summary = FAILURE_SUMMARIES[code];
+  console.warn('[LCU] 检测失败 · ' + code + ' · ' + summary);
   const diagnosis: LcuDiagnosis = {
     code,
     summary,
@@ -395,6 +422,9 @@ async function runDetection(
   try {
     return await detectInner(deps, allowDiskScan);
   } catch (e: unknown) {
+    // 异常路径也要留痕 —— 不然开发日志控制台里什么都看不到,
+    // 只剩一句「检测失败」,等于什么线索都没留下。
+    console.warn('[LCU] 检测过程抛出异常', e);
     const summary = FAILURE_SUMMARIES.unknown;
     const diagnosis: LcuDiagnosis = {
       code: 'unknown',

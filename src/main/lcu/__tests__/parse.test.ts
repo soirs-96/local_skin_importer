@@ -124,6 +124,15 @@ describe('parseProcessOutput', () => {
     expect(out[0].commandLine).toContain('--app-port=1');
   });
 
+  it('兜底查询只给 exe 路径、没有命令行时也能解析', () => {
+    // 不走 WMI 的兜底查询拿不到命令行,只吐路径 + 分隔符。
+    const line = b64('D:\\game\\LOL\\英雄联盟\\LeagueClient\\LeagueClient.exe' + SEP);
+    const out = parseProcessOutput(line);
+    expect(out).toHaveLength(1);
+    expect(out[0].executablePath).toBe('D:\\game\\LOL\\英雄联盟\\LeagueClient\\LeagueClient.exe');
+    expect(out[0].commandLine).toBe('');
+  });
+
   it('多个进程按行解析', () => {
     const out = parseProcessOutput(
       [

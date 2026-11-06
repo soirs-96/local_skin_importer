@@ -1,6 +1,6 @@
 {
   "name": "lol-skin-local-importer",
-  "version": "0.2.1",
+  "version": "0.2.3",
   "private": true,
   "description": "Electron desktop tool to sync owned LOL skins to lol-skin-api.",
   "author": "soirs-96",
@@ -19,6 +19,8 @@
     "typecheck:web": "vue-tsc --noEmit -p tsconfig.web.json",
     "test": "vitest run",
     "test:watch": "vitest",
+    "postinstall": "npm run patch:builder",
+    "patch:builder": "node scripts/patch-electron-builder-nsis.mjs",
     "lint": "eslint .",
     "lint:fix": "eslint . --fix",
     "format": "prettier --write \"src/**/*.{ts,vue,css,html}\" \"tests/**/*.ts\""

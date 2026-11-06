@@ -53,6 +53,21 @@ function createWindow(): void {
 }
 
 app.whenReady().then(() => {
+  // 启动信息也进日志:开发日志控制台开着的时候,一眼就能看出
+  // 对方手上是哪个版本、是不是打包版 —— 顺带保证它永远不是空的。
+  console.info(
+    '[app] 启动 · 版本 ' +
+      app.getVersion() +
+      ' · Electron ' +
+      (process.versions.electron ?? 'unknown') +
+      ' · Node ' +
+      process.versions.node +
+      ' · ' +
+      process.platform +
+      '/' +
+      process.arch +
+      (app.isPackaged ? ' · 已打包' : ' · 开发模式')
+  );
   registerIconProtocol();
   registerIpcHandlers();
   createWindow();

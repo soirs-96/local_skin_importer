@@ -10,31 +10,107 @@ import * as path from 'node:path';
 import { app } from 'electron';
 import {
   executableDirOf,
+  GAME_CLIENT_PROCESS_NAMES,
   isGameClientProcess,
   LCU_PROCESS_NAMES,
   parseLockfileText,
   parseProcessOutput,
   type LcuProcessInfo
 } from './parse';
-import { listDriveRoots, scanForLockfiles } from './scan';
+import {
+  FAST_SCAN_BUDGET_MS,
+  listDriveRoots,
+  PERMISSIVE_SCAN_BUDGET_MS,
+  scanForLockfiles,
+  scanForLockfilesPermissive
+} from './scan';
 import type { LcuAuth, LcuAuthOrigin, LcuCandidate, LcuEnvironment } from './types';
 
 /**
- * 查客户端相关进程的命令行。
+ * 进程查询脚本(WMI 版)。
  *
- * 一次 WMI 查询把四个进程名全捞出来(用 OR 连起来)—— 一次 spawn 的成本,
+ * 一次查询把四个客户端相关进程名全捞出来(用 OR 连起来)—— 一次 spawn 的成本,
  * 不能为了多查一个名字就多开一次 PowerShell。
  *
  * 输出走 base64 —— 安装路径可能是中文(`E:\wegameapps\英雄联盟\`),
  * 直接走管道会被控制台代码页毁掉。base64 是纯 ASCII,不受影响。
+ *
+ * 错误要分三种,脚本里必须自己分:
+ *
+ *   · 「一个都没匹配到」—— `Get-CimInstance -Filter` 找不到东西时**自己就会报**
+ *     "No matching MSFT_CimInstance objects found"。这不是失败,客户端就是没开。
+ *   · 「查询本身失败」—— WMI 被安全软件或系统策略拦了、服务没起来。
+ *     这才是失败,必须以非零码退出,否则用户明明开着客户端却被告知
+ *     「先打开客户端再点检测」。
+ *   · 「看到了进程,但读不到它们的路径和命令行」—— 客户端的权限等级比本程序高
+ *     (比如客户端是管理员启动的)时,WMI 的 `ExecutablePath` / `CommandLine`
+ *     会返回空。**这一条最坑**:进程明明在跑,却因为读不出详情而被当成
+ *     「压根没有这个进程」,用户会被告知「先打开客户端再点检测」。
+ *
+ * 脚本里只能写 ASCII —— 脚本是从 stdin 喂给 PowerShell 的,输入编码跟着
+ * 控制台代码页走,中文常量会被读成乱码。中文结论由 TS 层翻译(见
+ * {@link explainQueryError})。
+ *
+ * 「权限不足」的判断**只看游戏客户端那两个进程**:Riot 的系统级服务进程
+ * (`RiotClientServices.exe`)对普通用户也是读不到路径的,但它跟游戏在不在
+ * 没关系 —— 拿它来判定会把「客户端确实没开」误报成「权限不足」。
  */
 export const PS_QUERY_SCRIPT =
+  '$ErrorActionPreference = "SilentlyContinue"; $errs = @(); ' +
   '[Console]::OutputEncoding = [System.Text.Encoding]::UTF8; ' +
-  `Get-CimInstance Win32_Process -Filter "${LCU_PROCESS_NAMES.map(
+  `$procs = @(Get-CimInstance Win32_Process -Filter "${LCU_PROCESS_NAMES.map(
     (n) => `Name='${n}'`
-  ).join(' OR ')}" | ` +
-  'ForEach-Object { [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes(' +
-  '($_.ExecutablePath + [char]31 + $_.CommandLine))) }';
+  ).join(' OR ')}" -ErrorAction SilentlyContinue -ErrorVariable errs); ` +
+  'if ($errs.Count -gt 0) { ' +
+  '$id = [string]$errs[0].FullyQualifiedErrorId; ' +
+  '$msg = [string]$errs[0].Exception.Message; ' +
+  'if (($id -notlike "*NoMatch*") -and ($id -notlike "*NoMSFT*") -and ($msg -notlike "*No matching*")) { ' +
+  '[Console]::Error.WriteLine("LCU_QUERY_ERROR: " + $msg); exit 1 } }; ' +
+  '$readable = @(); $gameSeen = 0; $gameReadable = 0; ' +
+  'foreach ($p in $procs) { ' +
+  `$isGame = (${GAME_CLIENT_PROCESS_NAMES.map((n) => `$p.Name -eq '${n}'`).join(
+    ' -or '
+  )}); ` +
+  '$ok = [bool]($p.ExecutablePath -or $p.CommandLine); ' +
+  'if ($isGame) { $gameSeen = $gameSeen + 1; if ($ok) { $gameReadable = $gameReadable + 1 } }; ' +
+  'if ($ok) { $readable = $readable + @($p) } }; ' +
+  'if ($gameSeen -gt 0 -and $gameReadable -eq 0) { ' +
+  '[Console]::Error.WriteLine("LCU_QUERY_ERROR: PERMISSION"); exit 1 }; ' +
+  'foreach ($p in $readable) { [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes(' +
+  '($p.ExecutablePath + [char]31 + $p.CommandLine))) }';
+
+/**
+ * 不走 WMI 的进程查询(兜底)。
+ *
+ * `Get-CimInstance` 走 WMI —— 有些机器上 WMI 被安全软件或系统策略拦了。
+ * `Get-Process` 走系统进程 API,不经过 WMI,拿它兜底。
+ *
+ * 只吐 exe 路径(拿不到命令行)—— 但路径就够了:lockfile 就在 exe 旁边,
+ * 推得出安装目录,读 lockfile 就能拿到完整凭据。
+ *
+ * 同样要分「一个都没看到」和「看到了但读不到路径」:后者是权限问题
+ * (`Get-Process.Path` 读管理员进程一样抛错),必须报成查询失败,
+ * 不能当成「客户端没开」。判定同样只看游戏客户端那两个进程。
+ *
+ * 输出格式跟主查询一样(路径 + 分隔符),所以能复用同一个解析器。
+ */
+export const PS_FALLBACK_SCRIPT =
+  '$ErrorActionPreference = "SilentlyContinue"; ' +
+  `$procs = @(Get-Process -Name ${LCU_PROCESS_NAMES.map((n) =>
+    n.replace(/\.exe$/i, '')
+  ).join(',')} -ErrorAction SilentlyContinue); ` +
+  '$readable = @(); $gameSeen = 0; $gameReadable = 0; ' +
+  'foreach ($p in $procs) { ' +
+  `$isGame = (${GAME_CLIENT_PROCESS_NAMES.map(
+    (n) => `$p.ProcessName -eq '${n.replace(/\.exe$/i, '')}'`
+  ).join(' -or ')}); ` +
+  '$path = ""; try { $path = $p.Path } catch { $path = "" }; ' +
+  'if ($isGame) { $gameSeen = $gameSeen + 1; if ($path) { $gameReadable = $gameReadable + 1 } }; ' +
+  'if ($path) { $readable = $readable + @($path) } }; ' +
+  'if ($gameSeen -gt 0 -and $gameReadable -eq 0) { ' +
+  '[Console]::Error.WriteLine("LCU_QUERY_ERROR: PERMISSION"); exit 1 }; ' +
+  'foreach ($path in $readable) { ' +
+  '[Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes($path + [char]31)) }';
 
 /** PowerShell 查询超时。 */
 export const PS_TIMEOUT_MS = 10_000;
@@ -45,8 +121,29 @@ export const LOCKFILE_RETRY_COUNT = 3;
 /** 重试间隔。 */
 export const LOCKFILE_RETRY_DELAY_MS = 200;
 
+/**
+ * PowerShell 脚本里的权限不足标记。
+ *
+ * 脚本只能写 ASCII(见 {@link PS_QUERY_SCRIPT}),中文结论在这儿翻译。
+ */
+export const PERMISSION_MARKER = 'LCU_QUERY_ERROR: PERMISSION';
+
+/**
+ * 把 PowerShell 的原始报错翻成人能懂的话。
+ *
+ * 权限不足单独翻译 —— 它不是「查询失败了」这种泛泛的话,而是有一个明确的
+ * 用户侧解法(用管理员身份跑本程序,或者把客户端降权启动)。
+ */
+export function explainQueryError(raw: string): string {
+  if (raw.includes(PERMISSION_MARKER)) {
+    return '看到了客户端进程,但读不到它的路径和命令行 —— 权限不足(客户端是不是以管理员身份运行的?)';
+  }
+  return raw;
+}
+
+/** 把异常变成一句能给人看的话。 */
 function describeError(e: unknown): string {
-  return e instanceof Error ? e.message : String(e);
+  return explainQueryError(e instanceof Error ? e.message : String(e));
 }
 
 /**
@@ -97,6 +194,18 @@ export function runPowerShell(script: string, timeoutMs = PS_TIMEOUT_MS): Promis
         finish(() =>
           reject(new Error('PowerShell exited with ' + (code ?? 'null') + ': ' + stderr.trim()))
         );
+        return;
+      }
+      /**
+       * **没有 stdout 但 stderr 有内容 = 查询没查成**,不是「查到了 0 条」。
+       *
+       * 这一条是双保险:脚本里已经用 try/catch 把错误变成非零退出码了,
+       * 但万一错误是以别的方式冒出来的(比如 PowerShell 把错误记录写进了
+       * stdout),只看退出码就会把「没查成」误判成「客户端没启动」——
+       * 给用户一句「先打开客户端再点检测」,而他客户端明明开着。
+       */
+      if (!out.trim() && stderr.trim()) {
+        finish(() => reject(new Error('PowerShell query failed: ' + stderr.trim())));
         return;
       }
       finish(() => resolve(out));
@@ -167,11 +276,37 @@ export function pickGameClient(processes: LcuProcessInfo[]): {
   return { gameProcesses, exeDirs, liveProcess: gameProcesses.length > 0, detail };
 }
 
-/** 查一次进程,拿回 exe 路径和命令行。 */
+/**
+ * 查一次进程,拿回 exe 路径和命令行。
+ *
+ * 主查询走 WMI。WMI 被拦/被禁用时**换一条路再查一次** —— 不走 WMI 的
+ * `Get-Process` 也能拿到进程名和 exe 路径,足够推出安装目录、读到 lockfile。
+ * 两条路都断才叫「查询失败」。
+ */
 export async function queryLcuProcesses(): Promise<ProcessChannelResult> {
   let out: string;
   try {
     out = await runPowerShell(PS_QUERY_SCRIPT);
+  } catch (e: unknown) {
+    return queryLcuProcessesWithoutWmi(e);
+  }
+
+  const processes = parseProcessOutput(out);
+  const { gameProcesses, exeDirs, liveProcess, detail } = pickGameClient(processes);
+
+  return { processes, gameProcesses, exeDirs, liveProcess, detail };
+}
+
+/**
+ * WMI 那条路走不通时的兜底查询。
+ *
+ * `cause` 是主查询的失败原因 —— 报告里要留着,不然用户只看到「没查到进程」,
+ * 不知道其实是 WMI 被拦了。
+ */
+async function queryLcuProcessesWithoutWmi(cause: unknown): Promise<ProcessChannelResult> {
+  let out: string;
+  try {
+    out = await runPowerShell(PS_FALLBACK_SCRIPT);
   } catch (e: unknown) {
     return {
       processes: [],
@@ -179,14 +314,35 @@ export async function queryLcuProcesses(): Promise<ProcessChannelResult> {
       exeDirs: [],
       liveProcess: false,
       queryFailed: true,
-      detail: 'PowerShell 查询失败:' + describeError(e)
+      detail:
+        '进程查询失败(WMI:' +
+        describeError(cause) +
+        ' / 兜底:' +
+        describeError(e) +
+        ')'
     };
   }
 
   const processes = parseProcessOutput(out);
   const { gameProcesses, exeDirs, liveProcess, detail } = pickGameClient(processes);
 
-  return { processes, gameProcesses, exeDirs, liveProcess, detail };
+  return {
+    processes,
+    gameProcesses,
+    exeDirs,
+    liveProcess,
+    /**
+     * 兜底查到了游戏客户端就算数。
+     *
+     * 兜底也没查到 → WMI 那条路是真的断了,不能拿「兜底也没找到」
+     * 当成「客户端没开」—— 那正是用户被误导的那句话。
+     */
+    queryFailed: gameProcesses.length === 0,
+    detail:
+      '兜底查询(不经 WMI):' +
+      detail +
+      (gameProcesses.length === 0 ? ' | WMI 查询失败:' + describeError(cause) : '')
+  };
 }
 
 /** lockfile 读出来的结果。 */
@@ -324,14 +480,34 @@ export interface ScanChannelResult {
  * `readFile` 会撞上 EISDIR,扫盘通道会静悄悄地一个候选都吐不出来。
  */
 export async function scanLockfileCandidates(roots = listDriveRoots()): Promise<ScanChannelResult> {
-  const scan = await scanForLockfiles(roots);
-  const { candidates, tried } = await readLockfileCandidates(scan.paths);
+  // 第一趟:按目录名白名单扫。快,但认不出 `D:\game\LOL\英雄联盟` 这种路径。
+  const fast = await scanForLockfiles(roots, FAST_SCAN_BUDGET_MS);
+  const fastResult = await readLockfileCandidates(fast.paths);
+
+  let candidates = fastResult.candidates;
+  let tried = fastResult.tried;
+  let timedOut = fast.timedOut;
+
+  /**
+   * 白名单那趟空手而归 → 再来一趟不看目录名的。
+   *
+   * 用户把客户端装在 `D:\game\LOL\英雄联盟` 这种地方时,白名单那趟连
+   * `英雄联盟` 都走不到(中间的 `game`、`LOL` 两个目录名它不认),
+   * 结果就是「明明开着客户端,却说没检测到」。
+   */
+  if (candidates.length === 0) {
+    const loose = await scanForLockfilesPermissive(roots, PERMISSIVE_SCAN_BUDGET_MS);
+    const looseResult = await readLockfileCandidates(loose.paths);
+    candidates = looseResult.candidates;
+    tried = [...tried, ...looseResult.tried];
+    if (loose.timedOut) timedOut = true;
+  }
 
   return {
     candidates,
     paths: tried,
-    timedOut: scan.timedOut,
-    detail: scan.timedOut
+    timedOut,
+    detail: timedOut
       ? '磁盘扫描超时(找到 ' + tried.length + ' 个候选)'
       : '磁盘扫描完成(找到 ' + tried.length + ' 个候选)'
   };

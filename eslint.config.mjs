@@ -25,6 +25,17 @@ export default tseslint.config(
     }
   },
   {
+    // 构建期脚本是纯 Node 的 .mjs,不在 typescript-eslint 的覆盖范围内,
+    // no-undef 会把 console / process 报成未定义。
+    files: ['scripts/**'],
+    languageOptions: {
+      globals: {
+        console: 'readonly',
+        process: 'readonly'
+      }
+    }
+  },
+  {
     rules: {
       '@typescript-eslint/no-unused-vars': ['warn', { argsIgnorePattern: '^_' }],
       'vue/multi-word-component-names': 'off'
