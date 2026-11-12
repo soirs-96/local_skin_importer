@@ -245,17 +245,29 @@ function lcuDisplayName(entry: Record<string, unknown>, fallback: string): strin
 }
 
 /**
+ * 英雄本体条目的两个名字。
+ *
+ * `name` 是中文英雄名,`nameEn` 是英文 key(Annie / MonkeyKing)。
+ * 英文 key 是**跟后端英雄表对齐的唯一依据** —— 后端的英雄编号是导入脚本的
+ * 自增序号,跟 Riot 的编号对不上,只有英文名两边是一样的。
+ */
+export interface ChampionSummary {
+  name: string;
+  nameEn: string;
+}
+
+/**
  * 从 LCU 的 champion-summary.json 里挑出「英雄本体」条目。
  *
  * 挑不出来就退回第一条(名字至少不是空的)。
  */
-export function parseLcuChampions(raw: unknown): Map<number, ChampionInfo> {
-  const out = new Map<number, ChampionInfo>();
+export function parseLcuChampionSummaries(raw: unknown): Map<number, ChampionSummary> {
+  const out = new Map<number, ChampionSummary>();
   if (!Array.isArray(raw)) return out;
 
   const best = new Map<
     number,
-    { score: number; name: string; alias: string; info: ChampionInfo }
+    { score: number; name: string; alias: string; summary: ChampionSummary }
   >();
 
   for (const entry of raw) {
@@ -266,22 +278,34 @@ export function parseLcuChampions(raw: unknown): Map<number, ChampionInfo> {
     const alias = str(entry.alias) || str(entry.key) || str(entry.nameId);
     const rawName = str(entry.name) || alias;
     const score = lcuBaseScore(entry, alias, rawName);
-    const info: ChampionInfo = {
+    const summary: ChampionSummary = {
       name: lcuDisplayName(entry, rawName),
-      iconUrl: lcuIconUrl('champion', id)
+      nameEn: alias
     };
 
     const current = best.get(id);
     if (!current || score < current.score) {
-      best.set(id, { score, name: rawName, alias, info });
+      best.set(id, { score, name: rawName, alias, summary });
       continue;
     }
     if (score === current.score && isBetterTie(rawName, alias, current.name, current.alias)) {
-      best.set(id, { score, name: rawName, alias, info });
+      best.set(id, { score, name: rawName, alias, summary });
     }
   }
 
-  for (const [id, entry] of best) out.set(id, entry.info);
+  for (const [id, entry] of best) out.set(id, entry.summary);
+  return out;
+}
+
+/** 英雄本体条目 → 图鉴要用的名字和图标。 */
+export function parseLcuChampions(raw: unknown): Map<number, ChampionInfo> {
+  const out = new Map<number, ChampionInfo>();
+  for (const [id, summary] of parseLcuChampionSummaries(raw)) {
+    out.set(id, {
+      name: summary.name,
+      iconUrl: lcuIconUrl('champion', id)
+    });
+  }
   return out;
 }
 

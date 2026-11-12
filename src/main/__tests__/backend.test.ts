@@ -50,6 +50,27 @@ describe('backend.syncOwnedSkins', () => {
     );
   });
 
+  it('sends the top champions in the same request', async () => {
+    vi.mocked(getStoredToken).mockReturnValue('jwt');
+    vi.mocked(axios.post).mockResolvedValue({
+      data: { code: 200, data: { added: 0, updated: 0, totalOwned: 0 } }
+    });
+
+    await syncOwnedSkins('p', 's', [1], [
+      { championId: 1, championName: '安妮', championNameEn: 'Annie', championPoints: 231381 }
+    ]);
+
+    expect(axios.post).toHaveBeenCalledWith(
+      expect.stringContaining('/api/skins/sync-user-skins'),
+      expect.objectContaining({
+        topChampions: [
+          { championId: 1, championName: '安妮', championNameEn: 'Annie', championPoints: 231381 }
+        ]
+      }),
+      expect.anything()
+    );
+  });
+
   it('throws when no token is stored', async () => {
     vi.mocked(getStoredToken).mockReturnValue(null);
     await expect(syncOwnedSkins('p', 's', [1])).rejects.toThrow(/未登录/);

@@ -1,7 +1,7 @@
 import type { AxiosInstance } from 'axios';
 import { lcuIconUrl } from '../../shared/icons';
-import type { ChampionMastery } from '../../shared/match';
-import type { StaticData } from './staticData';
+import type { ChampionMastery, TopChampion } from '../../shared/match';
+import { parseLcuChampionSummaries, type StaticData } from './staticData';
 
 /**
  * 官方英雄熟练度。
@@ -79,4 +79,59 @@ export async function getChampionMastery(
   if (!url) return [];
   const { data } = await client.get(url, { timeout: 10_000 });
   return parseChampionMastery(data, staticData);
+}
+
+/** 传给后端的本命英雄条数上限。 */
+export const TOP_CHAMPION_LIMIT = 15;
+
+/** 客户端本地资源:英雄本体条目的中文名 + 英文 key。 */
+const CHAMPION_SUMMARY_PATH = '/lol-game-data/assets/v1/champion-summary.json';
+
+/**
+ * 取熟练度最高的前 N 个英雄 —— 也就是「本命英雄」。
+ *
+ * 跟界面上的「英雄熟练度」卡片是同一份数据(同一个端点),区别只在于:
+ *
+ *   - 这里只保留**认得出英文名**的英雄 —— 后端靠英文名对齐自己的英雄表,
+ *     认不出来的报上去也是白报;
+ *   - 这里带上英文 key,界面上用不着,但后端必须要。
+ *
+ * 排序按点数降序,跟「本命英雄」的口径一致。
+ */
+export async function getTopChampions(
+  client: AxiosInstance,
+  puuid: string,
+  limit: number = TOP_CHAMPION_LIMIT
+): Promise<TopChampion[]> {
+  const url = masteryPath(puuid);
+  if (!url) return [];
+
+  const [masteryRes, summaryRes] = await Promise.all([
+    client.get(url, { timeout: 10_000 }),
+    client.get(CHAMPION_SUMMARY_PATH, { timeout: 10_000 }).catch(() => null)
+  ]);
+
+  const raw = masteryRes.data;
+  if (!Array.isArray(raw)) return [];
+
+  const summaries = parseLcuChampionSummaries(summaryRes?.data);
+  const rows: TopChampion[] = [];
+  for (const entry of raw) {
+    if (!isRecord(entry)) continue;
+    const championId = num(entry.championId);
+    if (!championId) continue;
+    const summary = summaries.get(championId);
+    const nameEn = summary?.nameEn ?? '';
+    // 英文 key 为空或者只是个数字,后端认不出来 —— 直接不要
+    if (!nameEn || /^\d+$/.test(nameEn)) continue;
+    rows.push({
+      championId,
+      championName: summary?.name ?? '',
+      championNameEn: nameEn,
+      championPoints: num(entry.championPoints)
+    });
+  }
+
+  rows.sort((a, b) => b.championPoints - a.championPoints);
+  return rows.slice(0, limit);
 }

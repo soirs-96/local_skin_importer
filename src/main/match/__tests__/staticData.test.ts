@@ -3,6 +3,7 @@ import {
   parseDdragonChampionFiles,
   parseDdragonChampions,
   parseDdragonItems,
+  parseLcuChampionSummaries,
   parseLcuChampions,
   parseLcuItems,
   parseRunes
@@ -121,6 +122,32 @@ describe('parseLcuChampions', () => {
       { id: 1, alias: 'Annie', name: '黑暗之女', description: '这位英雄曾经差点成为召唤师最大的敌人' }
     ]);
     expect(map.get(1)?.name).toBe('黑暗之女');
+  });
+});
+
+describe('parseLcuChampionSummaries', () => {
+  it('同时给出中文名和英文 key', () => {
+    const map = parseLcuChampionSummaries([
+      { id: 1, alias: 'Annie', name: '黑暗之女', description: '安妮', roles: ['mage'] }
+    ]);
+    expect(map.get(1)).toEqual({ name: '安妮', nameEn: 'Annie' });
+  });
+
+  it('皮肤条目不顶掉英雄本体的英文 key', () => {
+    const map = parseLcuChampionSummaries([
+      { id: 1, alias: 'Jade_Annie', name: '玉剑传说 安妮', skinId: 1001 },
+      { id: 1, alias: 'Annie', name: '安妮', roles: ['mage'] }
+    ]);
+    expect(map.get(1)?.nameEn).toBe('Annie');
+  });
+
+  it('alias 缺失时退回 key / nameId', () => {
+    const map = parseLcuChampionSummaries([{ id: 62, key: 'MonkeyKing', name: '孙悟空' }]);
+    expect(map.get(62)?.nameEn).toBe('MonkeyKing');
+  });
+
+  it('非数组输入返回空表', () => {
+    expect(parseLcuChampionSummaries(null).size).toBe(0);
   });
 });
 

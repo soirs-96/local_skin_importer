@@ -80,6 +80,9 @@
         上次同步:新增 {{ lastSyncResult.added }} 款 · 更新 {{ lastSyncResult.updated }} 款 ·
         当前共 {{ lastSyncResult.totalOwned }} 款
       </div>
+      <div v-if="topChampionsLabel" class="sync-result">
+        本命英雄 {{ topChampions.length }} 个({{ topChampionsLabel }})—— 收藏册按熟练度把它们排在前面
+      </div>
     </el-card>
 
     <button type="button" class="version-entry" @click="openDevPanel">{{ APP_VERSION }}</button>
@@ -103,7 +106,8 @@ import type {
   LcuStatus,
   OwnedDataSource,
   SyncOutcome,
-  SyncResult
+  SyncResult,
+  TopChampion
 } from '../../../preload/index';
 
 type LcuState = 'disconnected' | 'running' | 'error';
@@ -129,6 +133,8 @@ const lastSyncResult = ref<SyncResult | null>(null);
 /** 已拥有集合的数据来源:库存端点(权威)还是商城目录(降级) */
 const ownedSource = ref<OwnedDataSource | null>(null);
 const catalogFiltered = ref<boolean>(true);
+/** 本命英雄(熟练度前 15)—— 同步时一起传给后端,收藏册按它排序 */
+const topChampions = ref<TopChampion[]>([]);
 
 const ownedSourceLabel = computed<string>(() => {
   if (ownedSource.value === 'inventory') return '实时读取自游戏客户端';
@@ -164,6 +170,15 @@ const lcuTooltip = computed<string>(() => {
 
 const canSync = computed<boolean>(
   () => loggedIn.value && lcuStatus.value.running === true && skinCount.value > 0 && !syncing.value
+);
+
+/** 本命英雄的前几个名字,给界面上一行提示用。 */
+const topChampionsLabel = computed<string>(() =>
+  topChampions.value
+    .slice(0, 3)
+    .map((item) => item.championName)
+    .filter((name) => name !== '')
+    .join('、')
 );
 
 function pushLog(level: LogLevel, msg: string): void {
@@ -233,6 +248,22 @@ async function onFetchSkins(): Promise<void> {
   }
 }
 
+/**
+ * 取本命英雄(熟练度前 15)。
+ *
+ * 跟皮肤同步走同一个请求发到后端 —— 后端收藏册按这份名单把英雄排到前面。
+ * 熟练度只在打完一局之后才变,所以启动时取一次就够了,不用每次同步都重取。
+ */
+async function onFetchTopChampions(): Promise<void> {
+  try {
+    topChampions.value = await window.api.getTopChampions();
+    pushLog('INFO', `本命英雄 ${topChampions.value.length} 个`);
+  } catch (e: unknown) {
+    // 取不到熟练度不影响皮肤同步 —— 只是收藏册不排序而已
+    pushLog('WARN', `读取本命英雄失败: ${describeError(e)}`);
+  }
+}
+
 async function onSync(options: { auto?: boolean } = {}): Promise<void> {
   const isAuto = options.auto === true;
   if (!lastFetchedSkins.value) {
@@ -256,6 +287,7 @@ async function onSync(options: { auto?: boolean } = {}): Promise<void> {
       puuid: summoner.puuid,
       summonerName: summoner.displayName,
       ownedSkinIds,
+      topChampions: topChampions.value,
       mode: isAuto ? 'auto' : 'manual'
     });
 
@@ -299,6 +331,7 @@ onMounted(async () => {
   await onCheckLcu();
   if (lcuStatus.value.running) {
     await onFetchSkins();
+    await onFetchTopChampions();
     if (loggedIn.value) {
       await onSync({ auto: true });
     }

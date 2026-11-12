@@ -7,6 +7,7 @@ import { fetchCatalog, fetchMyOwned } from './catalog';
 import { resolveOwnedSkinIds } from './owned';
 import { readSyncState, writeSyncState } from './syncState';
 import { matchPoller } from './match/poller';
+import { getTopChampions } from './match/mastery';
 import {
   getRecommendationState,
   requestRecommendation
@@ -14,6 +15,7 @@ import {
 import { clearLlmApiKey, getLlmStatus, saveLlmApiKey } from './llm';
 import * as devLogger from './devLogger';
 import { MATCH_STATE_CHANNEL } from '../shared/match';
+import type { TopChampion } from '../shared/match';
 
 interface RedeemPayload {
   code: string;
@@ -27,6 +29,8 @@ interface SyncPayload {
   puuid: string;
   summonerName: string;
   ownedSkinIds: number[];
+  /** 本命英雄(熟练度前 N)—— 后端收藏册按它排序 */
+  topChampions?: TopChampion[];
   /** auto = 启动自动同步(60s 节流);manual = 用户手点(10s 节流) */
   mode?: 'auto' | 'manual';
 }
@@ -130,6 +134,23 @@ function assertSyncPayload(p: unknown): asserts p is SyncPayload {
   if (obj.mode !== undefined && obj.mode !== 'auto' && obj.mode !== 'manual') {
     throw new Error('invalid mode');
   }
+  if (obj.topChampions !== undefined && !isTopChampionList(obj.topChampions)) {
+    throw new Error('invalid topChampions');
+  }
+}
+
+/** 本命英雄名单:每条至少要有英雄编号、英文名和点数。 */
+function isTopChampionList(value: unknown): value is TopChampion[] {
+  if (!Array.isArray(value)) return false;
+  return value.every((item) => {
+    if (typeof item !== 'object' || item === null) return false;
+    const obj = item as Record<string, unknown>;
+    return (
+      typeof obj.championId === 'number' &&
+      typeof obj.championNameEn === 'string' &&
+      typeof obj.championPoints === 'number'
+    );
+  });
 }
 
 function assertRedeemPayload(p: unknown): asserts p is RedeemPayload {
@@ -222,7 +243,8 @@ export function registerIpcHandlers(): void {
       const result = await syncOwnedSkins(
         payload.puuid,
         payload.summonerName,
-        payload.ownedSkinIds
+        payload.ownedSkinIds,
+        payload.topChampions ?? []
       );
       // 只在成功后记时间戳 —— 失败不能算「已同步」
       writeSyncState({ lastSyncAt: now });
@@ -293,6 +315,24 @@ export function registerIpcHandlers(): void {
   ipcMain.handle('match:refresh', async () => {
     matchPoller.start();
     return matchPoller.refreshNow();
+  });
+
+  /**
+   * 取熟练度最高的 15 个英雄(本命英雄)。
+   *
+   * 单独取一次,不走轮询器 —— 轮询器是懒启动的,用户不看对局页它根本不跑,
+   * 而「同步皮肤」这条流程每次启动都会走,本命英雄得跟皮肤一起传上去。
+   */
+  ipcMain.handle('match:get-top-champions', async () => {
+    try {
+      const lcuAuth = await lcu.resolveLcuAuth();
+      const client = lcu.createLcuClient(lcuAuth);
+      const summoner = await lcu.getCurrentSummoner(client);
+      if (!summoner.puuid) return [];
+      return await getTopChampions(client, summoner.puuid);
+    } catch (error: unknown) {
+      throw normalizeLcuError(error);
+    }
   });
 
   ipcMain.handle('match:get-recommendation', () => getRecommendationState());

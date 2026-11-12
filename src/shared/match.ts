@@ -128,6 +128,20 @@ export interface MasteryRow extends ChampionMastery {
 export type MasterySortMode = 'mastery' | 'winrate';
 
 /**
+ * 一个「本命英雄」条目 —— 上传给后端的那份。
+ *
+ * `championNameEn` 是**英文 key**(Annie / MonkeyKing),后端靠它对齐自己的
+ * 英雄表:后端的英雄编号是导入脚本的自增序号,跟 Riot 的编号对不上,
+ * 只有英文名两边是一致的。
+ */
+export interface TopChampion {
+  championId: number;
+  championName: string;
+  championNameEn: string;
+  championPoints: number;
+}
+
+/**
  * 把熟练度和最近对局窗口对起来。
  *
  * 窗口只有 20 局(客户端本地就只留 20 局),所以 `recentGames` 大多是小数字,

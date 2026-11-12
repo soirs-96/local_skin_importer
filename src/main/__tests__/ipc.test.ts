@@ -251,7 +251,7 @@ describe('IPC wiring', () => {
     ]);
   });
 
-  it('registers all 19 ipc channels on call to registerIpcHandlers', () => {
+  it('registers all 20 ipc channels on call to registerIpcHandlers', () => {
     expect(mocks.ipcMainHandle.mock.calls.map(([channel]) => channel)).toEqual([
       'lcu:check-status',
       'lcu:fetch-skins',
@@ -267,6 +267,7 @@ describe('IPC wiring', () => {
       'dev:console-detach',
       'match:get-state',
       'match:refresh',
+      'match:get-top-champions',
       'match:get-recommendation',
       'match:recommend',
       'llm:get-status',
@@ -524,9 +525,43 @@ describe('IPC wiring', () => {
     expect(mocks.syncOwnedSkins).toHaveBeenCalledWith(
       payload.puuid,
       'Alice',
-      [1, 2, 3]
+      [1, 2, 3],
+      []
     );
     expect(mocks.writeSyncState).toHaveBeenCalledOnce();
+  });
+
+  it('backend:sync forwards the top champions to the backend', async () => {
+    mocks.syncOwnedSkins.mockResolvedValue({ added: 0, updated: 0, totalOwned: 0 });
+    const topChampions = [
+      { championId: 1, championName: '安妮', championNameEn: 'Annie', championPoints: 231381 }
+    ];
+
+    await invoke('backend:sync', {}, {
+      puuid: 'p'.padEnd(32, 'x'),
+      summonerName: 'Alice',
+      ownedSkinIds: [1],
+      topChampions
+    });
+
+    expect(mocks.syncOwnedSkins).toHaveBeenCalledWith(
+      'p'.padEnd(32, 'x'),
+      'Alice',
+      [1],
+      topChampions
+    );
+  });
+
+  it('backend:sync rejects a malformed top champions list', async () => {
+    await expect(
+      invoke('backend:sync', {}, {
+        puuid: 'p'.padEnd(32, 'x'),
+        summonerName: 'Alice',
+        ownedSkinIds: [1],
+        topChampions: [{ championId: 'x' }]
+      })
+    ).rejects.toThrow(/topChampions/);
+    expect(mocks.syncOwnedSkins).not.toHaveBeenCalled();
   });
 
   it('backend:sync skips the request when the throttle window has not elapsed', async () => {

@@ -1,6 +1,6 @@
 import { contextBridge, ipcRenderer } from 'electron';
 import { MATCH_STATE_CHANNEL } from '../shared/match';
-import type { LlmStatus, MatchSnapshot, RecommendationState } from '../shared/match';
+import type { LlmStatus, MatchSnapshot, RecommendationState, TopChampion } from '../shared/match';
 import { DEV_LOG_CHANNEL } from '../shared/dev';
 import type { DevLogLine } from '../shared/dev';
 import type { LcuDiagnosis, LcuFailureCode } from '../main/lcu/types';
@@ -17,7 +17,8 @@ export type {
   RankedEntry,
   RecentMatch,
   RecentMatchesSummary,
-  RecommendationState
+  RecommendationState,
+  TopChampion
 } from '../shared/match';
 
 export type { LcuChannelReport, LcuDiagnosis, LcuFailureCode } from '../main/lcu/types';
@@ -65,6 +66,8 @@ export interface SyncPayload {
   puuid: string;
   summonerName: string;
   ownedSkinIds: number[];
+  /** 本命英雄(熟练度前 15)—— 后端收藏册按它把英雄排到前面 */
+  topChampions?: TopChampion[];
   /** auto = 启动自动同步(60s 节流);manual = 用户手点(10s 节流) */
   mode?: 'auto' | 'manual';
 }
@@ -166,6 +169,8 @@ const api = {
   getMatchState: (): Promise<MatchSnapshot> => invoke('match:get-state'),
   /** 立刻重采一次 */
   refreshMatchState: (): Promise<MatchSnapshot> => invoke('match:refresh'),
+  /** 取熟练度最高的 15 个英雄(本命英雄),同步时一起传给后端 */
+  getTopChampions: (): Promise<TopChampion[]> => invoke('match:get-top-champions'),
   /** 主进程里存着的上一份推荐(切页回来还能看到) */
   getRecommendation: (): Promise<RecommendationState> => invoke('match:get-recommendation'),
   /** 拿当前选人会话去生成推荐 */

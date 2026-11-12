@@ -1,5 +1,6 @@
 import axios from 'axios';
 import { getStoredToken, clearStoredToken } from './auth';
+import type { TopChampion } from '../shared/match';
 
 const BACKEND_BASE_URL = 'http://101.34.210.254';
 const AXIOS_TIMEOUT_MS = 10_000;
@@ -55,13 +56,16 @@ function isNodeNetworkError(e: unknown): e is { code: string } {
 export async function syncOwnedSkins(
   puuid: string,
   summonerName: string,
-  ownedSkinIds: number[]
+  ownedSkinIds: number[],
+  topChampions: TopChampion[] = []
 ): Promise<SyncResult> {
   const token = getStoredToken();
   if (!token) throw new Error('未登录:请先登录后再同步');
 
   const url = `${BACKEND_BASE_URL}/api/skins/sync-user-skins`;
-  const body = { puuid, summonerName, ownedSkinIds };
+  // 本命英雄跟皮肤一起传 —— 后端一次请求就把两样都存了,
+  // 收藏册的排序直接按这份名单来。
+  const body = { puuid, summonerName, ownedSkinIds, topChampions };
 
   for (let attempt = 0; attempt < MAX_ATTEMPTS; attempt++) {
     try {
