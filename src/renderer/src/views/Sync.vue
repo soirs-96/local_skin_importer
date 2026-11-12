@@ -133,8 +133,13 @@ const lastSyncResult = ref<SyncResult | null>(null);
 /** 已拥有集合的数据来源:库存端点(权威)还是商城目录(降级) */
 const ownedSource = ref<OwnedDataSource | null>(null);
 const catalogFiltered = ref<boolean>(true);
-/** 本命英雄(熟练度前 15)—— 同步时一起传给后端,收藏册按它排序 */
-const topChampions = ref<TopChampion[]>([]);
+/**
+ * 本命英雄(熟练度前 15)—— 同步时一起传给后端,收藏册按它排序。
+ *
+ * shallowRef: 这个数组要整个丢进 IPC,深度 `reactive()` 的代理对象
+ * 结构化克隆不了,会报 "An object could not be cloned"。
+ */
+const topChampions = shallowRef<TopChampion[]>([]);
 
 const ownedSourceLabel = computed<string>(() => {
   if (ownedSource.value === 'inventory') return '实时读取自游戏客户端';
