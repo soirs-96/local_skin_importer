@@ -108,6 +108,20 @@ describe('parseLcuChampions', () => {
     const map = parseLcuChampions([{ id: 266, alias: 'Aatrox', name: '暗裔剑魔' }]);
     expect(map.get(266)?.iconUrl).toBe('lcuicon://champion/266.png');
   });
+
+  it('腾讯客户端的 name 是称号,取 description 里的英雄名', () => {
+    const map = parseLcuChampions([
+      { id: 1, alias: 'Annie', name: '黑暗之女', description: '安妮', roles: ['mage'] }
+    ]);
+    expect(map.get(1)?.name).toBe('安妮');
+  });
+
+  it('description 是一整句皮肤描述时退回 name', () => {
+    const map = parseLcuChampions([
+      { id: 1, alias: 'Annie', name: '黑暗之女', description: '这位英雄曾经差点成为召唤师最大的敌人' }
+    ]);
+    expect(map.get(1)?.name).toBe('黑暗之女');
+  });
 });
 
 describe('parseLcuItems', () => {

@@ -6,6 +6,8 @@
 
     <RecommendationCard :available="canRecommend" />
 
+    <MasteryCard :entries="snapshot?.mastery ?? []" :recent="snapshot?.recent ?? null" />
+
     <div class="two-col">
       <RankedCard :entries="snapshot?.ranked ?? []" :source="snapshot?.rankedSource ?? null" />
       <RecentMatchesCard :summary="snapshot?.recent ?? null" />
@@ -22,6 +24,7 @@ import ChampSelectCard from '../components/match/ChampSelectCard.vue';
 import RankedCard from '../components/match/RankedCard.vue';
 import RecentMatchesCard from '../components/match/RecentMatchesCard.vue';
 import RecommendationCard from '../components/match/RecommendationCard.vue';
+import MasteryCard from '../components/match/MasteryCard.vue';
 import LlmSettingsCard from '../components/match/LlmSettingsCard.vue';
 import type { MatchSnapshot } from '../../../shared/match';
 

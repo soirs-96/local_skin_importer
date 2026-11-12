@@ -4,6 +4,7 @@ import { getAllGameData } from './liveClient';
 import { getChampSelectSession } from './champSelect';
 import { getRankedEntries } from './ranked';
 import { getRecentMatches } from './recentMatches';
+import { getChampionMastery } from './mastery';
 import { getMatchSummoner } from './summoner';
 import { emptyStaticData, loadStaticData, type StaticData } from './staticData';
 import {
@@ -14,6 +15,7 @@ import {
   type LcuWsEvent
 } from './lcuWs';
 import type {
+  ChampionMastery,
   LcuWsStatus,
   MatchSnapshot,
   MatchState,
@@ -43,6 +45,13 @@ const POLL_INTERVAL_MS = 2000;
 const RANKED_TTL_MS = 60_000;
 const RECENT_TTL_MS = 30_000;
 /**
+ * 熟练度的缓存时长。
+ *
+ * 熟练度只在打完一局之后才变,60 秒足够 —— 而且这个响应本身有 60 KB,
+ * 每 2 秒拉一次纯属浪费。
+ */
+const MASTERY_TTL_MS = 60_000;
+/**
  * WS 兜底段位的有效期。
  *
  * 段位只在打完排位后变,客户端推过来的就是最新的;但客户端换账号、或者
@@ -65,6 +74,7 @@ export function emptySnapshot(): MatchSnapshot {
     champSelect: null,
     ranked: [],
     recent: null,
+    mastery: [],
     rankedSource: null,
     wsStatus: 'disconnected',
     lastError: null,
@@ -104,6 +114,7 @@ export class MatchPoller {
   private staticDataPromise: Promise<StaticData> | null = null;
   private rankedCache: { entries: RankedEntry[]; fetchedAt: number } | null = null;
   private recentCache: { payload: RecentMatchesSummary | null; fetchedAt: number } | null = null;
+  private masteryCache: { entries: ChampionMastery[]; fetchedAt: number } | null = null;
   private polling = false;
   private listeners = new Set<MatchSnapshotListener>();
 
@@ -326,6 +337,31 @@ export class MatchPoller {
     }
   }
 
+  /**
+   * 官方熟练度。
+   *
+   * 拉不到就保留上一次的结果:这个端点在客户端刚启动、还没登录完的时候会
+   * 短暂地 4xx/5xx,那不代表用户没有熟练度。
+   */
+  private async fetchMastery(
+    client: AxiosInstance,
+    staticData: StaticData,
+    puuid: string
+  ): Promise<ChampionMastery[]> {
+    const cached = this.masteryCache;
+    if (cached && Date.now() - cached.fetchedAt < MASTERY_TTL_MS) return cached.entries;
+    try {
+      const entries = await getChampionMastery(client, staticData, puuid);
+      if (entries.length > 0) {
+        this.masteryCache = { entries, fetchedAt: Date.now() };
+        return entries;
+      }
+    } catch {
+      // 端点暂时不可用 —— 沿用上一次的数据
+    }
+    return cached?.entries ?? [];
+  }
+
   private async collect(): Promise<MatchSnapshot> {
     const now = Date.now();
     const previous = this.snapshot;
@@ -397,6 +433,9 @@ export class MatchPoller {
     const champSelect = await getChampSelectSession(client, staticData, summoner.summonerId);
     const state: MatchState = champSelect ? 'champ_select' : 'lobby';
 
+    // 熟练度跟当前在不在选人无关 —— 大厅和选人阶段都要显示。
+    const mastery = await this.fetchMastery(client, staticData, summoner.puuid);
+
     let ranked = previous.ranked;
     let recent = previous.recent;
     if (state === 'lobby') {
@@ -411,6 +450,7 @@ export class MatchPoller {
       champSelect,
       ranked,
       recent,
+      mastery,
       rankedSource: this.rankedSource,
       wsStatus: this.wsStatus,
       lastError: null,

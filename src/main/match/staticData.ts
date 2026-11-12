@@ -232,6 +232,19 @@ function hasSkinId(entry: Record<string, unknown>): boolean {
 }
 
 /**
+ * 腾讯客户端的 champion-summary 里,`name` 是**称号**(`黑暗之女`),
+ * `description` 才是**英雄名**(`安妮`)。名字取 `description`。
+ *
+ * 皮肤条目的 description 是一整句皮肤描述,所以只认短的 —— 英雄名都是
+ * 两三个字,描述再短也不会短过 8 个字。
+ */
+function lcuDisplayName(entry: Record<string, unknown>, fallback: string): string {
+  const description = str(entry.description).trim();
+  if (description && description.length <= 8) return description;
+  return fallback;
+}
+
+/**
  * 从 LCU 的 champion-summary.json 里挑出「英雄本体」条目。
  *
  * 挑不出来就退回第一条(名字至少不是空的)。
@@ -251,17 +264,20 @@ export function parseLcuChampions(raw: unknown): Map<number, ChampionInfo> {
     if (!id) continue;
 
     const alias = str(entry.alias) || str(entry.key) || str(entry.nameId);
-    const name = str(entry.name) || alias;
-    const info: ChampionInfo = { name, iconUrl: lcuIconUrl('champion', id) };
-    const score = lcuBaseScore(entry, alias, name);
+    const rawName = str(entry.name) || alias;
+    const score = lcuBaseScore(entry, alias, rawName);
+    const info: ChampionInfo = {
+      name: lcuDisplayName(entry, rawName),
+      iconUrl: lcuIconUrl('champion', id)
+    };
 
     const current = best.get(id);
     if (!current || score < current.score) {
-      best.set(id, { score, name, alias, info });
+      best.set(id, { score, name: rawName, alias, info });
       continue;
     }
-    if (score === current.score && isBetterTie(name, alias, current.name, current.alias)) {
-      best.set(id, { score, name, alias, info });
+    if (score === current.score && isBetterTie(rawName, alias, current.name, current.alias)) {
+      best.set(id, { score, name: rawName, alias, info });
     }
   }
 
