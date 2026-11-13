@@ -54,6 +54,8 @@ const mocks = vi.hoisted(() => {
     matchPollerGetSnapshot: vi.fn(),
     matchPollerRefreshNow: vi.fn(),
     matchPollerSubscribe: vi.fn(),
+    matchPollerLookupPlayer: vi.fn(),
+    matchPollerFetchOpponents: vi.fn(),
     getRecommendationState: vi.fn(),
     requestRecommendation: vi.fn(),
     getLlmStatus: vi.fn(),
@@ -124,7 +126,9 @@ vi.mock('../match/poller', () => ({
     stop: vi.fn(),
     getSnapshot: mocks.matchPollerGetSnapshot,
     refreshNow: mocks.matchPollerRefreshNow,
-    subscribe: mocks.matchPollerSubscribe
+    subscribe: mocks.matchPollerSubscribe,
+    lookupPlayer: mocks.matchPollerLookupPlayer,
+    fetchOpponents: mocks.matchPollerFetchOpponents
   }
 }));
 
@@ -201,6 +205,8 @@ describe('IPC wiring', () => {
     mocks.matchPollerGetSnapshot.mockReset();
     mocks.matchPollerRefreshNow.mockReset();
     mocks.matchPollerSubscribe.mockReset();
+    mocks.matchPollerLookupPlayer.mockReset();
+    mocks.matchPollerFetchOpponents.mockReset();
     mocks.getRecommendationState.mockReset();
     mocks.requestRecommendation.mockReset();
     mocks.getLlmStatus.mockReset();
@@ -251,7 +257,7 @@ describe('IPC wiring', () => {
     ]);
   });
 
-  it('registers all 20 ipc channels on call to registerIpcHandlers', () => {
+  it('registers all 22 ipc channels on call to registerIpcHandlers', () => {
     expect(mocks.ipcMainHandle.mock.calls.map(([channel]) => channel)).toEqual([
       'lcu:check-status',
       'lcu:fetch-skins',
@@ -268,6 +274,8 @@ describe('IPC wiring', () => {
       'match:get-state',
       'match:refresh',
       'match:get-top-champions',
+      'match:lookup-player',
+      'match:get-opponents',
       'match:get-recommendation',
       'match:recommend',
       'llm:get-status',
@@ -740,6 +748,45 @@ describe('IPC wiring', () => {
 
     expect(await invoke('match:recommend')).toEqual(state);
     expect(mocks.requestRecommendation).toHaveBeenCalledWith(session, 'MIDDLE');
+  });
+
+  it('match:lookup-player forwards the query to the poller', async () => {
+    const result = {
+      query: '林俊杰#18557',
+      found: true,
+      riotId: '林俊杰#18557',
+      displayName: '林俊杰',
+      tagLine: '18557',
+      summonerId: 17785561676,
+      puuid: 'puuid-1',
+      summonerLevel: 300,
+      rankedDisplay: '荣耀黄金 III',
+      isSelf: false,
+      games: null,
+      gamesError: null,
+      error: null
+    };
+    mocks.matchPollerLookupPlayer.mockResolvedValue(result);
+
+    expect(await invoke('match:lookup-player', {}, { query: '林俊杰#18557' })).toEqual(result);
+    expect(mocks.matchPollerLookupPlayer).toHaveBeenCalledWith('林俊杰#18557');
+  });
+
+  it('match:lookup-player rejects a payload without a string query', async () => {
+    await expect(invoke('match:lookup-player', {}, { query: 42 })).rejects.toThrow('invalid query');
+    expect(mocks.matchPollerLookupPlayer).not.toHaveBeenCalled();
+  });
+
+  it('match:get-opponents returns the two teams of the current game', async () => {
+    const snapshot = {
+      phase: 'InProgress',
+      queueType: 'CLASSIC',
+      inGame: true,
+      opponents: [{ summonerId: 1, puuid: 'p1', summonerName: '对手甲', championId: 523, championName: '亚索', championIconUrl: null, side: 'enemy', isSelf: false }]
+    };
+    mocks.matchPollerFetchOpponents.mockResolvedValue(snapshot);
+
+    expect(await invoke('match:get-opponents')).toEqual(snapshot);
   });
 
   it('llm:set-key saves the key and returns the refreshed status', async () => {

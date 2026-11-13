@@ -191,6 +191,112 @@ export interface LiveGameInfo {
   gameMode: string;
 }
 
+/**
+ * 某个玩家的一局战绩。
+ *
+ * 数据来自腾讯的 ledge 网关(`match-history-query`),**任意玩家**都能查 ——
+ * 不是只限自己。字段跟 `RecentMatch` 同构,多出的是经济/伤害/补刀这些。
+ */
+export interface PlayerGame {
+  /** 腾讯的对局号,形如 `TJ101_401186650860` */
+  gameId: string;
+  /** 对局结束时间(epoch ms) */
+  timestampMs: number;
+  /** 对局时长(秒) */
+  durationS: number;
+  /** 队列编号:420=排位,2400=匹配 */
+  queueId: number;
+  /** 模式名(KIWI / CLASSIC …) */
+  gameMode: string;
+  mapId: number;
+  championId: number;
+  championName: string;
+  championIconUrl: string | null;
+  kills: number;
+  deaths: number;
+  assists: number;
+  /** 「3/1/8」 */
+  kda: string;
+  win: boolean;
+  /** 分路:TOP / MIDDLE / BOTTOM / JUNGLE */
+  lane: string;
+  /** 定位:SOLO / DUO / CARRY / SUPPORT / NONE */
+  role: string;
+  goldEarned: number;
+  damageToChampions: number;
+  minionKills: number;
+  items: RecentMatchItem[];
+}
+
+export interface PlayerGamesSummary {
+  /** 这次拉到的局数 */
+  total: number;
+  wins: number;
+  /** 0~1 */
+  winrate: number;
+  games: PlayerGame[];
+}
+
+/**
+ * 查玩家的结果。
+ *
+ * 资料来自国服客户端的搜人接口(任意玩家都能查);
+ * **战绩来自腾讯的 ledge 网关**,同样是任意玩家 —— 客户端那层把战绩路由裁到
+ * 只剩「我自己」,但服务端没裁,直连网关就能拿到对方的历史对局。
+ */
+export interface PlayerLookup {
+  /** 原样回显用户输的查询串 */
+  query: string;
+  found: boolean;
+  /** 「名字#标签」;客户端没给就是空串 */
+  riotId: string;
+  displayName: string;
+  tagLine: string;
+  summonerId: number;
+  puuid: string;
+  summonerLevel: number;
+  /** 段位显示串(如「荣耀黄金 III」);客户端没给就是空串 */
+  rankedDisplay: string;
+  /** 查的是不是自己 */
+  isSelf: boolean;
+  /** 战绩;null = 没查到(资料查到了但战绩没拿到,原因见 `gamesError`) */
+  games: PlayerGamesSummary | null;
+  /** 战绩没拿到的原因;null = 战绩拿到了 */
+  gamesError: string | null;
+  /** 查不到的原因;null = 查到了 */
+  error: string | null;
+}
+
+/** 一局里的一个玩家。 */
+export interface Opponent {
+  summonerId: number;
+  puuid: string;
+  summonerName: string;
+  championId: number;
+  championName: string;
+  championIconUrl: string | null;
+  /** ally = 我这一队;enemy = 对面 */
+  side: 'ally' | 'enemy';
+  /** 是不是我 */
+  isSelf: boolean;
+}
+
+/**
+ * 最近一局的两队人。
+ *
+ * 数据来自 gameflow 的 `gameData.teamOne` / `teamTwo` —— 这是客户端里
+ * **唯一**能拿到别的玩家的地方, 客户端只保留当前这一局的队伍信息。
+ */
+export interface OpponentsSnapshot {
+  /** gameflow 阶段;空串 = 没在对局里 */
+  phase: string;
+  /** 队列名(如 CLASSIC);空串 = 没拿到 */
+  queueType: string;
+  /** 这一局有没有数据 */
+  inGame: boolean;
+  opponents: Opponent[];
+}
+
 /** 一次轮询采到的全量快照。渲染进程拿到它就能画完整个页面。 */
 export interface MatchSnapshot {
   state: MatchState;

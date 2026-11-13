@@ -29,7 +29,13 @@ export const QUEUE_LABELS: Record<string, string> = {
   RANKED_ARAM: '极地大乱斗',
   RANKED_LPL: '无限乱斗',
   RANKED_BLIND: '盲僧乱斗',
-  RANKED_SWISS: '瑞士轮'
+  RANKED_SWISS: '瑞士轮',
+  // gameflow 的队列名跟排位队列名不是一套,但底下这几个是 Riot 通用的
+  CLASSIC: '经典召唤师峡谷',
+  ARAM: '极地大乱斗',
+  URF: '极限闪击',
+  TFT: '云顶之弈',
+  ONEFORALL: '斗魂竞技场'
 };
 
 /** 段位展示名:中文段位 + 罗马数字。 */

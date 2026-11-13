@@ -25,6 +25,10 @@ interface LlmKeyPayload {
   apiKey: string;
 }
 
+interface LookupPayload {
+  query: string;
+}
+
 interface SyncPayload {
   puuid: string;
   summonerName: string;
@@ -159,6 +163,12 @@ function assertRedeemPayload(p: unknown): asserts p is RedeemPayload {
   if (typeof obj.code !== 'string' || !/^\d{6}$/.test(obj.code)) {
     throw new Error('invalid code (must be 6 digits)');
   }
+}
+
+function assertLookupPayload(p: unknown): asserts p is LookupPayload {
+  if (typeof p !== 'object' || p === null) throw new Error('invalid payload');
+  const obj = p as Record<string, unknown>;
+  if (typeof obj.query !== 'string') throw new Error('invalid query');
 }
 
 export function registerIpcHandlers(): void {
@@ -334,6 +344,20 @@ export function registerIpcHandlers(): void {
       throw normalizeLcuError(error);
     }
   });
+
+  /**
+   * 查一个召唤师(任意玩家)。
+   *
+   * 只查**资料** —— 国服客户端的战绩路由被裁到只剩「我自己」那一条,
+   * 别人的历史战绩拿不到(见 match/opponents.ts 的注释)。
+   */
+  ipcMain.handle('match:lookup-player', async (_event, payload: LookupPayload) => {
+    assertLookupPayload(payload);
+    return matchPoller.lookupPlayer(payload.query);
+  });
+
+  /** 最近一局的两队人(gameflow)。 */
+  ipcMain.handle('match:get-opponents', async () => matchPoller.fetchOpponents());
 
   ipcMain.handle('match:get-recommendation', () => getRecommendationState());
 

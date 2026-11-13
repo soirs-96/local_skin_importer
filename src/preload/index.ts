@@ -1,6 +1,13 @@
 import { contextBridge, ipcRenderer } from 'electron';
 import { MATCH_STATE_CHANNEL } from '../shared/match';
-import type { LlmStatus, MatchSnapshot, RecommendationState, TopChampion } from '../shared/match';
+import type {
+  LlmStatus,
+  MatchSnapshot,
+  OpponentsSnapshot,
+  PlayerLookup,
+  RecommendationState,
+  TopChampion
+} from '../shared/match';
 import { DEV_LOG_CHANNEL } from '../shared/dev';
 import type { DevLogLine } from '../shared/dev';
 import type { LcuDiagnosis, LcuFailureCode } from '../main/lcu/types';
@@ -14,6 +21,9 @@ export type {
   MatchSnapshot,
   MatchState,
   MatchSummoner,
+  Opponent,
+  OpponentsSnapshot,
+  PlayerLookup,
   RankedEntry,
   RecentMatch,
   RecentMatchesSummary,
@@ -171,6 +181,14 @@ const api = {
   refreshMatchState: (): Promise<MatchSnapshot> => invoke('match:refresh'),
   /** 取熟练度最高的 15 个英雄(本命英雄),同步时一起传给后端 */
   getTopChampions: (): Promise<TopChampion[]> => invoke('match:get-top-champions'),
+  /**
+   * 查一个召唤师的资料(名字#标签 或 游戏 ID)。
+   * 只有资料 —— 别人的历史战绩客户端拿不到。
+   */
+  lookupPlayer: (query: string): Promise<PlayerLookup> =>
+    invoke('match:lookup-player', { query }),
+  /** 最近一局的两队人(gameflow) */
+  getOpponents: (): Promise<OpponentsSnapshot> => invoke('match:get-opponents'),
   /** 主进程里存着的上一份推荐(切页回来还能看到) */
   getRecommendation: (): Promise<RecommendationState> => invoke('match:get-recommendation'),
   /** 拿当前选人会话去生成推荐 */

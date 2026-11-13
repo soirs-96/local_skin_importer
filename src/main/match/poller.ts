@@ -6,6 +6,8 @@ import { getRankedEntries } from './ranked';
 import { getRecentMatches } from './recentMatches';
 import { getChampionMastery } from './mastery';
 import { getMatchSummoner } from './summoner';
+import { getOpponents } from './opponents';
+import { failedLookup, lookupPlayer as lookupPlayerByQuery } from './playerLookup';
 import { emptyStaticData, loadStaticData, type StaticData } from './staticData';
 import {
   LcuWsClient,
@@ -19,6 +21,8 @@ import type {
   LcuWsStatus,
   MatchSnapshot,
   MatchState,
+  OpponentsSnapshot,
+  PlayerLookup,
   RankedEntry,
   RecentMatchesSummary
 } from '../../shared/match';
@@ -203,6 +207,65 @@ export class MatchPoller {
   async refreshNow(): Promise<MatchSnapshot> {
     await this.poll();
     return this.snapshot;
+  }
+
+  /**
+   * 我的 puuid。
+   *
+   * 快照里有就直接用;没有(轮询器还没跑)就问一次客户端 ——
+   * 「查的是不是自己」要靠它判断。
+   */
+  private async resolveMyPuuid(client: AxiosInstance): Promise<string> {
+    const cached = this.snapshot.summoner?.puuid;
+    if (cached) return cached;
+    try {
+      const summoner = await getMatchSummoner(client);
+      return summoner?.puuid ?? '';
+    } catch {
+      return '';
+    }
+  }
+
+  /**
+   * 查一个召唤师的资料。
+   *
+   * 跟轮询器共用凭据和静态数据缓存 —— 这两样都是拿一次要好几秒的东西,
+   * 没必要另起一份。
+   */
+  async lookupPlayer(query: string): Promise<PlayerLookup> {
+    try {
+      const auth = await this.ensureAuth();
+      const client = lcu.createLcuClient(auth);
+      const myPuuid = await this.resolveMyPuuid(client);
+      // 静态数据(英雄名/物品名)是锦上添花 —— 拉不到就让战绩那边用编号兜底,
+      // 别因为它把整个查询搞失败。
+      let staticData: StaticData | undefined;
+      try {
+        staticData = await this.ensureStaticData(client);
+      } catch {
+        staticData = undefined;
+      }
+      return await lookupPlayerByQuery(client, query, myPuuid, staticData);
+    } catch (e: unknown) {
+      return failedLookup(query, describeError(e));
+    }
+  }
+
+  /**
+   * 对局中的两队人。
+   *
+   * 不启动轮询器 —— 这是一次性查询,没必要把 2 秒轮询也带起来。
+   */
+  async fetchOpponents(): Promise<OpponentsSnapshot> {
+    try {
+      const auth = await this.ensureAuth();
+      const client = lcu.createLcuClient(auth);
+      const staticData = await this.ensureStaticData(client);
+      const myPuuid = await this.resolveMyPuuid(client);
+      return await getOpponents(client, staticData, myPuuid);
+    } catch {
+      return { phase: '', queueType: '', inGame: false, opponents: [] };
+    }
   }
 
   private emit(): void {
