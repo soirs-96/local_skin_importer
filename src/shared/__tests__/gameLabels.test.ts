@@ -88,7 +88,13 @@ describe('positionLabel', () => {
   });
 
   it('召唤师峡谷里分路认不出来就退回定位', () => {
-    expect(positionLabel(11, '', 'CARRY')).toBe('C 位');
+    expect(positionLabel(11, '', 'CARRY')).toBe('射手');
+    expect(positionLabel(11, '', 'SOLO')).toBe('中单');
+  });
+
+  it('位置认不出来就不显示 —— 不写个可能错的', () => {
+    expect(positionLabel(11, '', 'NONE')).toBe('');
+    expect(positionLabel(11, '', 'DUO')).toBe('');
   });
 });
 

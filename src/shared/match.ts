@@ -258,6 +258,16 @@ export interface PlayerPeer {
   teamId: number;
   /** 是不是被查的那个人 */
   isTarget: boolean;
+  /** 本局赚的钱 —— 算经济份额要用 */
+  goldEarned: number;
+  /** 对英雄造成的伤害 —— 算伤害份额要用 */
+  damageToChampions: number;
+  /** 补掉的兵 —— 算补刀份额要用 */
+  minionKills: number;
+  /** 分路:TOP / MIDDLE / BOTTOM / JUNGLE */
+  lane: string;
+  /** 定位:SOLO / DUO / CARRY / SUPPORT / NONE */
+  role: string;
 }
 
 export interface PlayerGamesSummary {

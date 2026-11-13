@@ -27,6 +27,9 @@
         </span>
         <span class="peer-champ hx-label">{{ peer.championName }}</span>
         <span class="peer-kda">{{ peer.kda }}</span>
+        <span v-if="scoreMap.has(peer.puuid)" class="peer-score">
+          {{ scoreMap.get(peer.puuid)?.toFixed(1) }}
+        </span>
         <span class="peer-result" :class="peer.win ? 'is-win' : 'is-lose'">
           {{ peer.win ? '胜' : '败' }}
         </span>
@@ -39,9 +42,10 @@
 <script setup lang="ts">
 import { computed } from 'vue';
 import type { PlayerGame, PlayerPeer } from '../../../../shared/match';
+import type { GameScore } from '../../../../shared/scoring';
 import { useBrokenIcons } from '../../composables/useBrokenIcons';
 
-const props = defineProps<{ game: PlayerGame }>();
+const props = defineProps<{ game: PlayerGame; score?: GameScore }>();
 
 const emit = defineEmits<{ select: [peer: PlayerPeer] }>();
 
@@ -51,6 +55,13 @@ const { isBroken, markBroken } = useBrokenIcons();
 function canSelect(peer: PlayerPeer): boolean {
   return Boolean(peer.displayName || peer.puuid);
 }
+
+/** 每个人的本局分 —— 没有评分的一局就不显示这一列。 */
+const scoreMap = computed<Map<string, number>>(() => {
+  const map = new Map<string, number>();
+  for (const player of props.score?.players ?? []) map.set(player.puuid, player.score);
+  return map;
+});
 
 function onSelect(peer: PlayerPeer): void {
   if (!canSelect(peer)) return;
@@ -156,6 +167,13 @@ const teams = computed<PeerTeam[]>(() => {
   font-family: monospace;
   font-size: 12px;
   color: var(--hx-text-dim);
+}
+.peer-score {
+  font-family: monospace;
+  font-size: 12px;
+  color: var(--hx-gold);
+  width: 30px;
+  text-align: right;
 }
 .peer-result {
   font-size: 11px;

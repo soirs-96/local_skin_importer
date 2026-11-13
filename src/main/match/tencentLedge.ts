@@ -204,7 +204,12 @@ function buildPeers(
       kda: `${kills}/${deaths}/${assists}`,
       win: p.win === true,
       teamId: num(p.teamId),
-      isTarget: str(p.puuid) === targetPuuid
+      isTarget: str(p.puuid) === targetPuuid,
+      goldEarned: num(p.goldEarned),
+      damageToChampions: num(p.totalDamageDealtToChampions),
+      minionKills: num(p.totalMinionsKilled),
+      lane: str(p.lane),
+      role: str(p.role)
     };
   });
 }

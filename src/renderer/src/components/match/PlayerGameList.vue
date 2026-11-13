@@ -89,12 +89,22 @@
             <span class="time-sub">{{ formatTime(game.timestampMs) }}</span>
           </div>
 
+          <div class="game-score">
+            <span v-if="targetScores.get(game.gameId)" class="score-num">
+              {{ targetScores.get(game.gameId)?.score.toFixed(1) }}
+            </span>
+            <span v-if="targetScores.get(game.gameId)" class="score-rank">
+              {{ targetScores.get(game.gameId)?.rank }}/{{ game.peers.length }}
+            </span>
+          </div>
+
           <span class="chevron" :class="{ 'is-open': expandedId === game.gameId }">›</span>
         </div>
 
         <GamePeersPanel
           v-if="expandedId === game.gameId"
           :game="game"
+          :score="scores?.[game.gameId]"
           @select="$emit('select-peer', $event)"
         />
       </div>
@@ -111,6 +121,7 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue';
 import type { PlayerGame, PlayerPeer } from '../../../../shared/match';
+import type { GameScore, PlayerScoreDetail } from '../../../../shared/scoring';
 import { gameTitle, positionLabel } from '../../../../shared/gameLabels';
 import { useBrokenIcons } from '../../composables/useBrokenIcons';
 import GamePeersPanel from './GamePeersPanel.vue';
@@ -121,9 +132,21 @@ const props = defineProps<{
   error?: string | null;
   loadingMore?: boolean;
   canLoadMore?: boolean;
+  /** 每一局的评分 —— 对局号 → 评分 */
+  scores?: Record<string, GameScore>;
 }>();
 
 defineEmits<{ 'load-more': []; 'select-peer': [peer: PlayerPeer] }>();
+
+/** 每一局里「我」的分数和名次。 */
+const targetScores = computed<Map<string, PlayerScoreDetail>>(() => {
+  const map = new Map<string, PlayerScoreDetail>();
+  for (const [gameId, result] of Object.entries(props.scores ?? {})) {
+    const target = result.players.find((p) => p.isTarget);
+    if (target) map.set(gameId, target);
+  }
+  return map;
+});
 
 const { isBroken, markBroken } = useBrokenIcons();
 
@@ -273,7 +296,8 @@ function formatTime(timestampMs: number): string {
 }
 .game-row {
   display: grid;
-  grid-template-columns: 4px 40px minmax(150px, 1.2fr) 108px minmax(120px, 1fr) 88px 118px 16px;
+  grid-template-columns:
+    4px 40px minmax(150px, 1.2fr) 108px minmax(120px, 1fr) 88px 118px 52px 16px;
   align-items: center;
   gap: 12px;
   padding: 8px 12px 8px 0;
@@ -400,6 +424,21 @@ function formatTime(timestampMs: number): string {
   font-size: 16px;
   transform: rotate(90deg);
   transition: transform 0.15s;
+}
+.game-score {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 2px;
+}
+.score-num {
+  font-family: monospace;
+  font-size: 15px;
+  color: var(--hx-gold);
+}
+.score-rank {
+  font-size: 10px;
+  color: var(--hx-text-faint);
 }
 .chevron.is-open {
   transform: rotate(-90deg);

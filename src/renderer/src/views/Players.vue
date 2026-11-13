@@ -39,6 +39,8 @@
       <PlayerRankedTable v-if="profile.ranked.length > 0" :entries="profile.ranked" />
     </template>
 
+    <PlayerScoreCard v-if="scoreSummary.games > 0" :summary="scoreSummary" />
+
     <PlayerGameList
       v-if="profile || games.length > 0 || gamesLoading || gamesError"
       :games="games"
@@ -46,6 +48,7 @@
       :error="gamesError"
       :loading-more="loadingMore"
       :can-load-more="canLoadMore"
+      :scores="scoreIndex"
       @load-more="loadMore"
       @select-peer="onSelectPeer"
     />
@@ -65,6 +68,8 @@ import { ElNotification } from 'element-plus';
 import PlayerProfileHeader from '../components/match/PlayerProfileHeader.vue';
 import PlayerRankedTable from '../components/match/PlayerRankedTable.vue';
 import PlayerGameList from '../components/match/PlayerGameList.vue';
+import PlayerScoreCard from '../components/match/PlayerScoreCard.vue';
+import { buildScoreIndex, summarizePlayerScores } from '../../../shared/scoring';
 import type { PlayerGame, PlayerLookup, PlayerPeer } from '../../../shared/match';
 
 const PAGE_SIZE = 20;
@@ -93,6 +98,12 @@ const selfSummonerId = ref<number>(0);
 const activePuuid = ref<string>('');
 
 const currentPuuid = computed<string>(() => profile.value?.puuid || activePuuid.value);
+
+/** 成绩单 —— 只统计排位。 */
+const scoreSummary = computed(() => summarizePlayerScores(games.value));
+
+/** 每一局的评分 —— 给列表和十人面板用。 */
+const scoreIndex = computed(() => buildScoreIndex(games.value));
 
 /** 腾讯那边还有没有下一页:上一页拉满了就还有。 */
 const canLoadMore = computed<boolean>(

@@ -95,20 +95,63 @@ export function gameTitle(mapId: number, queueId: number): string {
 }
 
 /**
+ * 位置(机器键)。
+ *
+ * `UNKNOWN` 不是「没位置」,是「**认不出来**」—— 腾讯那批数据偶尔分路是空的。
+ * 认不出来的时候要说认不出来,不能瞎猜一个。
+ */
+export type PositionKey = 'TOP' | 'JUNGLE' | 'MID' | 'ADC' | 'SUPPORT' | 'UNKNOWN';
+
+export const POSITION_LABELS: Record<PositionKey, string> = {
+  TOP: '上单',
+  JUNGLE: '打野',
+  MID: '中单',
+  ADC: '射手',
+  SUPPORT: '辅助',
+  UNKNOWN: '位置未识别'
+};
+
+/**
+ * 定这个人在打什么位置。
+ *
+ * 腾讯的每个 participant 带两个字段:`lane`(载入时的分路)和 `role`(定位)。
+ * 两个都会用,但优先级不一样:
+ *
+ * - **辅助最优先** —— 辅助玩家爱抢中路,`lane` 常写成 MIDDLE,但他确实是辅助。
+ * - 分路说了算 —— lane 认得出来就直接用它定位置。
+ * - 分路是空的 —— 退到定位(SOLO = 中单,CARRY = 射手)。
+ * - 都认不出来 —— `UNKNOWN`。**不猜。**
+ *
+ * 大乱斗一律 `UNKNOWN` —— 那边的 `lane` 和 `role` 都是乱的。
+ */
+export function resolvePosition(mapId: number, lane: string, role: string): PositionKey {
+  if (mapId !== SUMMONERS_RIFT_MAP_ID) return 'UNKNOWN';
+  const r = role.toUpperCase();
+  const l = lane.toUpperCase();
+  if (r === 'SUPPORT') return 'SUPPORT';
+  if (l === 'JUNGLE') return 'JUNGLE';
+  if (l === 'MIDDLE' || l === 'MID') return 'MID';
+  if (l === 'TOP') return 'TOP';
+  if (l === 'BOTTOM' || l === 'BOT') return 'ADC';
+  if (r === 'SOLO') return 'MID';
+  if (r === 'CARRY') return 'ADC';
+  return 'UNKNOWN';
+}
+
+/**
  * 这一局该显示什么位置。
  *
  * **只有召唤师峡谷才显示位置。** 大乱斗没有上下路,腾讯给的 `lane` 是载入时的
  * 站位、`role` 也是乱的,写出来只会误导人 —— 大乱斗一律不显示。
  *
- * - 召唤师峡谷:看分路(上单/打野/中单/射手)。
- * - 定位是辅助的一律显示「辅助」—— 射手位置上打辅助的人到处都是,
- *   按分路写会把辅助写成射手。
- * - 分路认不出来就退回定位。
+ * 位置认不出来就**不显示** —— 界面上挂个「位置未识别」比写错位置强,
+ * 但打标签的地方留空更干净(真要说明去看评分卡)。
  */
 export function positionLabel(mapId: number, lane: string, role: string): string {
   if (mapId !== SUMMONERS_RIFT_MAP_ID) return '';
-  if (role.toUpperCase() === 'SUPPORT') return ROLE_LABELS.SUPPORT;
-  return laneLabel(lane) || roleLabel(role);
+  const position = resolvePosition(mapId, lane, role);
+  if (position === 'UNKNOWN') return '';
+  return POSITION_LABELS[position];
 }
 
 /**
