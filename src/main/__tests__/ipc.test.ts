@@ -55,6 +55,7 @@ const mocks = vi.hoisted(() => {
     matchPollerRefreshNow: vi.fn(),
     matchPollerSubscribe: vi.fn(),
     matchPollerLookupPlayer: vi.fn(),
+    matchPollerFetchPlayerGames: vi.fn(),
     matchPollerFetchOpponents: vi.fn(),
     getRecommendationState: vi.fn(),
     requestRecommendation: vi.fn(),
@@ -128,6 +129,7 @@ vi.mock('../match/poller', () => ({
     refreshNow: mocks.matchPollerRefreshNow,
     subscribe: mocks.matchPollerSubscribe,
     lookupPlayer: mocks.matchPollerLookupPlayer,
+    fetchPlayerGames: mocks.matchPollerFetchPlayerGames,
     fetchOpponents: mocks.matchPollerFetchOpponents
   }
 }));
@@ -206,6 +208,7 @@ describe('IPC wiring', () => {
     mocks.matchPollerRefreshNow.mockReset();
     mocks.matchPollerSubscribe.mockReset();
     mocks.matchPollerLookupPlayer.mockReset();
+    mocks.matchPollerFetchPlayerGames.mockReset();
     mocks.matchPollerFetchOpponents.mockReset();
     mocks.getRecommendationState.mockReset();
     mocks.requestRecommendation.mockReset();
@@ -257,7 +260,7 @@ describe('IPC wiring', () => {
     ]);
   });
 
-  it('registers all 22 ipc channels on call to registerIpcHandlers', () => {
+  it('registers all 23 ipc channels on call to registerIpcHandlers', () => {
     expect(mocks.ipcMainHandle.mock.calls.map(([channel]) => channel)).toEqual([
       'lcu:check-status',
       'lcu:fetch-skins',
@@ -275,6 +278,7 @@ describe('IPC wiring', () => {
       'match:refresh',
       'match:get-top-champions',
       'match:lookup-player',
+      'match:fetch-player-games',
       'match:get-opponents',
       'match:get-recommendation',
       'match:recommend',
@@ -762,8 +766,6 @@ describe('IPC wiring', () => {
       summonerLevel: 300,
       rankedDisplay: '荣耀黄金 III',
       isSelf: false,
-      games: null,
-      gamesError: null,
       error: null
     };
     mocks.matchPollerLookupPlayer.mockResolvedValue(result);
@@ -775,6 +777,19 @@ describe('IPC wiring', () => {
   it('match:lookup-player rejects a payload without a string query', async () => {
     await expect(invoke('match:lookup-player', {}, { query: 42 })).rejects.toThrow('invalid query');
     expect(mocks.matchPollerLookupPlayer).not.toHaveBeenCalled();
+  });
+
+  it('match:fetch-player-games forwards the puuid and the page to the poller', async () => {
+    const summary = { total: 1, wins: 1, winrate: 1, games: [] };
+    mocks.matchPollerFetchPlayerGames.mockResolvedValue(summary);
+
+    expect(await invoke('match:fetch-player-games', {}, { puuid: 'puuid-1' })).toEqual(summary);
+    expect(mocks.matchPollerFetchPlayerGames).toHaveBeenCalledWith('puuid-1', undefined, undefined);
+  });
+
+  it('match:fetch-player-games rejects a payload without a puuid', async () => {
+    await expect(invoke('match:fetch-player-games', {}, {})).rejects.toThrow('invalid puuid');
+    expect(mocks.matchPollerFetchPlayerGames).not.toHaveBeenCalled();
   });
 
   it('match:get-opponents returns the two teams of the current game', async () => {

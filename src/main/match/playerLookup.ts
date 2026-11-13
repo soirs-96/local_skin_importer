@@ -1,11 +1,9 @@
 import type { AxiosInstance } from 'axios';
-import type { PlayerLookup, PlayerGamesSummary } from '../../shared/match';
+import type { PlayerLookup } from '../../shared/match';
 import { formatRankDisplay } from '../../shared/rankLabels';
-import { fetchPlayerGames } from './tencentLedge';
-import { emptyStaticData, type StaticData } from './staticData';
 
 /**
- * 查玩家(任意召唤师)。
+ * 查玩家(任意召唤师)的**资料**。
  *
  * 国服客户端的搜人接口只有一条路:**`/lol-summoner/v1/summoners?name=名字#标签`**。
  * 实测过 30 个别的参数名,全部 `Unknown argument` —— 只认 `name`。
@@ -14,15 +12,12 @@ import { emptyStaticData, type StaticData } from './staticData';
  *
  * 按 ID 查是另一条路:`/lol-summoner/v1/summoners/{summonerId}`。
  *
- * **战绩不走客户端那条路** —— 国服客户端把战绩路由裁到只剩
- * `current-summoner/matches`(只含我自己)。但腾讯的 ledge 网关是按 puuid 的,
- * 直连就能拿到**对方**的历史对局(见 tencentLedge.ts)。
+ * 这里**只查资料** —— 战绩走腾讯的 ledge 网关,是另一个接口(见 tencentLedge.ts)。
+ * 拆成两次是因为两边速度差一个量级:资料是本机回环,秒回;战绩要出网。
  */
 
 const SUMMONERS_PATH = '/lol-summoner/v1/summoners';
 const LOOKUP_TIMEOUT_MS = 8000;
-/** 一次查多少局 */
-const LOOKUP_GAME_COUNT = 20;
 
 /**
  * 「是不是一个普通对象」。
@@ -141,9 +136,7 @@ export function extractSummoner(raw: unknown): Record<string, unknown> | null {
 export function toPlayerLookup(
   query: string,
   summoner: Record<string, unknown>,
-  myPuuid: string,
-  games: PlayerGamesSummary | null = null,
-  gamesError: string | null = null
+  myPuuid: string
 ): PlayerLookup {
   const displayName =
     str(summoner.gameName) || str(summoner.displayName) || str(summoner.summonerName);
@@ -160,8 +153,6 @@ export function toPlayerLookup(
     summonerLevel: num(summoner.summonerLevel),
     rankedDisplay: extractRankedDisplay(summoner),
     isSelf: Boolean(myPuuid) && puuid === myPuuid,
-    games,
-    gamesError,
     error: null
   };
 }
@@ -179,8 +170,6 @@ export function failedLookup(query: string, error: string): PlayerLookup {
     summonerLevel: 0,
     rankedDisplay: '',
     isSelf: false,
-    games: null,
-    gamesError: null,
     error
   };
 }
@@ -196,20 +185,18 @@ export function describeLookupFailure(status: number): string {
 }
 
 /**
- * 查一个召唤师。
+ * 查一个召唤师的资料。
  *
  * `myPuuid` 用来认出「查的是不是自己」—— 客户端给的资料里没有这个信息,
  * 但自己是谁我们知道。
  *
- * 资料查不到就到此为止;资料查到了,再顺手去腾讯网关拉对方的历史战绩。
- * **战绩拉不到不影响资料返回** —— 两者是两条独立的通路,腾讯网关挂了不该
- * 让「这个人是谁」也查不出来。
+ * **只查资料**。战绩是另一个接口(`fetchPlayerGames`),界面分开调 ——
+ * 资料本机回环秒回,战绩要出网,合成一次返回会让界面干等。
  */
 export async function lookupPlayer(
   client: AxiosInstance,
   rawQuery: string,
-  myPuuid = '',
-  staticData?: StaticData
+  myPuuid = ''
 ): Promise<PlayerLookup> {
   const query = rawQuery.trim();
   const parsed = parseLookupQuery(query);
@@ -236,31 +223,10 @@ export async function lookupPlayer(
       return failedLookup(query, '客户端没返回这个召唤师的资料');
     }
 
-    if (!lookup.puuid) return lookup;
-
-    try {
-      const games = await fetchPlayerGames(
-        client,
-        staticData ?? emptyStaticData(),
-        lookup.puuid,
-        { count: LOOKUP_GAME_COUNT }
-      );
-      return toPlayerLookup(query, summoner, myPuuid, games, null);
-    } catch (e: unknown) {
-      return toPlayerLookup(query, summoner, myPuuid, null, describeGamesFailure(e));
-    }
+    return lookup;
   } catch (e: unknown) {
     const status = (e as { response?: { status?: number } })?.response?.status;
     if (typeof status === 'number') return failedLookup(query, describeLookupFailure(status));
     return failedLookup(query, '连不上游戏客户端 —— 先把游戏客户端开到主界面');
   }
-}
-
-/** 战绩拉取失败的原因 —— 说清楚是「腾讯那边挂了」还是「客户端没开」。 */
-function describeGamesFailure(e: unknown): string {
-  const message = e instanceof Error ? e.message : String(e);
-  if (/ECONNREFUSED|ENOTFOUND|ETIMEDOUT|超时/.test(message)) {
-    return '连不上腾讯战绩服务(检查一下网络)';
-  }
-  return `战绩没取到:${message}`;
 }

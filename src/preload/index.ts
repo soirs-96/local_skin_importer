@@ -4,7 +4,10 @@ import type {
   LlmStatus,
   MatchSnapshot,
   OpponentsSnapshot,
+  PlayerGame,
+  PlayerGamesSummary,
   PlayerLookup,
+  PlayerPeer,
   RecommendationState,
   TopChampion
 } from '../shared/match';
@@ -23,7 +26,10 @@ export type {
   MatchSummoner,
   Opponent,
   OpponentsSnapshot,
+  PlayerGame,
+  PlayerGamesSummary,
   PlayerLookup,
+  PlayerPeer,
   RankedEntry,
   RecentMatch,
   RecentMatchesSummary,
@@ -183,10 +189,20 @@ const api = {
   getTopChampions: (): Promise<TopChampion[]> => invoke('match:get-top-champions'),
   /**
    * 查一个召唤师的资料(名字#标签 或 游戏 ID)。
-   * 只有资料 —— 别人的历史战绩客户端拿不到。
+   * 只有资料 —— 战绩在下面那个接口。
    */
   lookupPlayer: (query: string): Promise<PlayerLookup> =>
     invoke('match:lookup-player', { query }),
+  /**
+   * 查某个玩家的历史战绩(腾讯的对局服务)。
+   * `puuid` 可以是**任何人**的 —— 客户端那层给不了别人的战绩。
+   */
+  fetchPlayerGames: (
+    puuid: string,
+    startIndex = 0,
+    count = 20
+  ): Promise<PlayerGamesSummary> =>
+    invoke('match:fetch-player-games', { puuid, startIndex, count }),
   /** 最近一局的两队人(gameflow) */
   getOpponents: (): Promise<OpponentsSnapshot> => invoke('match:get-opponents'),
   /** 主进程里存着的上一份推荐(切页回来还能看到) */

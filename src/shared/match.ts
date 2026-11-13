@@ -226,6 +226,37 @@ export interface PlayerGame {
   damageToChampions: number;
   minionKills: number;
   items: RecentMatchItem[];
+  /**
+   * 这一局的全部十个人。
+   *
+   * 腾讯的列表接口每局都带全量明细,所以这些人是**顺带**带回来的,不用再请求。
+   */
+  peers: PlayerPeer[];
+}
+
+/**
+ * 一局里的一个玩家(展开某一局时用)。
+ *
+ * 十个人是从同一份 SUMMARY 里拆出来的,所以「这一局谁在打、谁输了」是现成的,
+ * 不用再单独请求一次单局接口。
+ */
+export interface PlayerPeer {
+  puuid: string;
+  /** 玩家名(游戏名 + 标签) */
+  displayName: string;
+  championId: number;
+  championName: string;
+  championIconUrl: string | null;
+  kills: number;
+  deaths: number;
+  assists: number;
+  /** 「3/1/8」 */
+  kda: string;
+  win: boolean;
+  /** 阵营:100 = 蓝方,200 = 红方 */
+  teamId: number;
+  /** 是不是被查的那个人 */
+  isTarget: boolean;
 }
 
 export interface PlayerGamesSummary {
@@ -238,11 +269,12 @@ export interface PlayerGamesSummary {
 }
 
 /**
- * 查玩家的结果。
+ * 查玩家的**资料**结果。
  *
- * 资料来自国服客户端的搜人接口(任意玩家都能查);
- * **战绩来自腾讯的 ledge 网关**,同样是任意玩家 —— 客户端那层把战绩路由裁到
- * 只剩「我自己」,但服务端没裁,直连网关就能拿到对方的历史对局。
+ * 资料来自国服客户端的搜人接口(任意玩家都能查),秒回。
+ *
+ * **战绩不在这里** —— 战绩来自腾讯的 ledge 网关,要单独发一次请求(慢得多),
+ * 所以拆成两个接口,界面可以先把资料摆出来,战绩随后补上。
  */
 export interface PlayerLookup {
   /** 原样回显用户输的查询串 */
@@ -259,10 +291,6 @@ export interface PlayerLookup {
   rankedDisplay: string;
   /** 查的是不是自己 */
   isSelf: boolean;
-  /** 战绩;null = 没查到(资料查到了但战绩没拿到,原因见 `gamesError`) */
-  games: PlayerGamesSummary | null;
-  /** 战绩没拿到的原因;null = 战绩拿到了 */
-  gamesError: string | null;
   /** 查不到的原因;null = 查到了 */
   error: string | null;
 }

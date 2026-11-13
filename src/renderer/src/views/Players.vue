@@ -5,11 +5,15 @@
       :result="lookupResult"
       :loading="lookupLoading"
       @search="onSearch"
+      @clear="onClear"
     />
 
     <OpponentsCard
       :snapshot="opponents"
       :loading="opponentsLoading"
+      :lookups="opponentLookups"
+      :expanded-id="expandedOpponentId"
+      :loading-id="opponentLoadingId"
       @refresh="loadOpponents"
       @lookup="onLookupOpponent"
     />
@@ -29,6 +33,13 @@ const lookupLoading = ref<boolean>(false);
 const opponents = shallowRef<OpponentsSnapshot | null>(null);
 const opponentsLoading = ref<boolean>(false);
 
+/** 按游戏 ID 查到的对手资料 */
+const opponentLookups = shallowRef<Record<number, PlayerLookup>>({});
+/** 展开了谁 */
+const expandedOpponentId = ref<number | null>(null);
+/** 正在查谁 */
+const opponentLoadingId = ref<number | null>(null);
+
 async function onSearch(query: string): Promise<void> {
   lookupLoading.value = true;
   try {
@@ -41,10 +52,33 @@ async function onSearch(query: string): Promise<void> {
   }
 }
 
-/** 从对手列表点「查资料」:按游戏 ID 查。 */
+function onClear(): void {
+  keyword.value = '';
+  lookupResult.value = null;
+}
+
+/**
+ * 点对手的「查战绩」:就地在那一行下面展开,**不动上面的搜索框**。
+ *
+ * 战绩走腾讯的对局服务,资料走客户端 —— 两条路各拉各的,谁先回来谁先显示。
+ */
 async function onLookupOpponent(summonerId: number): Promise<void> {
-  keyword.value = String(summonerId);
-  await onSearch(keyword.value);
+  if (expandedOpponentId.value === summonerId) {
+    expandedOpponentId.value = null;
+    return;
+  }
+  expandedOpponentId.value = summonerId;
+  if (opponentLookups.value[summonerId]) return;
+
+  opponentLoadingId.value = summonerId;
+  try {
+    const result = await window.api.lookupPlayer(String(summonerId));
+    opponentLookups.value = { ...opponentLookups.value, [summonerId]: result };
+  } catch (e: unknown) {
+    console.warn('lookup opponent failed', e);
+  } finally {
+    opponentLoadingId.value = null;
+  }
 }
 
 async function loadOpponents(): Promise<void> {

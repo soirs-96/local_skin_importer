@@ -28,34 +28,44 @@
           <div
             v-for="player in side.players"
             :key="`${player.summonerId}-${player.puuid}`"
-            class="player-row"
-            :class="{ 'player-row--self': player.isSelf }"
+            class="player-block"
           >
-            <img
-              v-if="player.championIconUrl"
-              class="champ-icon"
-              :src="player.championIconUrl"
-              :alt="player.championName"
-            />
-            <span v-else class="champ-icon champ-icon--empty">—</span>
+            <div class="player-row" :class="{ 'player-row--self': player.isSelf }">
+              <img
+                v-if="player.championIconUrl"
+                class="champ-icon"
+                :src="player.championIconUrl"
+                :alt="player.championName"
+              />
+              <span v-else class="champ-icon champ-icon--empty">—</span>
 
-            <div class="player-info">
-              <span class="player-name">
-                {{ player.summonerName || '未知召唤师' }}
-                <span v-if="player.isSelf" class="tag-self">我</span>
-              </span>
-              <span class="player-sub">{{ player.championName || '未选英雄' }}</span>
+              <div class="player-info">
+                <span class="player-name">
+                  {{ player.summonerName || '未知召唤师' }}
+                  <span v-if="player.isSelf" class="tag-self">我</span>
+                </span>
+                <span class="player-sub">{{ player.championName || '未选英雄' }}</span>
+              </div>
+
+              <el-button
+                v-if="player.summonerId > 0"
+                class="lookup-btn"
+                size="small"
+                text
+                :loading="loadingId === player.summonerId"
+                @click="$emit('lookup', player.summonerId)"
+              >
+                {{ expandedId === player.summonerId ? '收起' : '查战绩' }}
+              </el-button>
             </div>
 
-            <el-button
-              v-if="player.summonerId > 0"
-              class="lookup-btn"
-              size="small"
-              text
-              @click="$emit('lookup', player.summonerId)"
-            >
-              查战绩
-            </el-button>
+            <PlayerResultPanel
+              v-if="expandedId === player.summonerId"
+              class="player-detail"
+              :result="lookups[player.summonerId] ?? null"
+              :puuid="player.puuid"
+              :loading="loadingId === player.summonerId"
+            />
           </div>
         </div>
       </div>
@@ -70,10 +80,25 @@
 
 <script setup lang="ts">
 import { computed } from 'vue';
-import type { Opponent, OpponentsSnapshot } from '../../../../shared/match';
+import type { Opponent, OpponentsSnapshot, PlayerLookup } from '../../../../shared/match';
 import { queueLabel as formatQueueLabel } from '../../../../shared/rankLabels';
+import PlayerResultPanel from './PlayerResultPanel.vue';
 
-const props = defineProps<{ snapshot: OpponentsSnapshot | null; loading?: boolean }>();
+const props = withDefaults(
+  defineProps<{
+    snapshot: OpponentsSnapshot | null;
+    loading?: boolean;
+    /** 按游戏 ID 查到的资料 */
+    lookups?: Record<number, PlayerLookup>;
+    /** 展开了谁 */
+    expandedId?: number | null;
+    /** 正在查谁 */
+    loadingId?: number | null;
+  }>(),
+  {
+    lookups: () => ({})
+  }
+);
 
 defineEmits<{
   refresh: [];
@@ -124,16 +149,22 @@ const sides = computed<{ key: string; title: string; players: Opponent[] }[]>(()
   flex-direction: column;
   gap: 6px;
 }
+.player-block {
+  background: var(--hx-panel-2);
+  border: 1px solid var(--hx-line);
+}
 .player-row {
   display: flex;
   align-items: center;
   gap: 12px;
   padding: 6px 10px;
-  background: var(--hx-panel-2);
-  border: 1px solid var(--hx-line);
 }
 .player-row--self {
   border-color: var(--hx-line-strong);
+}
+.player-detail {
+  padding: 0 10px 10px;
+  border-top: 1px dashed var(--hx-line);
 }
 .champ-icon {
   width: 28px;

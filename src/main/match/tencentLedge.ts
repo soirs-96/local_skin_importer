@@ -1,7 +1,7 @@
 import https from 'node:https';
 import type { AxiosInstance } from 'axios';
 import { lcuIconUrl } from '../../shared/icons';
-import type { PlayerGame, PlayerGamesSummary } from '../../shared/match';
+import type { PlayerGame, PlayerGamesSummary, PlayerPeer } from '../../shared/match';
 import type { StaticData } from './staticData';
 
 /**
@@ -174,6 +174,42 @@ function findParticipant(
 }
 
 /**
+ * 把这一局的十个人拆出来。
+ *
+ * 腾讯的列表接口每局都带全量明细,所以这十个人是**顺带**的,不用再请求单局接口。
+ */
+function buildPeers(
+  participants: Record<string, unknown>[],
+  targetPuuid: string,
+  staticData: StaticData
+): PlayerPeer[] {
+  return participants.map((p) => {
+    const championId = num(p.championId);
+    const championInfo = staticData.champions.get(championId);
+    const kills = num(p.kills);
+    const deaths = num(p.deaths);
+    const assists = num(p.assists);
+    const gameName = str(p.riotIdGameName);
+    const tagLine = str(p.riotIdTagline);
+    return {
+      puuid: str(p.puuid),
+      displayName: gameName && tagLine ? `${gameName}#${tagLine}` : gameName,
+      championId,
+      championName:
+        championInfo?.name || str(p.championName) || (championId > 0 ? `#${championId}` : ''),
+      championIconUrl: championId > 0 ? lcuIconUrl('champion', championId) : null,
+      kills,
+      deaths,
+      assists,
+      kda: `${kills}/${deaths}/${assists}`,
+      win: p.win === true,
+      teamId: num(p.teamId),
+      isTarget: str(p.puuid) === targetPuuid
+    };
+  });
+}
+
+/**
  * 把腾讯返回的一局转成界面用的结构。
  *
  * `raw` 是 `{metadata, json}`;`json` 里是这一局的完整信息。
@@ -233,7 +269,8 @@ export function parseLedgeGame(
         name: item?.name ?? `物品#${itemId}`,
         iconUrl: itemId > 0 ? lcuIconUrl('item', itemId) : null
       };
-    })
+    }),
+    peers: buildPeers(participants, puuid, staticData)
   };
 }
 
@@ -303,64 +340,4 @@ export async function fetchPlayerGames(
     throw new Error('腾讯战绩服务返回了看不懂的数据');
   }
   return summarizePlayerGames(parseLedgeGames(payload, puuid, staticData));
-}
-
-/**
- * 一局里的全部十个人。
- *
- * 列表接口每局都已经带全量 `json`(十个人的明细都在里面),所以这个函数
- * 不额外发请求 —— 从已经拉回来的对局里挑出那一局,把人拆出来。
- */
-export function parseLedgeGameParticipants(
-  raw: unknown,
-  staticData: StaticData
-): Array<{ puuid: string; game: PlayerGame }> {
-  if (!isRecord(raw)) return [];
-  const json = isRecord(raw.json) ? raw.json : null;
-  if (!json) return [];
-  const participants = Array.isArray(json.participants)
-    ? json.participants.filter(isRecord)
-    : [];
-  return participants.map((participant) => {
-    const championId = num(participant.championId);
-    const championInfo = staticData.champions.get(championId);
-    const kills = num(participant.kills);
-    const deaths = num(participant.deaths);
-    const assists = num(participant.assists);
-    return {
-      puuid: str(participant.puuid),
-      game: {
-        gameId: str(isRecord(raw.metadata) ? raw.metadata.match_id : '') || String(num(json.gameId)),
-        timestampMs: num(json.gameEndTimestamp),
-        durationS: num(json.gameDuration),
-        queueId: num(json.queueId),
-        gameMode: str(json.gameMode),
-        mapId: num(json.mapId),
-        championId,
-        championName:
-          championInfo?.name ||
-          str(participant.championName) ||
-          (championId > 0 ? `#${championId}` : ''),
-        championIconUrl: championId > 0 ? lcuIconUrl('champion', championId) : null,
-        kills,
-        deaths,
-        assists,
-        kda: `${kills}/${deaths}/${assists}`,
-        win: participant.win === true,
-        lane: str(participant.lane),
-        role: str(participant.role),
-        goldEarned: num(participant.goldEarned),
-        damageToChampions: num(participant.totalDamageDealtToChampions),
-        minionKills: num(participant.totalMinionsKilled),
-        items: extractItemIds(participant).map((itemId) => {
-          const item = staticData.items.get(itemId);
-          return {
-            itemId,
-            name: item?.name ?? `物品#${itemId}`,
-            iconUrl: itemId > 0 ? lcuIconUrl('item', itemId) : null
-          };
-        })
-      }
-    };
-  });
 }

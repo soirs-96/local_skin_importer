@@ -29,6 +29,14 @@ interface LookupPayload {
   query: string;
 }
 
+interface PlayerGamesPayload {
+  puuid: string;
+  /** 起始位置;0 = 最近的一局 */
+  startIndex?: number;
+  /** 要几局 */
+  count?: number;
+}
+
 interface SyncPayload {
   puuid: string;
   summonerName: string;
@@ -169,6 +177,18 @@ function assertLookupPayload(p: unknown): asserts p is LookupPayload {
   if (typeof p !== 'object' || p === null) throw new Error('invalid payload');
   const obj = p as Record<string, unknown>;
   if (typeof obj.query !== 'string') throw new Error('invalid query');
+}
+
+function assertPlayerGamesPayload(p: unknown): asserts p is PlayerGamesPayload {
+  if (typeof p !== 'object' || p === null) throw new Error('invalid payload');
+  const obj = p as Record<string, unknown>;
+  if (typeof obj.puuid !== 'string' || !obj.puuid) throw new Error('invalid puuid');
+  if (obj.startIndex !== undefined && typeof obj.startIndex !== 'number') {
+    throw new Error('invalid startIndex');
+  }
+  if (obj.count !== undefined && typeof obj.count !== 'number') {
+    throw new Error('invalid count');
+  }
 }
 
 export function registerIpcHandlers(): void {
@@ -346,14 +366,24 @@ export function registerIpcHandlers(): void {
   });
 
   /**
-   * 查一个召唤师(任意玩家)。
+   * 查一个召唤师(任意玩家)的**资料**。
    *
-   * 只查**资料** —— 国服客户端的战绩路由被裁到只剩「我自己」那一条,
-   * 别人的历史战绩拿不到(见 match/opponents.ts 的注释)。
+   * 战绩在另一个接口(`match:fetch-player-games`)—— 资料是本机回环,
+   * 战绩要出网,合成一次返回会让界面干等。
    */
   ipcMain.handle('match:lookup-player', async (_event, payload: LookupPayload) => {
     assertLookupPayload(payload);
     return matchPoller.lookupPlayer(payload.query);
+  });
+
+  /**
+   * 查某个玩家的历史战绩(腾讯的对局服务)。
+   *
+   * `puuid` 可以是**任何人**的 —— 客户端那层把战绩路由裁到只剩「我自己」。
+   */
+  ipcMain.handle('match:fetch-player-games', async (_event, payload: PlayerGamesPayload) => {
+    assertPlayerGamesPayload(payload);
+    return matchPoller.fetchPlayerGames(payload.puuid, payload.startIndex, payload.count);
   });
 
   /** 最近一局的两队人(gameflow)。 */

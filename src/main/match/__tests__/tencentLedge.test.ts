@@ -1,10 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import {
-  parseLedgeGame,
-  parseLedgeGameParticipants,
-  parseLedgeGames,
-  summarizePlayerGames
-} from '../tencentLedge';
+import { parseLedgeGame, parseLedgeGames, summarizePlayerGames } from '../tencentLedge';
 import type { StaticData } from '../staticData';
 
 /**
@@ -27,6 +22,8 @@ function participant(overrides: Record<string, unknown> = {}): Record<string, un
   return {
     puuid: ME,
     participantId: 6,
+    riotIdGameName: '我',
+    riotIdTagline: '00001',
     championId: 21,
     championName: 'MissFortune',
     kills: 13,
@@ -151,15 +148,43 @@ describe('parseLedgeGames', () => {
   });
 });
 
-describe('parseLedgeGameParticipants', () => {
-  it('把一局的十个人都拆出来', () => {
-    const players = parseLedgeGameParticipants(
-      game([participant(), participant({ puuid: OTHER })]),
+describe('peers', () => {
+  it('把一局里的人全带出来,并标出被查的那个', () => {
+    const parsed = parseLedgeGame(
+      game([participant(), participant({ puuid: OTHER, riotIdGameName: '对手' })]),
+      ME,
       staticData
     );
-    expect(players).toHaveLength(2);
-    expect(players[0].puuid).toBe(ME);
-    expect(players[1].puuid).toBe(OTHER);
+    expect(parsed?.peers).toHaveLength(2);
+    expect(parsed?.peers[0].puuid).toBe(ME);
+    expect(parsed?.peers[0].isTarget).toBe(true);
+    expect(parsed?.peers[1].puuid).toBe(OTHER);
+    expect(parsed?.peers[1].isTarget).toBe(false);
+  });
+
+  it('队伍信息分给每个人', () => {
+    const parsed = parseLedgeGame(
+      game([participant(), participant({ puuid: OTHER, teamId: 100 })]),
+      ME,
+      staticData
+    );
+    expect(parsed?.peers[0].teamId).toBe(200);
+    expect(parsed?.peers[1].teamId).toBe(100);
+  });
+
+  it('人名拼成「名字#标签」', () => {
+    const parsed = parseLedgeGame(
+      game([participant({ riotIdGameName: '林俊杰', riotIdTagline: '18557' })]),
+      ME,
+      staticData
+    );
+    expect(parsed?.peers[0].displayName).toBe('林俊杰#18557');
+  });
+
+  it('每人也带 KDA', () => {
+    const parsed = parseLedgeGame(game([participant()]), ME, staticData);
+    expect(parsed?.peers[0].kda).toBe('13/9/13');
+    expect(parsed?.peers[0].win).toBe(true);
   });
 });
 

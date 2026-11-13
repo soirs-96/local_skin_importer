@@ -8,6 +8,7 @@ import { getChampionMastery } from './mastery';
 import { getMatchSummoner } from './summoner';
 import { getOpponents } from './opponents';
 import { failedLookup, lookupPlayer as lookupPlayerByQuery } from './playerLookup';
+import { fetchPlayerGames as fetchPlayerGamesFromLedge } from './tencentLedge';
 import { emptyStaticData, loadStaticData, type StaticData } from './staticData';
 import {
   LcuWsClient,
@@ -22,6 +23,7 @@ import type {
   MatchSnapshot,
   MatchState,
   OpponentsSnapshot,
+  PlayerGamesSummary,
   PlayerLookup,
   RankedEntry,
   RecentMatchesSummary
@@ -229,26 +231,44 @@ export class MatchPoller {
   /**
    * 查一个召唤师的资料。
    *
-   * 跟轮询器共用凭据和静态数据缓存 —— 这两样都是拿一次要好几秒的东西,
-   * 没必要另起一份。
+   * 跟轮询器共用凭据缓存 —— 凭据拿一次要好几秒,没必要另起一份。
    */
   async lookupPlayer(query: string): Promise<PlayerLookup> {
     try {
       const auth = await this.ensureAuth();
       const client = lcu.createLcuClient(auth);
       const myPuuid = await this.resolveMyPuuid(client);
-      // 静态数据(英雄名/物品名)是锦上添花 —— 拉不到就让战绩那边用编号兜底,
-      // 别因为它把整个查询搞失败。
-      let staticData: StaticData | undefined;
-      try {
-        staticData = await this.ensureStaticData(client);
-      } catch {
-        staticData = undefined;
-      }
-      return await lookupPlayerByQuery(client, query, myPuuid, staticData);
+      return await lookupPlayerByQuery(client, query, myPuuid);
     } catch (e: unknown) {
       return failedLookup(query, describeError(e));
     }
+  }
+
+  /**
+   * 查某个玩家的历史战绩(腾讯的对局服务)。
+   *
+   * `puuid` 可以是**任何人**的 —— 客户端那层把战绩路由裁到只剩「我自己」,
+   * 直连腾讯网关才能拿到对方的历史(见 tencentLedge.ts)。
+   *
+   * 跟资料查询是**两个接口**:资料是本机回环,秒回;战绩要出网,慢一个量级。
+   * 拆开界面才能先把资料摆出来,战绩随后补上。
+   */
+  async fetchPlayerGames(
+    puuid: string,
+    startIndex = 0,
+    count = 20
+  ): Promise<PlayerGamesSummary> {
+    const auth = await this.ensureAuth();
+    const client = lcu.createLcuClient(auth);
+    // 静态数据(英雄名/物品名)是锦上添花 —— 拉不到就用编号兜底,
+    // 别因为它把整个查询搞失败。
+    let staticData: StaticData;
+    try {
+      staticData = await this.ensureStaticData(client);
+    } catch {
+      staticData = emptyStaticData();
+    }
+    return await fetchPlayerGamesFromLedge(client, staticData, puuid, { startIndex, count });
   }
 
   /**
