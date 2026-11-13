@@ -106,7 +106,7 @@ $base = $null
 $auth = $null
 foreach ($candidate in $candidates) {
     foreach ($protocol in @('https', 'http')) {
-        $tryBase = "$protocol://127.0.0.1:$($candidate.Port)"
+        $tryBase = "${protocol}://127.0.0.1:$($candidate.Port)"
         $tryAuth = [Convert]::ToBase64String([Text.Encoding]::ASCII.GetBytes("riot:$($candidate.Token)"))
         $r = Invoke-Lcu -Base $tryBase -Auth $tryAuth -Path '/lol-summoner/v1/current-summoner'
         Write-Host ("try {0} ({1}) -> {2} {3}" -f $tryBase, $candidate.Source, $r.Status, $r.Error)
