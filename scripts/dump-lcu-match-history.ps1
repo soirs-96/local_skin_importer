@@ -2,6 +2,8 @@
 #
 # 用法(游戏客户端开着的时候跑):
 #   powershell -ExecutionPolicy Bypass -File scripts\dump-lcu-match-history.ps1
+#
+# 顺带探测「召唤师头像」相关的数据源(见脚本末尾的 profile 部分)。
 
 $ErrorActionPreference = 'Stop'
 
@@ -67,57 +69,128 @@ if (-not $cred) {
 Write-Host ("凭据来源: {0}(端口 {1})" -f $cred.Source, $cred.Port)
 
 $auth = [Convert]::ToBase64String([Text.Encoding]::ASCII.GetBytes("riot:$($cred.Token)"))
-$uri = "$($cred.Protocol)://127.0.0.1:$($cred.Port)/lol-match-history/v1/products/lol/current-summoner/matches?begIndex=0&endIndex=3"
+$base = "$($cred.Protocol)://127.0.0.1:$($cred.Port)"
 
-try {
-    [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
-    $resp = Invoke-WebRequest -Uri $uri -Headers @{ Authorization = "Basic $auth" } -UseBasicParsing -TimeoutSec 20
-    $content = $resp.Content
-} catch {
-    Write-Host "请求失败: $($_.Exception.Message)" -ForegroundColor Red
-    exit 1
+function Get-LcuText {
+    param([string]$Path)
+    try {
+        [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
+        $r = Invoke-WebRequest -Uri ($base + $Path) -Headers @{ Authorization = "Basic $auth" } -UseBasicParsing -TimeoutSec 20
+        return @{ Status = [int]$r.StatusCode; Body = $r.Content }
+    } catch {
+        $status = $null
+        if ($_.Exception.Response) { $status = [int]$_.Exception.Response.StatusCode }
+        return @{ Status = $status; Body = '' }
+    }
 }
 
-$json = $content | ConvertFrom-Json
+# ============================ 最近对局 ============================
 
-$games = $null
-if ($json.games -is [array]) { $games = $json.games }
-elseif ($json.games.games -is [array]) { $games = $json.games.games }
-elseif ($json.games) { $games = @($json.games.PSObject.Properties | ForEach-Object { $_.Value }) }
+Write-Host ''
+Write-Host '===================== 最近对局(match-history) ====================='
 
-if (-not $games -or $games.Count -eq 0) {
-    Write-Host '没解析出对局 —— 原始内容前 800 字:'
-    Write-Host $content.Substring(0, [Math]::Min(800, $content.Length))
-    exit 1
-}
+$res = Get-LcuText '/lol-match-history/v1/products/lol/current-summoner/matches?begIndex=0&endIndex=3'
+if ($res.Status -ne 200) {
+    Write-Host ("请求失败,状态码 {0}" -f $res.Status) -ForegroundColor Red
+} else {
+    $json = $res.Body | ConvertFrom-Json
+    $games = $null
+    if ($json.games -is [array]) { $games = $json.games }
+    elseif ($json.games.games -is [array]) { $games = $json.games.games }
+    elseif ($json.games) { $games = @($json.games.PSObject.Properties | ForEach-Object { $_.Value }) }
 
-foreach ($game in $games) {
-    Write-Host '--------------------------------------------------'
-    Write-Host '顶层字段:'
-    Write-Host (($game.PSObject.Properties | ForEach-Object { $_.Name }) -join ', ')
-    foreach ($key in @('gameId', 'gameMode', 'gameType', 'queueType', 'queueId', 'mapId', 'map', 'mode', 'tags')) {
-        if ($game.PSObject.Properties.Name -contains $key) {
-            Write-Host ("  {0} = {1}" -f $key, ($game.$key | ConvertTo-Json -Compress -Depth 4))
-        }
-    }
-    if ($game.gameMetadata) {
-        Write-Host '  gameMetadata:'
-        Write-Host (($game.gameMetadata.PSObject.Properties | ForEach-Object { $_.Name }) -join ', ')
-    }
-    if ($game.participants -and $game.participants.Count -gt 0) {
-        $participant = $game.participants[0]
-        Write-Host 'participant 字段:'
-        Write-Host (($participant.PSObject.Properties | ForEach-Object { $_.Name }) -join ', ')
-        foreach ($key in @('lane', 'role', 'position', 'gameMode', 'queueType', 'mapId')) {
-            if ($participant.PSObject.Properties.Name -contains $key) {
-                Write-Host ("  {0} = {1}" -f $key, ($participant.$key | ConvertTo-Json -Compress -Depth 4))
+    if (-not $games -or $games.Count -eq 0) {
+        Write-Host '没解析出对局 —— 原始内容前 800 字:'
+        Write-Host $res.Body.Substring(0, [Math]::Min(800, $res.Body.Length))
+    } else {
+        foreach ($game in $games) {
+            Write-Host '--------------------------------------------------'
+            Write-Host '顶层字段:'
+            Write-Host (($game.PSObject.Properties | ForEach-Object { $_.Name }) -join ', ')
+            foreach ($key in @('gameId', 'gameMode', 'gameType', 'queueType', 'queueId', 'mapId', 'map', 'mode', 'tags')) {
+                if ($game.PSObject.Properties.Name -contains $key) {
+                    Write-Host ("  {0} = {1}" -f $key, ($game.$key | ConvertTo-Json -Compress -Depth 4))
+                }
+            }
+            if ($game.gameMetadata) {
+                Write-Host '  gameMetadata 字段:'
+                Write-Host (($game.gameMetadata.PSObject.Properties | ForEach-Object { $_.Name }) -join ', ')
+            }
+            if ($game.participants -and $game.participants.Count -gt 0) {
+                $participant = $game.participants[0]
+                Write-Host 'participant 字段:'
+                Write-Host (($participant.PSObject.Properties | ForEach-Object { $_.Name }) -join ', ')
+                if ($participant.timeline) {
+                    Write-Host '  timeline 字段:'
+                    Write-Host (($participant.timeline.PSObject.Properties | ForEach-Object { $_.Name }) -join ', ')
+                    Write-Host ("  timeline.lane = {0}" -f ($participant.timeline.lane | ConvertTo-Json -Compress))
+                    Write-Host ("  timeline.role = {0}" -f ($participant.timeline.role | ConvertTo-Json -Compress))
+                }
             }
         }
-        if ($participant.timeline) {
-            Write-Host '  timeline:'
-            Write-Host (($participant.timeline.PSObject.Properties | ForEach-Object { $_.Name }) -join ', ')
-            Write-Host ("  timeline.lane = {0}" -f ($participant.timeline.lane | ConvertTo-Json -Compress))
-            Write-Host ("  timeline.role = {0}" -f ($participant.timeline.role | ConvertTo-Json -Compress))
+    }
+}
+
+# ============================ 召唤师头像 ============================
+
+Write-Host ''
+Write-Host '===================== 召唤师头像(profile) ====================='
+
+$me = Get-LcuText '/lol-summoner/v1/current-summoner'
+$puuid = ''
+if ($me.Status -eq 200 -and $me.Body) {
+    $meJson = $me.Body | ConvertFrom-Json
+    $puuid = [string]$meJson.puuid
+    Write-Host ("当前召唤师 puuid = {0}(summonerId = {1})" -f $puuid, $meJson.summonerId)
+    Write-Host ("current-summoner 字段: {0}" -f (($meJson.PSObject.Properties | ForEach-Object { $_.Name }) -join ', '))
+} else {
+    Write-Host ("current-summoner 取不到,状态码 {0}" -f $me.Status) -ForegroundColor Yellow
+}
+
+if (-not $puuid) {
+    Write-Host '没有 puuid,后面的 profile 探测跳过'
+    exit 0
+}
+
+foreach ($path in @(
+    "/lol-profile/v1/profiles/$puuid",
+    "/lol-summoner/v1/summoners/$puuid",
+    "/lol-summoner/v2/summoners/by-puuid/$puuid"
+)) {
+    $r = Get-LcuText $path
+    Write-Host ''
+    Write-Host ("{0}  →  {1}" -f $path, $r.Status)
+    if ($r.Status -eq 200 -and $r.Body) {
+        $obj = $r.Body | ConvertFrom-Json
+        Write-Host ("  字段: {0}" -f (($obj.PSObject.Properties | ForEach-Object { $_.Name }) -join ', '))
+        foreach ($key in @('profileIconId', 'summonerLevel', 'displayName', 'gameName', 'tagLine', 'backgroundSkinId')) {
+            if ($obj.PSObject.Properties.Name -contains $key) {
+                Write-Host ("  {0} = {1}" -f $key, ($obj.$key | ConvertTo-Json -Compress))
+            }
         }
     }
+}
+
+# 头像图片本体:客户端静态资源里有没有 profile-icons
+$iconId = $null
+$prof = Get-LcuText "/lol-profile/v1/profiles/$puuid"
+if ($prof.Status -eq 200 -and $prof.Body) {
+    $iconId = ($prof.Body | ConvertFrom-Json).profileIconId
+}
+if (-not $iconId) { $iconId = 1 }
+
+Write-Host ''
+Write-Host ("探测头像图片资源(profileIconId = {0}):" -f $iconId)
+foreach ($tpl in @(
+    '/lol-game-data/assets/v1/profile-icons/{id}.png',
+    '/lol-game-data/assets/v1/profile-icons/{id}.jpg',
+    '/lol-static-data/v1/profile-icons/{id}.png',
+    '/lol-game-data/assets/v1/profile-icon/{id}.png',
+    '/lol-game-data/assets/v1/profile/{id}.png',
+    '/lol-game-data/assets/v1/profile-icons/{id}.webp'
+)) {
+    $path = $tpl.Replace('{id}', [string]$iconId)
+    $r = Get-LcuText $path
+    $len = if ($r.Body) { $r.Body.Length } else { 0 }
+    Write-Host ("  {0} → {1}({2} 字节)" -f $path, $r.Status, $len)
 }
