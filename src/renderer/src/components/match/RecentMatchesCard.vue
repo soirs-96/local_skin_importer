@@ -157,7 +157,8 @@ function formatTime(timestampMs: number): string {
   display: flex;
   flex-direction: column;
   gap: 1px;
-  min-width: 132px;
+  /* 「召唤师峡谷 · 单双排 · 11月13日 12:34」一行要 178px,窄了会顶到物品栏。 */
+  min-width: 180px;
 }
 .match-title {
   display: flex;
@@ -181,6 +182,9 @@ function formatTime(timestampMs: number): string {
 .match-meta {
   font-size: 11px;
   color: var(--hx-text-faint);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 .item-row {
   display: flex;
