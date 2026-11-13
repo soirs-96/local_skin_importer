@@ -99,6 +99,27 @@ describe('parseOpponents', () => {
     expect(snapshot.opponents[1].championIconUrl).toBe('lcuicon://champion/999.png');
   });
 
+  it('riotId 形状的名字也认', () => {
+    const snapshot = parseOpponents(
+      {
+        gameData: {
+          teamOne: [
+            {
+              championId: 523,
+              puuid: 'a',
+              summonerId: 900,
+              riotIdGameName: '甲',
+              riotIdTagLine: 'CN1'
+            }
+          ]
+        }
+      },
+      staticData
+    );
+
+    expect(snapshot.opponents[0].summonerName).toBe('甲#CN1');
+  });
+
   it('没有队伍数据时是空的,不是崩', () => {
     const snapshot = parseOpponents({ phase: 'None' }, staticData);
     expect(snapshot.inGame).toBe(false);
@@ -131,5 +152,31 @@ describe('getOpponents', () => {
     const snapshot = await getOpponents(client, staticData, 'puuid-me');
 
     expect(snapshot.opponents).toHaveLength(3);
+  });
+
+  it('gameflow 没给名字时,按游戏 ID 去客户端补上', async () => {
+    const raw = gameflow() as { gameData: { teamOne: Record<string, unknown>[] } };
+    raw.gameData.teamOne = raw.gameData.teamOne.map((member, index) => {
+      const copy = { ...member };
+      delete copy.summonerName;
+      if (index === 0) copy.summonerId = 900;
+      return copy;
+    });
+
+    const client = {
+      get: (url: string) => {
+        if (url.startsWith('/lol-gameflow')) return Promise.resolve({ data: raw });
+        if (url === '/lol-summoner/v1/summoners/900') {
+          return Promise.resolve({ data: { summonerId: 900, gameName: '补出来的名字' } });
+        }
+        return Promise.reject(new Error('404'));
+      }
+    } as unknown as AxiosInstance;
+
+    const snapshot = await getOpponents(client, staticData, 'puuid-me');
+
+    // gameflow 里没名字 —— 名字得从召唤师端点来。
+    const self = snapshot.opponents.find((p) => p.isSelf);
+    expect(self?.summonerName).toBe('补出来的名字');
   });
 });

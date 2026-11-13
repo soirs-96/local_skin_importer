@@ -1,11 +1,19 @@
 <template>
   <div class="peers">
+    <div class="peers-hint hx-label">点名字就能查他的战绩</div>
     <div v-for="team in teams" :key="team.teamId" class="peer-team">
       <div class="peer-team-title hx-label">
         {{ team.teamId === 100 ? '蓝方' : '红方' }}
         <span class="peer-team-result">{{ team.wins ? '胜' : '败' }}</span>
       </div>
-      <div v-for="peer in team.peers" :key="peer.puuid" class="peer-row">
+      <div
+        v-for="peer in team.peers"
+        :key="peer.puuid"
+        class="peer-row"
+        :class="{ 'is-clickable': canSelect(peer) }"
+        :title="canSelect(peer) ? '点他查他的战绩' : ''"
+        @click="onSelect(peer)"
+      >
         <img
           v-if="peer.championIconUrl && !isBroken(peer.championIconUrl)"
           class="peer-icon"
@@ -22,6 +30,7 @@
         <span class="peer-result" :class="peer.win ? 'is-win' : 'is-lose'">
           {{ peer.win ? '胜' : '败' }}
         </span>
+        <span v-if="canSelect(peer)" class="peer-go">›</span>
       </div>
     </div>
   </div>
@@ -34,7 +43,19 @@ import { useBrokenIcons } from '../../composables/useBrokenIcons';
 
 const props = defineProps<{ game: PlayerGame }>();
 
+const emit = defineEmits<{ select: [peer: PlayerPeer] }>();
+
 const { isBroken, markBroken } = useBrokenIcons();
+
+/** 只有能叫出名字的人才能拿去查 —— 没名字的点了也查不了。 */
+function canSelect(peer: PlayerPeer): boolean {
+  return Boolean(peer.displayName || peer.puuid);
+}
+
+function onSelect(peer: PlayerPeer): void {
+  if (!canSelect(peer)) return;
+  emit('select', peer);
+}
 
 interface PeerTeam {
   teamId: number;
@@ -69,6 +90,11 @@ const teams = computed<PeerTeam[]>(() => {
 .peer-team + .peer-team {
   margin-top: 10px;
 }
+.peers-hint {
+  margin-bottom: 6px;
+  color: var(--hx-text-faint);
+  font-size: 10px;
+}
 .peer-team-title {
   display: flex;
   align-items: center;
@@ -83,6 +109,21 @@ const teams = computed<PeerTeam[]>(() => {
   align-items: center;
   gap: 8px;
   padding: 2px 0;
+}
+.peer-row.is-clickable {
+  cursor: pointer;
+}
+.peer-row.is-clickable:hover .peer-name {
+  color: var(--hx-blue);
+}
+.peer-row.is-clickable:hover .peer-go {
+  color: var(--hx-blue);
+}
+.peer-go {
+  color: var(--hx-text-faint);
+  font-size: 14px;
+  width: 10px;
+  text-align: right;
 }
 .peer-icon {
   width: 18px;

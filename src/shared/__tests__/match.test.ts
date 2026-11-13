@@ -27,7 +27,7 @@ function recent(
     championId: match.championId,
     championName: `英雄${match.championId}`,
     championIconUrl: null,
-    queueType: 'CLASSIC',
+    gameMode: 'CLASSIC',
     role: 'MIDDLE',
     kills: 1,
     deaths: 1,

@@ -75,7 +75,8 @@ export interface RecentMatch {
   championId: number;
   championName: string;
   championIconUrl: string | null;
-  queueType: string;
+  /** 客户端给的对局模式串:'CLASSIC' = 召唤师峡谷,'ARAM' = 大乱斗。 */
+  gameMode: string;
   role: string;
   kills: number;
   deaths: number;

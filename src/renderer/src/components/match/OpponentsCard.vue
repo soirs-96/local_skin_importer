@@ -5,6 +5,7 @@
         <span class="hx-diamond" />
         <span class="hx-label">对局双方</span>
         <span v-if="queueLabel" class="queue-label hx-label">{{ queueLabel }}</span>
+        <span v-if="phaseLabel" class="phase-tag hx-label">{{ phaseLabel }}</span>
         <el-button
           class="refresh-btn"
           size="small"
@@ -61,6 +62,9 @@
       </div>
 
       <p class="hint">
+        <template v-if="phaseLabel === '对局结束'">
+          这一局已经结束,上面是刚才那局的两队人。
+        </template>
         点「查战绩」会跳到<strong>战绩查询</strong>页,按这个人的游戏 ID 拉他的历史对局 ——
         那一层走的是<strong>腾讯的对局服务</strong>,客户端自己给不了。
       </p>
@@ -73,6 +77,7 @@ import { computed } from 'vue';
 import { useRouter } from 'vue-router';
 import type { Opponent, OpponentsSnapshot } from '../../../../shared/match';
 import { queueLabel as formatQueueLabel } from '../../../../shared/rankLabels';
+import { lcuPhaseLabel } from '../../../../shared/gameLabels';
 
 const props = defineProps<{
   snapshot: OpponentsSnapshot | null;
@@ -86,6 +91,9 @@ const router = useRouter();
 const queueLabel = computed<string>(() =>
   props.snapshot?.queueType ? formatQueueLabel(props.snapshot.queueType) : ''
 );
+
+/** 这一局的状态。局末了会显示「对局结束」—— 面板里的两队人是刚才那局的。 */
+const phaseLabel = computed<string>(() => lcuPhaseLabel(props.snapshot?.phase ?? ''));
 
 const sides = computed<{ key: string; title: string; players: Opponent[] }[]>(() => {
   const opponents = props.snapshot?.opponents ?? [];
@@ -113,6 +121,12 @@ function goLookup(player: Opponent): void {
 .queue-label {
   font-size: 10px;
   color: var(--hx-text-faint);
+}
+.phase-tag {
+  font-size: 10px;
+  color: var(--hx-gold);
+  padding: 0 5px;
+  border: 1px solid var(--hx-line);
 }
 .refresh-btn {
   margin-left: auto;

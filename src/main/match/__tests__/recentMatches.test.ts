@@ -50,6 +50,22 @@ describe('parseMatchEntry', () => {
     expect(match?.kda).toBe('3/1/8');
     expect(match?.win).toBe(true);
     expect(match?.items[0].name).toBe('破败王者之刃');
+    expect(match?.gameMode).toBe('CLASSIC');
+  });
+
+  it('大乱斗的模式串也带出来 —— 界面靠它决定要不要显示位置', () => {
+    const match = parseMatchEntry(
+      {
+        gameId: 13,
+        championId: 1,
+        gameMode: 'ARAM',
+        gameCreation: 1700000000000,
+        gameDuration: 1500,
+        stats: { kills: 3, deaths: 1, assists: 8, win: true }
+      },
+      staticData
+    );
+    expect(match?.gameMode).toBe('ARAM');
   });
 
   it('标准版靠 puuid 在 participantIdentities 里定位「我」', () => {

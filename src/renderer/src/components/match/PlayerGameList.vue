@@ -92,7 +92,11 @@
           <span class="chevron" :class="{ 'is-open': expandedId === game.gameId }">›</span>
         </div>
 
-        <GamePeersPanel v-if="expandedId === game.gameId" :game="game" />
+        <GamePeersPanel
+          v-if="expandedId === game.gameId"
+          :game="game"
+          @select="$emit('select-peer', $event)"
+        />
       </div>
     </div>
 
@@ -106,7 +110,7 @@
 
 <script setup lang="ts">
 import { computed, ref } from 'vue';
-import type { PlayerGame } from '../../../../shared/match';
+import type { PlayerGame, PlayerPeer } from '../../../../shared/match';
 import { gameTitle, positionLabel } from '../../../../shared/gameLabels';
 import { useBrokenIcons } from '../../composables/useBrokenIcons';
 import GamePeersPanel from './GamePeersPanel.vue';
@@ -119,7 +123,7 @@ const props = defineProps<{
   canLoadMore?: boolean;
 }>();
 
-defineEmits<{ 'load-more': [] }>();
+defineEmits<{ 'load-more': []; 'select-peer': [peer: PlayerPeer] }>();
 
 const { isBroken, markBroken } = useBrokenIcons();
 

@@ -1,7 +1,10 @@
 import { describe, expect, it } from 'vitest';
 import {
   gameTitle,
+  isAramMode,
   laneLabel,
+  lcuGameModeLabel,
+  lcuPhaseLabel,
   mapIdLabel,
   positionLabel,
   queueIdLabel,
@@ -78,12 +81,41 @@ describe('positionLabel', () => {
     expect(positionLabel(11, 'BOTTOM', 'SUPPORT')).toBe('辅助');
   });
 
-  it('大乱斗没有上下路,看定位', () => {
-    expect(positionLabel(12, 'BOTTOM', 'SUPPORT')).toBe('辅助');
-    expect(positionLabel(12, 'MIDDLE', 'CARRY')).toBe('C 位');
+  it('大乱斗不显示位置 —— 那边没有上下路,写了也是误导', () => {
+    expect(positionLabel(12, 'BOTTOM', 'SUPPORT')).toBe('');
+    expect(positionLabel(12, 'MIDDLE', 'CARRY')).toBe('');
+    expect(positionLabel(12, 'MIDDLE', 'NONE')).toBe('');
   });
 
-  it('大乱斗里定位也没有就不显示', () => {
-    expect(positionLabel(12, 'MIDDLE', 'NONE')).toBe('');
+  it('召唤师峡谷里分路认不出来就退回定位', () => {
+    expect(positionLabel(11, '', 'CARRY')).toBe('C 位');
+  });
+});
+
+describe('lcuPhaseLabel', () => {
+  it('对局中的阶段认得', () => {
+    expect(lcuPhaseLabel('InProgress')).toBe('对局中');
+    expect(lcuPhaseLabel('EndOfGame')).toBe('对局结束');
+  });
+
+  it('认不出来的阶段给空串', () => {
+    expect(lcuPhaseLabel('SomethingNew')).toBe('');
+  });
+});
+
+describe('lcuGameModeLabel / isAramMode', () => {
+  it('客户端的模式串认得', () => {
+    expect(lcuGameModeLabel('CLASSIC')).toBe('召唤师峡谷');
+    expect(lcuGameModeLabel('ARAM')).toBe('大乱斗');
+  });
+
+  it('认不出来的模式给空串', () => {
+    expect(lcuGameModeLabel('TUTORIAL')).toBe('');
+  });
+
+  it('只有大乱斗算大乱斗', () => {
+    expect(isAramMode('ARAM')).toBe(true);
+    expect(isAramMode('aram')).toBe(true);
+    expect(isAramMode('CLASSIC')).toBe(false);
   });
 });

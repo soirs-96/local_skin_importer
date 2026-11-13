@@ -1,6 +1,7 @@
 import type { AxiosInstance } from 'axios';
 import { lcuIconUrl } from '../../shared/icons';
 import type { Opponent, OpponentsSnapshot } from '../../shared/match';
+import { extractSummoner } from './playerLookup';
 import type { StaticData } from './staticData';
 
 /**
@@ -25,6 +26,8 @@ import type { StaticData } from './staticData';
 
 const GAMEFLOW_PATH = '/lol-gameflow/v1/session';
 const GAMEFLOW_TIMEOUT_MS = 5000;
+/** 召唤师资料端点 —— gameflow 不给名字时按游戏 ID 补名字用。 */
+const SUMMONERS_PATH = '/lol-summoner/v1/summoners';
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null;
@@ -41,6 +44,22 @@ function num(value: unknown): number {
     if (Number.isFinite(parsed)) return parsed;
   }
   return 0;
+}
+
+/**
+ * 名字在 gameflow 里的几种可能位置。
+ *
+ * 客户端不同版本给的字段名不一样(`summonerName` / `riotIdGameName` …),
+ * 而且**局末的 gameflow 常常一个人名都不给** —— 那种情况下名字得另外查。
+ */
+function pickName(entry: Record<string, unknown>): string {
+  const direct =
+    str(entry.summonerName) || str(entry.summonerInternalName) || str(entry.gameName);
+  if (direct) return direct;
+  const game = str(entry.riotIdGameName);
+  const tag = str(entry.riotIdTagLine);
+  if (game && tag) return `${game}#${tag}`;
+  return game;
 }
 
 /** 一队里的人。 */
@@ -61,8 +80,7 @@ function parseTeam(
     out.push({
       summonerId: num(entry.summonerId),
       puuid,
-      summonerName:
-        str(entry.summonerName) || str(entry.summonerInternalName) || str(entry.gameName),
+      summonerName: pickName(entry),
       championId,
       championName: info?.name ?? (championId > 0 ? `#${championId}` : ''),
       championIconUrl: championId > 0 ? lcuIconUrl('champion', championId) : null,
@@ -127,6 +145,48 @@ export function parseOpponents(
   };
 }
 
+/**
+ * gameflow 里没给名字的人,按游戏 ID 去客户端补一次。
+ *
+ * **局末的 gameflow 经常一个人名都不给**(只剩 puuid、游戏 ID、英雄),
+ * 界面上就变成一片「未知召唤师」。客户端的召唤师端点一直有名字,
+ * 按 ID 查一次就能补上。
+ *
+ * 名字几乎不变,所以查过一次就缓存 5 分钟 —— 反复点「刷新」不会一直打端点。
+ */
+const NAME_CACHE_TTL_MS = 5 * 60_000;
+const nameCache = new Map<number, { name: string; fetchedAt: number }>();
+
+async function fetchSummonerName(client: AxiosInstance, summonerId: number): Promise<string> {
+  const cached = nameCache.get(summonerId);
+  if (cached && Date.now() - cached.fetchedAt < NAME_CACHE_TTL_MS) return cached.name;
+  try {
+    const { data } = await client.get(`${SUMMONERS_PATH}/${summonerId}`, {
+      timeout: GAMEFLOW_TIMEOUT_MS
+    });
+    const summoner = extractSummoner(data);
+    const name = summoner
+      ? str(summoner.gameName) || str(summoner.displayName) || str(summoner.summonerName)
+      : '';
+    nameCache.set(summonerId, { name, fetchedAt: Date.now() });
+    return name;
+  } catch {
+    // 查不到就还是没名字 —— 不编一个出来。
+    return '';
+  }
+}
+
+async function fillMissingNames(client: AxiosInstance, opponents: Opponent[]): Promise<void> {
+  const missing = opponents.filter((opponent) => !opponent.summonerName && opponent.summonerId > 0);
+  if (missing.length === 0) return;
+  await Promise.all(
+    missing.map(async (opponent) => {
+      const name = await fetchSummonerName(client, opponent.summonerId);
+      if (name) opponent.summonerName = name;
+    })
+  );
+}
+
 export async function getOpponents(
   client: AxiosInstance,
   staticData: StaticData,
@@ -134,7 +194,9 @@ export async function getOpponents(
 ): Promise<OpponentsSnapshot> {
   try {
     const { data } = await client.get(GAMEFLOW_PATH, { timeout: GAMEFLOW_TIMEOUT_MS });
-    return parseOpponents(data, staticData, myPuuid);
+    const snapshot = parseOpponents(data, staticData, myPuuid);
+    await fillMissingNames(client, snapshot.opponents);
+    return snapshot;
   } catch {
     return { phase: '', queueType: '', inGame: false, opponents: [] };
   }

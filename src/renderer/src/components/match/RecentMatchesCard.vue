@@ -52,6 +52,7 @@
 <script setup lang="ts">
 import { computed } from 'vue';
 import type { RecentMatch, RecentMatchesSummary } from '../../../../shared/match';
+import { isAramMode, lcuGameModeLabel } from '../../../../shared/gameLabels';
 import { useBrokenIcons } from '../../composables/useBrokenIcons';
 
 const props = defineProps<{ summary: RecentMatchesSummary | null }>();
@@ -65,7 +66,14 @@ const summaryText = computed<string>(() => {
 });
 
 function metaText(match: RecentMatch): string {
-  return `${roleLabel(match.role)} · ${formatTime(match.timestampMs)}`;
+  const time = formatTime(match.timestampMs);
+  // 大乱斗没有位置可言 —— 那一栏换成模式名。
+  if (isAramMode(match.gameMode)) {
+    const mode = lcuGameModeLabel(match.gameMode);
+    return mode ? `${mode} · ${time}` : time;
+  }
+  const pos = roleLabel(match.role);
+  return pos ? `${pos} · ${time}` : time;
 }
 
 const ROLE_LABELS: Record<string, string> = {

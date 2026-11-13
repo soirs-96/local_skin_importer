@@ -115,7 +115,9 @@ export function parseMatchEntry(
     championName: championName || `#${championId}`,
     // 图标地址只认 id —— 静态数据没查到这个名字,不代表头像就画不出来
     championIconUrl: championId > 0 ? lcuIconUrl('champion', championId) : null,
-    queueType: str(raw.gameMode) || str(raw.queueType),
+    // 客户端给的是 Riot 的 gameMode:'CLASSIC' / 'ARAM' / ...
+    // 界面靠它判断大乱斗 —— 大乱斗没有位置可言。
+    gameMode: str(raw.gameMode),
     role: str(timeline.role) || str(stats.role),
     kills,
     deaths,

@@ -16,7 +16,6 @@
           <span class="hx-diamond" />
         </span>
         <span class="brand-text">LOL 皮肤助手</span>
-        <span class="rail-version">{{ APP_VERSION }}</span>
       </div>
 
       <nav class="rail-nav">
@@ -36,6 +35,8 @@
           <span class="hx-diamond hx-diamond--blue" />
           <span class="foot-text">{{ loggedIn ? '账号已登录' : '账号未登录' }}</span>
         </div>
+
+        <div class="foot-version">{{ APP_VERSION }}</div>
 
         <div class="foot-actions">
           <el-button size="small" text class="hx-gold" @click="openConsole">开发日志</el-button>
@@ -167,7 +168,6 @@ watch(
   gap: 10px;
   padding: 18px 16px;
   border-bottom: 1px solid var(--hx-line);
-  position: relative;
 }
 .rail-logo {
   width: 30px;
@@ -186,15 +186,12 @@ watch(
   text-transform: uppercase;
   white-space: nowrap;
 }
-.rail-version {
-  position: absolute;
-  left: 16px;
-  bottom: 5px;
-  color: var(--hx-text-faint);
-  font-size: 9px;
+.foot-version {
   font-family: monospace;
-  letter-spacing: 0.12em;
-  opacity: 0.6;
+  font-size: 10px;
+  letter-spacing: 0.14em;
+  color: var(--hx-text-faint);
+  opacity: 0.75;
 }
 .rail-nav {
   display: flex;

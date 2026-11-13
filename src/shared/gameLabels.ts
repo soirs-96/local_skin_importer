@@ -97,13 +97,55 @@ export function gameTitle(mapId: number, queueId: number): string {
 /**
  * 这一局该显示什么位置。
  *
+ * **只有召唤师峡谷才显示位置。** 大乱斗没有上下路,腾讯给的 `lane` 是载入时的
+ * 站位、`role` 也是乱的,写出来只会误导人 —— 大乱斗一律不显示。
+ *
  * - 召唤师峡谷:看分路(上单/打野/中单/射手)。
- * - 别的地图(大乱斗没有上下路):看定位,分路是载入时的站位,没有意义。
  * - 定位是辅助的一律显示「辅助」—— 射手位置上打辅助的人到处都是,
  *   按分路写会把辅助写成射手。
+ * - 分路认不出来就退回定位。
  */
 export function positionLabel(mapId: number, lane: string, role: string): string {
+  if (mapId !== SUMMONERS_RIFT_MAP_ID) return '';
   if (role.toUpperCase() === 'SUPPORT') return ROLE_LABELS.SUPPORT;
-  if (mapId === SUMMONERS_RIFT_MAP_ID) return laneLabel(lane);
-  return roleLabel(role);
+  return laneLabel(lane) || roleLabel(role);
+}
+
+/**
+ * 客户端自己给的对局模式串(Riot 的 gameMode)。
+ *
+ * 只认两个认得出来的:'CLASSIC' = 召唤师峡谷,'ARAM' = 大乱斗。
+ */
+export const LCU_GAME_MODE_LABELS: Record<string, string> = {
+  CLASSIC: '召唤师峡谷',
+  ARAM: '大乱斗'
+};
+
+export function lcuGameModeLabel(gameMode: string): string {
+  return LCU_GAME_MODE_LABELS[gameMode.toUpperCase()] ?? '';
+}
+
+/** 大乱斗 —— 没有上下路,位置那一栏就不该出现。 */
+export function isAramMode(gameMode: string): boolean {
+  return gameMode.toUpperCase() === 'ARAM';
+}
+
+/**
+ * 客户端 gameflow 的阶段 → 中文。
+ *
+ * 只收认得出来的;认不出就空着 —— 不给一个可能错的状态名。
+ */
+export const LCU_PHASE_LABELS: Record<string, string> = {
+  None: '空闲',
+  Lobby: '大厅',
+  ChampSelect: '选人',
+  InProgress: '对局中',
+  WaitingForStats: '等待结算',
+  PreEndOfGame: '对局结束',
+  EndOfGame: '对局结束',
+  PostGame: '对局结束'
+};
+
+export function lcuPhaseLabel(phase: string): string {
+  return LCU_PHASE_LABELS[phase] ?? '';
 }
