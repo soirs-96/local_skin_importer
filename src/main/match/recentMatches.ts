@@ -26,7 +26,45 @@ function str(v: unknown): string {
 }
 
 function num(v: unknown): number {
-  return typeof v === 'number' && Number.isFinite(v) ? v : 0;
+  if (typeof v === 'number' && Number.isFinite(v)) return v;
+  // 有的数据源把编号给成字符串 —— 认得出来就用,认不出来当没有。
+  if (typeof v === 'string' && v.trim() !== '') {
+    const parsed = Number(v);
+    if (Number.isFinite(parsed)) return parsed;
+  }
+  return 0;
+}
+
+/**
+ * 按路径取字段,取不到返回 undefined。
+ *
+ * 同一个含义的字段在不同版本里位置不一样(`gameMode` 有时挂在 `gameMetadata`
+ * 下面),所以每个含义都给一串候选路径,按顺序取第一个有的。
+ */
+function pick(raw: Record<string, unknown>, path: string): unknown {
+  let current: unknown = raw;
+  for (const part of path.split('.')) {
+    if (!isRecord(current)) return undefined;
+    current = current[part];
+  }
+  return current;
+}
+
+function pickStr(raw: Record<string, unknown>, paths: string[]): string {
+  for (const path of paths) {
+    const value = pick(raw, path);
+    if (typeof value === 'string' && value !== '') return value;
+  }
+  return '';
+}
+
+function pickNum(raw: Record<string, unknown>, paths: string[]): number {
+  for (const path of paths) {
+    const value = pick(raw, path);
+    const parsed = num(value);
+    if (parsed !== 0) return parsed;
+  }
+  return 0;
 }
 
 function bool(v: unknown): boolean {
@@ -116,8 +154,13 @@ export function parseMatchEntry(
     // 图标地址只认 id —— 静态数据没查到这个名字,不代表头像就画不出来
     championIconUrl: championId > 0 ? lcuIconUrl('champion', championId) : null,
     // 客户端给的是 Riot 的 gameMode:'CLASSIC' / 'ARAM' / ...
-    // 界面靠它判断大乱斗 —— 大乱斗没有位置可言。
-    gameMode: str(raw.gameMode),
+    // 但腾讯这批数据里 gameMode 恒是 KIWI,大乱斗和召唤师峡谷都给它 ——
+    // 所以判断大乱斗要靠 mapId / queueId,gameMode 只当补充。
+    gameMode: pickStr(raw, ['gameMode', 'gameMetadata.gameMode', 'metadata.gameMode']),
+    mapId: pickNum(raw, ['mapId', 'gameMetadata.mapId']),
+    queueId: pickNum(raw, ['queueId', 'gameMetadata.queueId']),
+    queueType: pickStr(raw, ['queueType', 'gameMetadata.queueType']),
+    lane: str(timeline.lane) || str(stats.lane),
     role: str(timeline.role) || str(stats.role),
     kills,
     deaths,

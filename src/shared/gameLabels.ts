@@ -22,6 +22,20 @@ export const MAP_ID_LABELS: Record<number, string> = {
 /** 召唤师峡谷的地图编号 —— 只有这张地图有「上下路」的概念。 */
 export const SUMMONERS_RIFT_MAP_ID = 11;
 
+/** 大乱斗(嚎哭深渊)的地图编号。 */
+export const HOWLING_ABYSS_MAP_ID = 12;
+
+/** 大乱斗的队列编号 —— 版本之间会变,只能当第二判据。 */
+export const ARAM_QUEUE_ID = 450;
+
+/**
+ * 召唤师峡谷上的排位队列号 —— 用来在没有地图号时反推地图。
+ *
+ * **不含 2400(普通匹配)** —— 腾讯把大乱斗的普通匹配也编成 2400(实测样本:
+ * mapId 12 + queueId 2400),拿它反推会把大乱斗说成召唤师峡谷。
+ */
+const SUMMONERS_RIFT_QUEUE_IDS = new Set([400, 420, 440, 490]);
+
 /**
  * 数字队列号 → 队列名。
  *
@@ -171,6 +185,62 @@ export function lcuGameModeLabel(gameMode: string): string {
 /** 大乱斗 —— 没有上下路,位置那一栏就不该出现。 */
 export function isAramMode(gameMode: string): boolean {
   return gameMode.toUpperCase() === 'ARAM';
+}
+
+/** 判定一局是什么模式要用的字段。 */
+export interface GameModeRef {
+  /** 地图编号;0 = 没给 */
+  mapId: number;
+  /** 队列编号;0 = 没给 */
+  queueId: number;
+  /** 模式串(腾讯这批数据里恒是 KIWI,别拿它当判据) */
+  gameMode: string;
+  /** 队列名(有的数据源只给这个) */
+  queueType?: string;
+}
+
+/**
+ * 这一局是不是大乱斗。
+ *
+ * **认地图,不认 gameMode** —— 腾讯这批数据里 gameMode 恒是 KIWI,大乱斗和
+ * 召唤师峡谷都给它。队列号 450 是大乱斗的老队列号,版本之间会变,
+ * 所以它排在地图后面当第二判据。
+ */
+export function isAramGame(game: GameModeRef): boolean {
+  // 地图号最可靠:给了召唤师峡谷就一定不是大乱斗,哪怕队列号写着 450。
+  if (game.mapId === SUMMONERS_RIFT_MAP_ID) return false;
+  if (game.mapId === HOWLING_ABYSS_MAP_ID) return true;
+  if (game.queueId === ARAM_QUEUE_ID) return true;
+  if (/ARAM/i.test(game.gameMode)) return true;
+  if (game.queueType && /ARAM/i.test(game.queueType)) return true;
+  return false;
+}
+
+/**
+ * 这一局在哪张图上 —— 认不出来就是 0。
+ *
+ * 判据按可靠程度排:地图号 → 大乱斗特征 → 召唤师峡谷的队列号。
+ * 都认不出来就返回 0,**不猜** —— 猜错就是给大乱斗标上一个位置。
+ */
+export function gameMapId(game: GameModeRef): number {
+  // 有地图号就信地图号 —— 哪怕是张没收录的图,也比反推准。
+  if (game.mapId > 0) return game.mapId;
+  if (isAramGame(game)) return HOWLING_ABYSS_MAP_ID;
+  if (SUMMONERS_RIFT_QUEUE_IDS.has(game.queueId)) return SUMMONERS_RIFT_MAP_ID;
+  if (game.gameMode.toUpperCase() === 'CLASSIC') return SUMMONERS_RIFT_MAP_ID;
+  return 0;
+}
+
+/**
+ * 这一局显示什么模式名。
+ *
+ * 认不出来就空着 —— 宁可少写一个词,也不写一个可能错的。
+ */
+export function gameModeName(game: GameModeRef): string {
+  const mapId = gameMapId(game);
+  if (mapId === SUMMONERS_RIFT_MAP_ID) return gameTitle(mapId, game.queueId);
+  if (mapId === HOWLING_ABYSS_MAP_ID) return '大乱斗';
+  return '';
 }
 
 /**

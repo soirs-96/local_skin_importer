@@ -6,16 +6,13 @@
  * 所以每个队列号都得有归属。
  */
 
-import { SUMMONERS_RIFT_MAP_ID } from './gameLabels';
+import { HOWLING_ABYSS_MAP_ID, SUMMONERS_RIFT_MAP_ID } from './gameLabels';
 
 /** 判定一局属于什么模式要用的字段。 */
 export interface MatchModeGame {
   mapId: number;
   queueId: number;
 }
-
-/** 大乱斗的地图编号 —— 嚎哭深渊。 */
-const HOWLING_ABYSS_MAP_ID = 12;
 
 /** 普通匹配的队列号 —— 召唤师峡谷的非排位对局。 */
 const NORMAL_QUEUE_ID = 2400;

@@ -278,9 +278,20 @@ watch(
 }
 .foot-actions {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
-  gap: 4px;
+  gap: 2px 6px;
   margin-top: 2px;
+}
+/*
+ * Element Plus 给按钮留了 11px 横向内边距,相邻按钮之间还有 12px 左边距 ——
+ * 侧边栏只有 212px,三个按钮按默认样式必然撑出去。改成紧凑样式,
+ * 放不下就换行,不许溢出到主区域上。
+ */
+.foot-actions :deep(.el-button) {
+  margin-left: 0;
+  padding: 3px 6px;
+  font-size: 12px;
 }
 .spacer {
   flex: 1;

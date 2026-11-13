@@ -267,7 +267,8 @@ function formatTime(timestampMs: number): string {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 16px;
+  flex-wrap: wrap;
+  gap: 8px 16px;
   padding: 12px 14px;
   background: var(--hx-panel-2);
   border-bottom: 1px solid var(--hx-line);
@@ -275,8 +276,13 @@ function formatTime(timestampMs: number): string {
 .head-left {
   display: flex;
   align-items: center;
-  gap: 10px;
+  flex-wrap: wrap;
+  gap: 6px 10px;
   min-width: 0;
+}
+/* 标题不许被挤成竖排 —— 一行放不下就整块换行。 */
+.head-left .hx-label {
+  white-space: nowrap;
 }
 .head-count {
   font-size: 12px;
@@ -291,7 +297,8 @@ function formatTime(timestampMs: number): string {
 .head-right {
   display: flex;
   align-items: center;
-  gap: 14px;
+  flex-wrap: wrap;
+  gap: 8px 14px;
 }
 .champ-strip {
   display: flex;
@@ -331,12 +338,16 @@ function formatTime(timestampMs: number): string {
 .game:last-child {
   border-bottom: none;
 }
+/*
+ * 一行的九列加起来必须塞得进默认窗口(920px 减去 212px 侧边栏和 40px 页边距
+ * ≈ 668px),否则最右边的日期会被挤出可视区 —— 这里固定列的宽度是按 668px 算的。
+ */
 .game-row {
   display: grid;
   grid-template-columns:
-    4px 40px minmax(150px, 1.2fr) 108px minmax(120px, 1fr) 88px 118px 52px 16px;
+    3px 36px minmax(90px, 1.3fr) 92px minmax(60px, 1fr) 76px 104px 44px 14px;
   align-items: center;
-  gap: 12px;
+  gap: 10px;
   padding: 8px 12px 8px 0;
   cursor: pointer;
   transition: background 0.12s;
@@ -387,6 +398,8 @@ function formatTime(timestampMs: number): string {
 .result-tag {
   font-size: 12px;
   font-weight: 600;
+  white-space: nowrap;
+  flex-shrink: 0;
 }
 .game-row.is-win .result-tag {
   color: var(--hx-blue);
@@ -395,6 +408,8 @@ function formatTime(timestampMs: number): string {
   color: var(--hx-danger);
 }
 .lane-tag {
+  flex-shrink: 0;
+  white-space: nowrap;
   font-size: 10px;
   padding: 0 5px;
   border: 1px solid var(--hx-line);
@@ -450,6 +465,10 @@ function formatTime(timestampMs: number): string {
 .time-sub {
   font-size: 10px;
   color: var(--hx-text-faint);
+}
+.time-main,
+.time-sub {
+  white-space: nowrap;
 }
 .time-main {
   font-family: monospace;

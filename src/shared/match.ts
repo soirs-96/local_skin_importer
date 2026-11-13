@@ -77,6 +77,14 @@ export interface RecentMatch {
   championIconUrl: string | null;
   /** 客户端给的对局模式串:'CLASSIC' = 召唤师峡谷,'ARAM' = 大乱斗。 */
   gameMode: string;
+  /** 地图编号:11 = 召唤师峡谷,12 = 大乱斗;0 = 客户端没给。 */
+  mapId: number;
+  /** 队列编号:420 = 单双排,450 = 大乱斗 …;0 = 客户端没给。 */
+  queueId: number;
+  /** 队列名(客户端只给名字的那种数据源)。 */
+  queueType: string;
+  /** 分路:TOP / MIDDLE / BOTTOM / JUNGLE;空串 = 没给。 */
+  lane: string;
   role: string;
   kills: number;
   deaths: number;

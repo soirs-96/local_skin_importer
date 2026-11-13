@@ -1,6 +1,9 @@
 import { describe, expect, it } from 'vitest';
 import {
+  gameMapId,
+  gameModeName,
   gameTitle,
+  isAramGame,
   isAramMode,
   laneLabel,
   lcuGameModeLabel,
@@ -123,5 +126,53 @@ describe('lcuGameModeLabel / isAramMode', () => {
     expect(isAramMode('ARAM')).toBe(true);
     expect(isAramMode('aram')).toBe(true);
     expect(isAramMode('CLASSIC')).toBe(false);
+  });
+});
+
+describe('isAramGame', () => {
+  it('认地图 —— 腾讯的 gameMode 恒是 KIWI,不能拿它当判据', () => {
+    expect(isAramGame({ mapId: 12, queueId: 0, gameMode: 'KIWI' })).toBe(true);
+    expect(isAramGame({ mapId: 11, queueId: 420, gameMode: 'KIWI' })).toBe(false);
+  });
+
+  it('没有地图号就退到队列号', () => {
+    expect(isAramGame({ mapId: 0, queueId: 450, gameMode: 'KIWI' })).toBe(true);
+    expect(isAramGame({ mapId: 0, queueId: 420, gameMode: 'KIWI' })).toBe(false);
+  });
+
+  it('客户端直接给 ARAM 也认', () => {
+    expect(isAramGame({ mapId: 0, queueId: 0, gameMode: 'ARAM' })).toBe(true);
+    expect(isAramGame({ mapId: 0, queueId: 0, gameMode: 'KIWI', queueType: 'ARAM' })).toBe(true);
+  });
+});
+
+describe('gameMapId', () => {
+  it('有地图号就信地图号', () => {
+    expect(gameMapId({ mapId: 12, queueId: 0, gameMode: 'KIWI' })).toBe(12);
+    expect(gameMapId({ mapId: 11, queueId: 450, gameMode: 'KIWI' })).toBe(11);
+  });
+
+  it('没地图号就用队列号反推', () => {
+    expect(gameMapId({ mapId: 0, queueId: 450, gameMode: 'KIWI' })).toBe(12);
+    expect(gameMapId({ mapId: 0, queueId: 420, gameMode: 'KIWI' })).toBe(11);
+  });
+
+  it('认不出来就是 0 —— 不猜', () => {
+    expect(gameMapId({ mapId: 0, queueId: 0, gameMode: 'KIWI' })).toBe(0);
+    expect(gameMapId({ mapId: 0, queueId: 0, gameMode: '' })).toBe(0);
+  });
+});
+
+describe('gameModeName', () => {
+  it('召唤师峡谷带队列名', () => {
+    expect(gameModeName({ mapId: 11, queueId: 420, gameMode: 'KIWI' })).toBe('召唤师峡谷 · 单双排');
+  });
+
+  it('大乱斗只有一个名字', () => {
+    expect(gameModeName({ mapId: 12, queueId: 450, gameMode: 'KIWI' })).toBe('大乱斗');
+  });
+
+  it('认不出来就空着', () => {
+    expect(gameModeName({ mapId: 0, queueId: 0, gameMode: 'KIWI' })).toBe('');
   });
 });

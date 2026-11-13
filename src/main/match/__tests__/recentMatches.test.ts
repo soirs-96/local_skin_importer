@@ -68,6 +68,44 @@ describe('parseMatchEntry', () => {
     expect(match?.gameMode).toBe('ARAM');
   });
 
+  it('地图、队列、分路都带出来 —— 界面靠它们判断大乱斗', () => {
+    const match = parseMatchEntry(
+      {
+        gameId: 20,
+        gameMode: 'KIWI',
+        mapId: 12,
+        queueId: 450,
+        participants: [
+          {
+            participantId: 1,
+            championId: 1,
+            timeline: { lane: 'BOTTOM', role: 'SUPPORT' },
+            stats: { kills: 13, deaths: 11, assists: 18, win: true }
+          }
+        ]
+      },
+      staticData
+    );
+    expect(match?.mapId).toBe(12);
+    expect(match?.queueId).toBe(450);
+    expect(match?.lane).toBe('BOTTOM');
+    expect(match?.role).toBe('SUPPORT');
+  });
+
+  it('模式字段挂在 gameMetadata 下面也认', () => {
+    const match = parseMatchEntry(
+      {
+        gameId: 21,
+        gameMetadata: { gameMode: 'KIWI', mapId: 11, queueId: 420 },
+        stats: { kills: 1, deaths: 0, assists: 0, win: true }
+      },
+      staticData
+    );
+    expect(match?.mapId).toBe(11);
+    expect(match?.queueId).toBe(420);
+    expect(match?.gameMode).toBe('KIWI');
+  });
+
   it('标准版靠 puuid 在 participantIdentities 里定位「我」', () => {
     const match = parseMatchEntry(
       {

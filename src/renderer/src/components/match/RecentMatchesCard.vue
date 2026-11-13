@@ -24,7 +24,10 @@
         <span v-else class="champ-icon champ-icon--empty">?</span>
 
         <div class="match-info">
-          <span class="champ-name">{{ match.championName }}</span>
+          <span class="match-title">
+            <span class="champ-name">{{ match.championName }}</span>
+            <span v-if="positionText(match)" class="lane-tag">{{ positionText(match) }}</span>
+          </span>
           <span class="match-meta">{{ metaText(match) }}</span>
         </div>
 
@@ -52,7 +55,7 @@
 <script setup lang="ts">
 import { computed } from 'vue';
 import type { RecentMatch, RecentMatchesSummary } from '../../../../shared/match';
-import { isAramMode, lcuGameModeLabel } from '../../../../shared/gameLabels';
+import { gameMapId, gameModeName, positionLabel } from '../../../../shared/gameLabels';
 import { useBrokenIcons } from '../../composables/useBrokenIcons';
 
 const props = defineProps<{ summary: RecentMatchesSummary | null }>();
@@ -65,28 +68,21 @@ const summaryText = computed<string>(() => {
   return `${s.total} 场 · ${s.wins} 胜 · ${Math.round(s.winrate * 100)}%`;
 });
 
-function metaText(match: RecentMatch): string {
-  const time = formatTime(match.timestampMs);
-  // 大乱斗没有位置可言 —— 那一栏换成模式名。
-  if (isAramMode(match.gameMode)) {
-    const mode = lcuGameModeLabel(match.gameMode);
-    return mode ? `${mode} · ${time}` : time;
-  }
-  const pos = roleLabel(match.role);
-  return pos ? `${pos} · ${time}` : time;
+/**
+ * 位置 —— **只有召唤师峡谷才有**。
+ *
+ * 大乱斗没有上下路,腾讯给的 `role` 是乱的;地图认不出来的时候宁可空着,
+ * 也不能给一局大乱斗挂上「辅助」。
+ */
+function positionText(match: RecentMatch): string {
+  return positionLabel(gameMapId(match), match.lane, match.role);
 }
 
-const ROLE_LABELS: Record<string, string> = {
-  TOP: '上单',
-  JUNGLE: '打野',
-  MIDDLE: '中单',
-  BOTTOM: '射手',
-  SUPPORT: '辅助',
-  '': '未知位置'
-};
-
-function roleLabel(role: string): string {
-  return ROLE_LABELS[role.toUpperCase()] ?? role;
+/** 模式 · 时间。 */
+function metaText(match: RecentMatch): string {
+  const mode = gameModeName(match);
+  const time = formatTime(match.timestampMs);
+  return mode ? `${mode} · ${time}` : time;
 }
 
 function formatDuration(seconds: number): string {
@@ -161,11 +157,26 @@ function formatTime(timestampMs: number): string {
   display: flex;
   flex-direction: column;
   gap: 1px;
-  min-width: 108px;
+  min-width: 132px;
+}
+.match-title {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.lane-tag {
+  flex-shrink: 0;
+  font-size: 10px;
+  padding: 0 5px;
+  border: 1px solid var(--hx-line);
+  color: var(--hx-text-faint);
 }
 .champ-name {
   font-size: 13px;
   color: var(--hx-text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 .match-meta {
   font-size: 11px;

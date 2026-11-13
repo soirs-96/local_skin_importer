@@ -14,6 +14,9 @@ function createWindow(): void {
   const win = new BrowserWindow({
     width: 920,
     height: 640,
+    // 战绩列表的九列在 880px 宽以下是塞不下的 —— 再窄日期就会被挤出可视区。
+    minWidth: 880,
+    minHeight: 520,
     title: 'LOL 皮肤助手',
     show: false,
     autoHideMenuBar: true,
