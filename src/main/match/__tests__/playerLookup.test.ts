@@ -98,6 +98,16 @@ describe('toPlayerLookup', () => {
     expect(lookup.isSelf).toBe(false);
   });
 
+  it('头像编号从资料里带出来', () => {
+    const lookup = toPlayerLookup('x#1', { profileIconId: 588 }, '');
+    expect(lookup.profileIconId).toBe(588);
+  });
+
+  it('客户端没给头像编号就是 0 —— 不画假头像', () => {
+    const lookup = toPlayerLookup('x#1', { puuid: 'p' }, '');
+    expect(lookup.profileIconId).toBe(0);
+  });
+
   it('puuid 对上就是自己', () => {
     const lookup = toPlayerLookup('林俊杰#18557', { puuid: 'puuid-1' }, 'puuid-1');
     expect(lookup.isSelf).toBe(true);

@@ -276,7 +276,41 @@ async function main() {
     return;
   }
 
+  // The endpoint the player lookup uses - if it carries profileIconId then
+  // every queried player has an avatar, not just the logged-in one.
+  const selfSummonerId = (() => {
+    try {
+      return JSON.parse(me.text).summonerId;
+    } catch {
+      return 0;
+    }
+  })();
+  if (selfSummonerId) {
+    const r = await call(`/lol-summoner/v1/summoners/${selfSummonerId}`);
+    console.log('');
+    console.log(`/lol-summoner/v1/summoners/${selfSummonerId} -> ${r.status} ${r.error || ''}`);
+    if (r.status === 200 && r.text) {
+      try {
+        const obj = JSON.parse(r.text);
+        console.log(`  fields: ${fieldNames(obj)}`);
+        console.log(`  profileIconId = ${JSON.stringify(obj.profileIconId)}`);
+        console.log(`  summonerLevel = ${JSON.stringify(obj.summonerLevel)}`);
+      } catch (err) {
+        console.log(`  body is not JSON: ${err.message}`);
+      }
+    }
+  }
+
   let iconId = null;
+  try {
+    const self = JSON.parse(me.text);
+    if (self.profileIconId) iconId = self.profileIconId;
+  } catch {
+    /* fall through to the probes below */
+  }
+  console.log('');
+  console.log(`profileIconId from current-summoner = ${iconId}`);
+
   for (const path of [
     `/lol-profile/v1/profiles/${puuid}`,
     `/lol-summoner/v1/summoners/${puuid}`,

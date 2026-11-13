@@ -3,9 +3,22 @@
     <div class="profile-main">
       <div class="avatar-wrap">
         <div class="avatar">
-          <img v-if="badgeUrl" class="badge" :src="badgeUrl" :alt="profile.rankedDisplay" />
+          <img
+            v-if="avatarUrl && !isBroken(avatarUrl)"
+            class="avatar-img"
+            :src="avatarUrl"
+            :alt="profile.displayName"
+            @error="markBroken(avatarUrl)"
+          />
+          <img v-else-if="badgeUrl" class="badge" :src="badgeUrl" :alt="profile.rankedDisplay" />
           <span v-else class="avatar-fallback hx-label">?</span>
         </div>
+        <img
+          v-if="avatarUrl && !isBroken(avatarUrl) && badgeUrl"
+          class="tier-corner"
+          :src="badgeUrl"
+          :alt="profile.rankedDisplay"
+        />
         <span v-if="profile.summonerLevel > 0" class="level">{{ profile.summonerLevel }}</span>
       </div>
 
@@ -42,16 +55,30 @@
 import { computed } from 'vue';
 import type { PlayerLookup } from '../../../../shared/match';
 import { tierIconDataUrl } from '../../../../shared/tierIcon';
+import { lcuIconUrl } from '../../../../shared/icons';
+import { useBrokenIcons } from '../../composables/useBrokenIcons';
 
 const props = defineProps<{ profile: PlayerLookup }>();
 
 defineEmits<{ copy: [] }>();
+
+const { isBroken, markBroken } = useBrokenIcons();
 
 /** 段位徽章。没有段位就空着 —— 界面上显示一个问号占位,不编一个段位出来。 */
 const badgeUrl = computed<string | null>(() =>
   props.profile.rankedTier
     ? tierIconDataUrl(props.profile.rankedTier, props.profile.rankedDivision)
     : null
+);
+
+/**
+ * 召唤师头像。
+ *
+ * 走 `lcuicon://` 自定义协议,主进程从本机客户端的
+ * `profile-icons/{id}.jpg` 取图 —— 客户端没给编号就空着,不画假头像。
+ */
+const avatarUrl = computed<string | null>(() =>
+  props.profile.profileIconId > 0 ? lcuIconUrl('profile', props.profile.profileIconId) : null
 );
 </script>
 
@@ -89,6 +116,20 @@ const badgeUrl = computed<string | null>(() =>
 .badge {
   width: 44px;
   height: 44px;
+}
+.avatar-img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+/* 段位徽章叠在头像的左下角 —— 等级数字占着右下角。 */
+.tier-corner {
+  position: absolute;
+  left: -7px;
+  bottom: -7px;
+  width: 26px;
+  height: 26px;
+  filter: drop-shadow(0 1px 3px rgba(0, 0, 0, 0.9));
 }
 .avatar-fallback {
   font-size: 18px;

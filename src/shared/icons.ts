@@ -15,7 +15,21 @@
 
 export const ICON_SCHEME = 'lcuicon';
 
-export type IconKind = 'champion' | 'item';
+export type IconKind = 'champion' | 'item' | 'profile';
+
+const ICON_KINDS: IconKind[] = ['champion', 'item', 'profile'];
+
+/**
+ * 客户端资源里的文件后缀。
+ *
+ * 召唤师头像是 **.jpg**(实测 `/lol-game-data/assets/v1/profile-icons/{id}.jpg`
+ * 回 200 image/jpeg,同名的 .png 回 400);英雄和物品是 .png。
+ */
+const ICON_EXTENSIONS: Record<IconKind, string> = {
+  champion: 'png',
+  item: 'png',
+  profile: 'jpg'
+};
 
 export interface IconRef {
   kind: IconKind;
@@ -24,12 +38,20 @@ export interface IconRef {
 
 /** 渲染进程拼图标 URL 用。 */
 export function lcuIconUrl(kind: IconKind, id: number): string {
-  return `${ICON_SCHEME}://${kind}/${id}.png`;
+  return `${ICON_SCHEME}://${kind}/${id}.${iconExtension(kind)}`;
+}
+
+/** 某类图标的文件后缀 —— 磁盘缓存的命名也要用。 */
+export function iconExtension(kind: IconKind): string {
+  return ICON_EXTENSIONS[kind] ?? 'png';
 }
 
 /** 反解 `lcuicon://champion/266.png`;不是图标 URL 就返回 null。 */
 export function parseLcuIconUrl(raw: string): IconRef | null {
-  const matched = /^lcuicon:\/\/(champion|item)\/(\d+)\.png(?:\?.*)?$/.exec(raw);
+  const pattern = new RegExp(
+    `^${ICON_SCHEME}://(${ICON_KINDS.join('|')})/(\\d+)\\.(png|jpg)(?:\\?.*)?$`
+  );
+  const matched = pattern.exec(raw);
   if (!matched) return null;
 
   const id = Number(matched[2]);

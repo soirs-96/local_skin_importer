@@ -21,7 +21,7 @@ import axios from 'axios';
 import { Buffer } from 'node:buffer';
 import * as fs from 'node:fs/promises';
 import * as path from 'node:path';
-import { ICON_SCHEME, parseLcuIconUrl, type IconKind } from '../../shared/icons';
+import { ICON_SCHEME, iconExtension, parseLcuIconUrl, type IconKind } from '../../shared/icons';
 import { getIconMeta } from './iconMeta';
 import { FALLBACK_PATCH, resolvePatchVersion } from './patchVersion';
 import {
@@ -48,6 +48,11 @@ const LCU_ICON_PATHS: Record<IconKind, string[]> = {
     '/lol-game-data/assets/v1/item/{id}.png',
     '/lol-game-data/assets/v1/items/{id}.png',
     '/lol-game-data/assets/v1/item-icons/{id}.png'
+  ],
+  // 召唤师头像:实测只有 .jpg 命中(同名的 .png 回 400)。
+  profile: [
+    '/lol-game-data/assets/v1/profile-icons/{id}.jpg',
+    '/lol-game-data/assets/v1/profile-icons/{id}.png'
   ]
 };
 
@@ -58,13 +63,13 @@ const LCU_ICON_PATHS: Record<IconKind, string[]> = {
  * 直接回 400。客户端自己的元数据(items.json / champion-summary.json)
  * 里带着每个 id 的**真实图标路径**,从那儿读最靠谱。
  */
-const LCU_ICON_METADATA: Record<IconKind, string> = {
+const LCU_ICON_METADATA: Partial<Record<IconKind, string>> = {
   champion: '/lol-game-data/assets/v1/champion-summary.json',
   item: '/lol-game-data/assets/v1/items.json'
 };
 
 /** 每个类型优先读哪个字段当图标路径。 */
-const ICON_PATH_FIELDS: Record<IconKind, string[]> = {
+const ICON_PATH_FIELDS: Partial<Record<IconKind, string[]>> = {
   champion: ['squarePortraitPath', 'portraitPath'],
   item: ['iconPath', 'iconLargePath', 'iconSmallPath']
 };
@@ -133,13 +138,35 @@ export function registerIconProtocol(): void {
     try {
       const buffer = await loadIcon(ref.kind, ref.id);
       return new Response(buffer, {
-        headers: { 'content-type': 'image/png', 'cache-control': 'max-age=86400' }
+        headers: { 'content-type': imageContentType(buffer), 'cache-control': 'max-age=86400' }
       });
     } catch (e: unknown) {
       console.warn('[iconAssets] icon request failed', ref, e);
       return new Response('not found', { status: 404 });
     }
   });
+}
+
+/**
+ * 认出图片的真实格式。
+ *
+ * 召唤师头像是 **jpeg**(客户端只给 .jpg),英雄和物品才是 png —— 认错了
+ * 浏览器会拒绝渲染,表现就是「头像位一直空着」。
+ */
+function imageContentType(buffer: Buffer): string {
+  if (buffer.length >= 3 && buffer[0] === 0xff && buffer[1] === 0xd8 && buffer[2] === 0xff) {
+    return 'image/jpeg';
+  }
+  if (
+    buffer.length >= 4 &&
+    buffer[0] === 0x89 &&
+    buffer[1] === 0x50 &&
+    buffer[2] === 0x4e &&
+    buffer[3] === 0x47
+  ) {
+    return 'image/png';
+  }
+  return 'application/octet-stream';
 }
 
 /** 拿一张图标。同一张图的并发请求会合并成一次。 */
@@ -166,8 +193,10 @@ async function fetchIcon(kind: IconKind, id: number): Promise<Buffer> {
     return cached;
   }
 
-  // 英雄头像客户端就有,先走本机;物品图标客户端不提供,只能走 DDG
-  const order: ('lcu' | 'ddragon')[] = kind === 'item' ? ['ddragon', 'lcu'] : ['lcu', 'ddragon'];
+  // 英雄头像客户端就有,先走本机;物品图标客户端不提供,只能走 DDG;
+  // 召唤师头像只有客户端有(DDG 里没有这个资源),所以只走本机。
+  const order: ('lcu' | 'ddragon')[] =
+    kind === 'item' ? ['ddragon', 'lcu'] : kind === 'profile' ? ['lcu'] : ['lcu', 'ddragon'];
 
   for (const source of order) {
     const buffer =
@@ -191,7 +220,8 @@ async function fetchIcon(kind: IconKind, id: number): Promise<Buffer> {
 /* -------------------------------------------------------------------------- */
 
 function cachePath(kind: IconKind, id: number): string {
-  return path.join(app.getPath('userData'), 'icon-cache', kind, `${id}.png`);
+  // 后缀跟实际格式一致 —— 召唤师头像是 jpg,别把所有图标都存成 .png。
+  return path.join(app.getPath('userData'), 'icon-cache', kind, `${id}.${iconExtension(kind)}`);
 }
 
 async function readCache(kind: IconKind, id: number): Promise<Buffer | null> {
@@ -302,7 +332,11 @@ async function loadIconPathMap(kind: IconKind, auth: LcuAuth): Promise<Map<numbe
   const cached = iconPathMaps.get(kind);
   if (cached) return cached;
 
-  const raw = await lcuGetJson(auth, LCU_ICON_METADATA[kind]);
+  // 召唤师头像没有元数据表 —— 路径是固定的,不用去查。
+  const metadataPath = LCU_ICON_METADATA[kind];
+  if (!metadataPath) return new Map();
+
+  const raw = await lcuGetJson(auth, metadataPath);
   const entries = Array.isArray(raw) ? raw : isRecord(raw) ? Object.values(raw) : [];
 
   // 英雄:同一个 id 下还挂着皮肤条目,本体条目(带 roles)的路径才算数
@@ -325,7 +359,7 @@ async function loadIconPathMap(kind: IconKind, auth: LcuAuth): Promise<Map<numbe
     // 元数据里没有可用的路径字段 —— 把字段名打出来,好知道该认哪个
     const first = entries.find((entry) => isRecord(entry));
     const keys = first && isRecord(first) ? Object.keys(first).join(',') : '(empty)';
-    console.warn(`[iconAssets] no icon path field in ${LCU_ICON_METADATA[kind]}, keys: ${keys}`);
+    console.warn(`[iconAssets] no icon path field in ${metadataPath}, keys: ${keys}`);
     return map;
   }
 
@@ -336,7 +370,7 @@ async function loadIconPathMap(kind: IconKind, auth: LcuAuth): Promise<Map<numbe
 
 /** 从一条元数据里挑出图标路径。 */
 function pickIconPath(kind: IconKind, entry: Record<string, unknown>): string | null {
-  for (const field of ICON_PATH_FIELDS[kind]) {
+  for (const field of ICON_PATH_FIELDS[kind] ?? []) {
     const value = entry[field];
     if (typeof value === 'string' && value.endsWith('.png')) return value;
   }
@@ -483,6 +517,9 @@ async function ddragonPatches(): Promise<string[]> {
 }
 
 async function fetchFromDdragon(kind: IconKind, id: number): Promise<Buffer | null> {
+  // 召唤师头像 DDG 里没有,别去白跑一趟
+  if (kind === 'profile') return null;
+
   // 物品图标按 id 命名(1001.png),英雄图标按英文名命名(Aatrox.png)
   const file = kind === 'champion' ? getIconMeta().championFiles.get(id) : `${id}.png`;
   if (!file) return null;

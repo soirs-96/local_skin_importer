@@ -188,6 +188,7 @@ export function toPlayerLookup(
     summonerId: num(summoner.summonerId),
     puuid,
     summonerLevel: num(summoner.summonerLevel),
+    profileIconId: num(summoner.profileIconId),
     rankedDisplay: badge.display,
     rankedTier: badge.tier,
     rankedDivision: badge.division,
@@ -195,6 +196,25 @@ export function toPlayerLookup(
     isSelf: Boolean(myPuuid) && puuid === myPuuid,
     error: null
   };
+}
+
+/**
+ * 头像编号。
+ *
+ * 搜人接口不一定带 `profileIconId` —— 带上就没有,没带就**按游戏 ID 再查一次**
+ * (`/lol-summoner/v1/summoners/{summonerId}` 一定带)。查不到就是 0,
+ * 界面上不显示头像,不留一个碎图。
+ */
+async function fetchProfileIconId(client: AxiosInstance, summonerId: number): Promise<number> {
+  try {
+    const { data } = await client.get(`${SUMMONERS_PATH}/${summonerId}`, {
+      timeout: LOOKUP_TIMEOUT_MS
+    });
+    const summoner = extractSummoner(data);
+    return summoner ? num(summoner.profileIconId) : 0;
+  } catch {
+    return 0;
+  }
 }
 
 /** 查不到时也要给界面一个能显示的结果对象,而不是抛异常。 */
@@ -208,6 +228,7 @@ export function failedLookup(query: string, error: string): PlayerLookup {
     summonerId: 0,
     puuid: '',
     summonerLevel: 0,
+    profileIconId: 0,
     rankedDisplay: '',
     rankedTier: '',
     rankedDivision: '',
@@ -271,6 +292,11 @@ export async function lookupPlayer(
     if (lookup.ranked.length === 0 && lookup.puuid) {
       const entries = await getRankedEntriesByPuuid(client, lookup.puuid);
       lookup.ranked = entries.filter((entry) => entry.wins + entry.losses > 0);
+    }
+
+    // 头像:搜人响应没带编号就按游戏 ID 再查一次。
+    if (lookup.profileIconId === 0 && lookup.summonerId > 0) {
+      lookup.profileIconId = await fetchProfileIconId(client, lookup.summonerId);
     }
 
     return lookup;

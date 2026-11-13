@@ -306,6 +306,13 @@ export interface PlayerLookup {
   summonerId: number;
   puuid: string;
   summonerLevel: number;
+  /**
+   * 头像编号(召唤师资料里的 `profileIconId`)。
+   *
+   * 头像图从本机客户端取:`/lol-game-data/assets/v1/profile-icons/{id}.jpg`。
+   * 0 = 客户端没给,界面上不显示头像。
+   */
+  profileIconId: number;
   /** 段位显示串(如「荣耀黄金 III」);客户端没给就是空串 */
   rankedDisplay: string;
   /** 段位代号(GOLD / PLATINUM …),画段位徽章用;空串 = 没有段位 */
