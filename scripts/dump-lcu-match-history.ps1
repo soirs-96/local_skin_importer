@@ -6,21 +6,46 @@
 
 $ErrorActionPreference = 'Stop'
 
-function Get-CredentialFromProcess {
-    $procs = Get-CimInstance Win32_Process -Filter "Name='LeagueClient.exe' OR Name='LeagueClientUx.exe'"
+# The client uses a self-signed certificate and PS 5.1 refuses it by default.
+# Also bypass any system proxy - 127.0.0.1 must go straight out.
+[Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
+[Net.ServicePointManager]::ServerCertificateValidationCallback = { $true }
+try { [System.Net.WebRequest]::DefaultWebProxy = $null } catch { }
+
+function Get-Candidates {
+    $candidates = @()
+
+    $procs = Get-CimInstance Win32_Process -Filter "Name='LeagueClient.exe' OR Name='LeagueClientUx.exe' OR Name='LeagueClientUxRender.exe'"
     foreach ($p in $procs) {
         if (-not $p.CommandLine) { continue }
-        $port = $null
-        $token = $null
-        if ($p.CommandLine -match '--app-port=(\d+)') { $port = $Matches[1] }
-        if ($p.CommandLine -match '--remoting-auth-token=([\w-]+)') { $token = $Matches[1] }
-        if (-not $port -and $p.CommandLine -match '--riotclient-app-port=(\d+)') { $port = $Matches[1] }
-        if (-not $token -and $p.CommandLine -match '--riotclient-auth-token=([\w-]+)') { $token = $Matches[1] }
-        if ($port -and $token) {
-            return @{ Port = $port; Token = $token; Protocol = 'https'; Source = "$($p.Name) cmdline" }
+        $cmd = $p.CommandLine
+        Write-Host ("process {0} : {1}" -f $p.Name, $cmd)
+        $ports = @()
+        $tokens = @()
+        if ($cmd -match '--app-port=([^\s"]+)') { $ports += $Matches[1] }
+        if ($cmd -match '--riotclient-app-port=([^\s"]+)') { $ports += $Matches[1] }
+        if ($cmd -match '--remoting-auth-token=([^\s"]+)') { $tokens += $Matches[1] }
+        if ($cmd -match '--riotclient-auth-token=([^\s"]+)') { $tokens += $Matches[1] }
+        foreach ($port in $ports) {
+            foreach ($token in $tokens) {
+                $candidates += @{ Port = $port; Token = $token; Protocol = 'https'; Source = "$($p.Name) cmdline port $port" }
+            }
         }
     }
-    return $null
+
+    $lockfile = Find-Lockfile
+    if ($lockfile) {
+        Write-Host ("lockfile: {0}" -f $lockfile)
+        $fields = (Get-Content $lockfile -Raw).Trim().Split(':')
+        if ($fields.Length -ge 5) {
+            $protocol = if ($fields[4].Trim().ToLower() -eq 'http') { 'http' } else { 'https' }
+            $candidates += @{ Port = $fields[2]; Token = $fields[3]; Protocol = $protocol; Source = "lockfile $lockfile" }
+        }
+    } else {
+        Write-Host 'lockfile: not found'
+    }
+
+    return $candidates
 }
 
 function Find-Lockfile {
@@ -47,36 +72,17 @@ function Find-Lockfile {
     return $null
 }
 
-function Get-CredentialFromLockfile {
-    $lockfile = Find-Lockfile
-    if (-not $lockfile) { return $null }
-    $fields = (Get-Content $lockfile -Raw).Trim().Split(':')
-    if ($fields.Length -lt 5) { return $null }
-    $protocol = if ($fields[4].Trim().ToLower() -eq 'http') { 'http' } else { 'https' }
-    return @{ Port = $fields[2]; Token = $fields[3]; Protocol = $protocol; Source = $lockfile }
-}
-
-$cred = Get-CredentialFromProcess
-if (-not $cred) { $cred = Get-CredentialFromLockfile }
-if (-not $cred) {
-    Write-Host 'No LCU credential found. Is the game client running?'
-    exit 1
-}
-Write-Host ("credential source: {0} (port {1})" -f $cred.Source, $cred.Port)
-
-$auth = [Convert]::ToBase64String([Text.Encoding]::ASCII.GetBytes("riot:$($cred.Token)"))
-$base = "$($cred.Protocol)://127.0.0.1:$($cred.Port)"
-
-function Get-LcuText {
-    param([string]$Path)
+function Invoke-Lcu {
+    param([string]$Base, [string]$Auth, [string]$Path)
     try {
-        [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
-        $r = Invoke-WebRequest -Uri ($base + $Path) -Headers @{ Authorization = "Basic $auth" } -UseBasicParsing -TimeoutSec 20
-        return @{ Status = [int]$r.StatusCode; Body = $r.Content }
+        $r = Invoke-WebRequest -Uri ($Base + $Path) -Headers @{ Authorization = "Basic $Auth" } -UseBasicParsing -TimeoutSec 15
+        return @{ Status = [int]$r.StatusCode; Body = $r.Content; Error = '' }
     } catch {
         $status = $null
         if ($_.Exception.Response) { $status = [int]$_.Exception.Response.StatusCode }
-        return @{ Status = $status; Body = '' }
+        $message = $_.Exception.Message
+        if ($message.Length -gt 160) { $message = $message.Substring(0, 160) }
+        return @{ Status = $status; Body = ''; Error = $message }
     }
 }
 
@@ -86,14 +92,47 @@ function Get-FieldNames {
     return (($Object.PSObject.Properties | ForEach-Object { $_.Name }) -join ', ')
 }
 
+# ===================== find a working endpoint =====================
+
+Write-Host '===================== credentials ====================='
+
+$candidates = Get-Candidates
+if ($candidates.Count -eq 0) {
+    Write-Host 'No credential candidate found. Is the game client running?'
+    exit 1
+}
+
+$base = $null
+$auth = $null
+foreach ($candidate in $candidates) {
+    foreach ($protocol in @('https', 'http')) {
+        $tryBase = "$protocol://127.0.0.1:$($candidate.Port)"
+        $tryAuth = [Convert]::ToBase64String([Text.Encoding]::ASCII.GetBytes("riot:$($candidate.Token)"))
+        $r = Invoke-Lcu -Base $tryBase -Auth $tryAuth -Path '/lol-summoner/v1/current-summoner'
+        Write-Host ("try {0} ({1}) -> {2} {3}" -f $tryBase, $candidate.Source, $r.Status, $r.Error)
+        if ($r.Status -eq 200) {
+            $base = $tryBase
+            $auth = $tryAuth
+            break
+        }
+    }
+    if ($base) { break }
+}
+
+if (-not $base) {
+    Write-Host 'No candidate endpoint answered 200.'
+    exit 1
+}
+Write-Host ("using {0}" -f $base)
+
 # ===================== part 1: recent matches =====================
 
 Write-Host ''
 Write-Host '===================== match-history ====================='
 
-$res = Get-LcuText '/lol-match-history/v1/products/lol/current-summoner/matches?begIndex=0&endIndex=3'
+$res = Invoke-Lcu -Base $base -Auth $auth -Path '/lol-match-history/v1/products/lol/current-summoner/matches?begIndex=0&endIndex=3'
 if ($res.Status -ne 200) {
-    Write-Host ("request failed, status {0}" -f $res.Status)
+    Write-Host ("request failed, status {0} {1}" -f $res.Status, $res.Error)
 } else {
     $json = $res.Body | ConvertFrom-Json
     $games = $null
@@ -134,7 +173,7 @@ if ($res.Status -ne 200) {
 Write-Host ''
 Write-Host '===================== profile / avatar ====================='
 
-$me = Get-LcuText '/lol-summoner/v1/current-summoner'
+$me = Invoke-Lcu -Base $base -Auth $auth -Path '/lol-summoner/v1/current-summoner'
 $puuid = ''
 if ($me.Status -eq 200 -and $me.Body) {
     $meJson = $me.Body | ConvertFrom-Json
@@ -142,7 +181,7 @@ if ($me.Status -eq 200 -and $me.Body) {
     Write-Host ("current summoner puuid = {0} (summonerId = {1})" -f $puuid, $meJson.summonerId)
     Write-Host ('current-summoner fields: ' + (Get-FieldNames $meJson))
 } else {
-    Write-Host ("current-summoner unavailable, status {0}" -f $me.Status)
+    Write-Host ("current-summoner unavailable, status {0} {1}" -f $me.Status, $me.Error)
 }
 
 if (-not $puuid) {
@@ -156,9 +195,9 @@ foreach ($path in @(
     "/lol-summoner/v1/summoners/$puuid",
     "/lol-summoner/v2/summoners/by-puuid/$puuid"
 )) {
-    $r = Get-LcuText $path
+    $r = Invoke-Lcu -Base $base -Auth $auth -Path $path
     Write-Host ''
-    Write-Host ("{0} -> {1}" -f $path, $r.Status)
+    Write-Host ("{0} -> {1} {2}" -f $path, $r.Status, $r.Error)
     if ($r.Status -eq 200 -and $r.Body) {
         $obj = $r.Body | ConvertFrom-Json
         Write-Host ('  fields: ' + (Get-FieldNames $obj))
@@ -186,8 +225,8 @@ foreach ($tpl in @(
     '/lol-game-data/assets/v1/profile-icons/{id}.webp'
 )) {
     $path = $tpl.Replace('{id}', [string]$iconId)
-    $r = Get-LcuText $path
+    $r = Invoke-Lcu -Base $base -Auth $auth -Path $path
     $len = 0
     if ($r.Body) { $len = $r.Body.Length }
-    Write-Host ("  {0} -> {1} ({2} bytes)" -f $path, $r.Status, $len)
+    Write-Host ("  {0} -> {1} ({2} bytes) {3}" -f $path, $r.Status, $len, $r.Error)
 }
