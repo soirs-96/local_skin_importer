@@ -66,7 +66,7 @@ const artUrl = computed(() => props.skin?.splashUrl ?? props.skin?.iconUrl ?? ''
   box-sizing: border-box;
   border-radius: 0;
   overflow: hidden;
-  background: #0a1017;
+  background: var(--hx-inset);
   border: 1px solid var(--hx-line-strong);
   flex-shrink: 0;
 }
@@ -82,7 +82,7 @@ const artUrl = computed(() => props.skin?.splashUrl ?? props.skin?.iconUrl ?? ''
 .art-mask {
   position: absolute;
   inset: 0;
-  background: rgba(0, 0, 0, 0.35);
+  background: var(--hx-overlay);
 }
 .detail-meta {
   display: flex;
@@ -122,12 +122,12 @@ const artUrl = computed(() => props.skin?.splashUrl ?? props.skin?.iconUrl ?? ''
   margin-top: 8px;
   border-radius: 0;
   --el-tag-text-color: var(--hx-gold);
-  --el-tag-bg-color: rgba(200, 170, 110, 0.12);
+  --el-tag-bg-color: var(--hx-tint-gold);
   --el-tag-border-color: var(--hx-line-strong);
 }
 .detail-tag.is-locked {
   --el-tag-text-color: var(--hx-text-dim);
-  --el-tag-bg-color: rgba(139, 147, 167, 0.08);
-  --el-tag-border-color: rgba(139, 147, 167, 0.22);
+  --el-tag-bg-color: var(--hx-tint-dim);
+  --el-tag-border-color: var(--hx-line-dim-strong);
 }
 </style>

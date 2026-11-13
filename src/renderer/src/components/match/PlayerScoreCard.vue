@@ -153,7 +153,7 @@ const csShareText = computed<string>(() => `${Math.round(props.summary.metrics.c
   font-size: 38px;
   line-height: 1;
   color: var(--hx-gold-bright);
-  text-shadow: 0 0 18px rgba(200, 170, 110, 0.28);
+  text-shadow: 0 0 18px var(--hx-gold-glow);
 }
 .big-unit {
   font-size: 13px;

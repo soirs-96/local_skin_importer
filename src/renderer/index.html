@@ -11,6 +11,8 @@
       content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: http: https: lcuicon:;"
     />
     <title>LOL Skin Importer</title>
+    <!-- 主题要在第一帧之前定好,不然会闪一下默认配色。同步加载,不进打包器。 -->
+    <script src="/theme-boot.js"></script>
   </head>
   <body>
     <div id="app"></div>

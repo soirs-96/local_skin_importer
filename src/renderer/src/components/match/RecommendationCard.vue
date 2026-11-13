@@ -115,7 +115,7 @@ onMounted(async () => {
   margin-bottom: 12px;
   padding: 8px 12px;
   border-left: 2px solid var(--hx-danger);
-  background: rgba(255, 107, 107, 0.08);
+  background: var(--hx-tint-danger-soft);
   color: var(--hx-danger);
   font-size: 12px;
 }

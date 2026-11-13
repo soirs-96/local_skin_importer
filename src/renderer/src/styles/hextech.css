@@ -1,5 +1,5 @@
 /*
- * 海克斯科技主题(Hextech):深色金属魔法风。
+ * 海克斯科技主题(Hextech):深色金属魔法风 + 一套日间变体。
  *
  * 配色:近黑底 + 金色金属边框/文字 + 魔法蓝作为交互高亮。
  * 形状:方形 = 结构(面板、按钮一律直角),菱形 = 引导视线(标题前的小菱形),
@@ -7,35 +7,146 @@
  * 按钮:蓝色 = 与游戏本身互动的核心操作(拉取皮肤 / 同步 / 打开总览),
  *       金色 = 次级交互(检测客户端 / 刷新 / 重试 / 关闭 / 登出)。
  * 文字:小字号、大写、加宽字距 —— 用 .hx-label 挂到需要强调的标签上。
+ *
+ * 两套主题:
+ * - `:root` = 日间(纸白底)。白底上金色和蓝色都要压深一档,不然看不清。
+ * - `html.dark` = 夜间(近黑底)。原来那套,一个值都没动。
+ * - 派生色(半透明底纹、描边)用 color-mix 从主题色算出来 —— 一套定义两边通用,
+ *   换主题不用重写。
+ *
+ * 主题是靠 `<html>` 上的类名切的:`html.dark` / `html.light`。
+ * Element Plus 自带的暗色主题也认 `html.dark`,两边正好一起切。
  */
+
+/* ============================ 主题 token ============================ */
 
 :root {
   /* 底色 */
+  --hx-void: #e7e1d3;
+  --hx-bg: #f4f1e9;
+  --hx-panel: #ffffff;
+  --hx-panel-2: #faf8f2;
+  --hx-panel-3: #eeeae0;
+
+  /* 金:结构与文字 —— 白底上要压深,否则读不清 */
+  --hx-gold: #8a6a2f;
+  --hx-gold-bright: #b5893a;
+  --hx-gold-deep: #5c4517;
+  --hx-line: rgba(138, 106, 47, 0.28);
+  --hx-line-strong: rgba(138, 106, 47, 0.52);
+
+  /* 魔法蓝:核心交互高亮 */
+  --hx-blue: #1e8fc4;
+  --hx-blue-bright: #35a7dd;
+  --hx-blue-deep: #146d99;
+  --hx-blue-glow: rgba(30, 143, 196, 0.25);
+
+  /* 文字 */
+  --hx-text: #2b303b;
+  --hx-text-dim: #5a6272;
+  --hx-text-faint: #8d94a3;
+  --hx-text-regular: #454c5a;
+  --hx-text-disabled: #b3b9c4;
+
+  --hx-danger: #d64545;
+  --hx-danger-bright: #c0392b;
+
+  /* 结构性颜色:阴影、遮罩、外壳 —— 跟着底色走 */
+  --hx-shadow: 0 18px 48px rgba(84, 70, 40, 0.18);
+  --hx-shadow-light: 0 6px 18px rgba(84, 70, 40, 0.14);
+  --hx-shadow-lighter: 0 2px 8px rgba(84, 70, 40, 0.1);
+  --hx-mask: rgba(40, 44, 52, 0.45);
+  --hx-overlay: rgba(0, 0, 0, 0.35);
+  --hx-shell-top: rgba(255, 255, 255, 0.92);
+  --hx-shell-bottom: rgba(246, 243, 235, 0.96);
+  --hx-bg-glow: #fffdf7;
+  --hx-scroll-thumb: #d5cdb9;
+  --hx-console-bg: #f7f5ef;
+  --hx-inset: #f2eee4;
+
+  /* 压在皮肤原画上的小角标 —— 底永远是深色,所以文字要用亮金 */
+  --hx-badge-bg: rgba(5, 7, 10, 0.85);
+  --hx-badge-text: #f0d489;
+}
+
+/* 夜间:原来那套,一个值都没改 */
+html.dark {
   --hx-void: #05070a;
   --hx-bg: #070b11;
   --hx-panel: #0b1219;
   --hx-panel-2: #101a24;
   --hx-panel-3: #16212d;
 
-  /* 金:结构与文字 */
   --hx-gold: #c8aa6e;
   --hx-gold-bright: #f5d375;
   --hx-gold-deep: #7d6634;
   --hx-line: rgba(200, 170, 110, 0.22);
   --hx-line-strong: rgba(200, 170, 110, 0.45);
 
-  /* 魔法蓝:核心交互高亮 */
   --hx-blue: #35b8e8;
   --hx-blue-bright: #6ed3f6;
   --hx-blue-deep: #1b7fae;
   --hx-blue-glow: rgba(53, 184, 232, 0.35);
 
-  /* 文字 */
   --hx-text: #dbe3ee;
   --hx-text-dim: #8b93a7;
   --hx-text-faint: #59637a;
+  --hx-text-regular: #b8c1d0;
+  --hx-text-disabled: #47505f;
 
   --hx-danger: #ff6b6b;
+  --hx-danger-bright: #ffb3b3;
+
+  --hx-shadow: 0 18px 48px rgba(0, 0, 0, 0.65);
+  --hx-shadow-light: 0 6px 18px rgba(0, 0, 0, 0.55);
+  --hx-shadow-lighter: 0 2px 8px rgba(0, 0, 0, 0.5);
+  --hx-mask: rgba(3, 6, 10, 0.82);
+  --hx-overlay: rgba(0, 0, 0, 0.35);
+  --hx-shell-top: rgba(16, 26, 36, 0.9);
+  --hx-shell-bottom: rgba(5, 7, 10, 0.96);
+  --hx-bg-glow: #0d1a26;
+  --hx-scroll-thumb: #223040;
+  --hx-console-bg: #04070a;
+  --hx-inset: #0a1017;
+
+  --hx-badge-text: var(--hx-gold);
+}
+
+/*
+ * 派生色 —— 从主题色算出来的半透明底纹和描边。
+ *
+ * 用 color-mix 是因为换主题时它们要跟着变:同一个 `--hx-tint-gold`,
+ * 夜间是暖金底纹,日间是暗金底纹,不用各写一遍。
+ */
+:root {
+  --hx-line-soft: color-mix(in srgb, var(--hx-gold) 16%, transparent);
+  --hx-line-lighter: color-mix(in srgb, var(--hx-gold) 12%, transparent);
+  --hx-line-faintest: color-mix(in srgb, var(--hx-gold) 8%, transparent);
+
+  --hx-line-dim: color-mix(in srgb, var(--hx-text-dim) 16%, transparent);
+  --hx-line-dim-strong: color-mix(in srgb, var(--hx-text-dim) 26%, transparent);
+  --hx-ring: color-mix(in srgb, var(--hx-text-faint) 35%, transparent);
+  --hx-ring-track: color-mix(in srgb, var(--hx-text-dim) 18%, transparent);
+
+  --hx-tint-blue: color-mix(in srgb, var(--hx-blue) 12%, transparent);
+  --hx-tint-blue-soft: color-mix(in srgb, var(--hx-blue) 8%, transparent);
+  --hx-tint-blue-mid: color-mix(in srgb, var(--hx-blue) 16%, transparent);
+  --hx-tint-blue-faint: color-mix(in srgb, var(--hx-blue) 7%, transparent);
+
+  --hx-tint-gold: color-mix(in srgb, var(--hx-gold) 12%, transparent);
+  --hx-tint-gold-soft: color-mix(in srgb, var(--hx-gold) 8%, transparent);
+  --hx-tint-gold-mid: color-mix(in srgb, var(--hx-gold) 18%, transparent);
+  --hx-tint-gold-strong: color-mix(in srgb, var(--hx-gold) 26%, transparent);
+  --hx-tint-gold-faint: color-mix(in srgb, var(--hx-gold) 6%, transparent);
+  --hx-tint-gold-bright: color-mix(in srgb, var(--hx-gold-bright) 12%, transparent);
+
+  --hx-tint-danger: color-mix(in srgb, var(--hx-danger) 10%, transparent);
+  --hx-tint-danger-soft: color-mix(in srgb, var(--hx-danger) 8%, transparent);
+  --hx-line-danger: color-mix(in srgb, var(--hx-danger) 30%, transparent);
+  --hx-danger-glow: color-mix(in srgb, var(--hx-danger) 45%, transparent);
+
+  --hx-tint-dim: color-mix(in srgb, var(--hx-text-dim) 10%, transparent);
+  --hx-gold-glow: color-mix(in srgb, var(--hx-gold) 28%, transparent);
 }
 
 html,
@@ -47,7 +158,7 @@ body,
 body {
   margin: 0;
   background:
-    radial-gradient(circle at 50% 0%, #0d1a26 0%, var(--hx-void) 70%),
+    radial-gradient(circle at 50% 0%, var(--hx-bg-glow) 0%, var(--hx-void) 70%),
     var(--hx-void);
   color: var(--hx-text);
   font-family: 'Segoe UI', 'Microsoft YaHei', system-ui, sans-serif;
@@ -55,13 +166,20 @@ body {
 
 /* ============================ Element Plus 主题覆写 ============================ */
 
-html.dark {
+/*
+ * 两套主题共用这一份 —— 值全都来自 --hx-*,换主题不用改这里。
+ *
+ * 选择器写成 `html.dark, html.light` 是因为 Element Plus 自带的暗色变量
+ * 挂在 `html.dark` 上,选择器要一样重才能压住它(靠加载顺序取胜)。
+ */
+html.dark,
+html.light {
   --el-color-primary: var(--hx-blue);
   --el-color-primary-light-3: #63c7ec;
   --el-color-primary-light-5: #48b4e1;
   --el-color-primary-light-7: #2e9fd0;
   --el-color-primary-light-8: #2694c4;
-  --el-color-primary-light-9: rgba(53, 184, 232, 0.12);
+  --el-color-primary-light-9: var(--hx-tint-blue);
   --el-color-primary-dark-2: #2a93bd;
 
   /* 语义色也收进金蓝体系:成功=金、警告=亮金、错误=危险红、信息=中性灰 */
@@ -69,25 +187,25 @@ html.dark {
   --el-color-warning: var(--hx-gold-bright);
   --el-color-error: var(--hx-danger);
   --el-color-info: var(--hx-text-dim);
-  --el-color-success-light-9: rgba(200, 170, 110, 0.12);
-  --el-color-warning-light-9: rgba(245, 211, 117, 0.1);
-  --el-color-error-light-9: rgba(255, 107, 107, 0.1);
-  --el-color-info-light-9: rgba(139, 147, 167, 0.1);
+  --el-color-success-light-9: var(--hx-tint-gold);
+  --el-color-warning-light-9: var(--hx-tint-gold-bright);
+  --el-color-error-light-9: var(--hx-tint-danger);
+  --el-color-info-light-9: var(--hx-tint-dim);
 
   --el-bg-color: var(--hx-bg);
   --el-bg-color-page: var(--hx-void);
   --el-bg-color-overlay: var(--hx-panel);
 
   --el-text-color-primary: var(--hx-text);
-  --el-text-color-regular: #b8c1d0;
+  --el-text-color-regular: var(--hx-text-regular);
   --el-text-color-secondary: var(--hx-text-dim);
   --el-text-color-placeholder: var(--hx-text-faint);
-  --el-text-color-disabled: #47505f;
+  --el-text-color-disabled: var(--hx-text-disabled);
 
   --el-border-color: var(--hx-line);
-  --el-border-color-light: rgba(200, 170, 110, 0.16);
-  --el-border-color-lighter: rgba(200, 170, 110, 0.12);
-  --el-border-color-extra-light: rgba(200, 170, 110, 0.08);
+  --el-border-color-light: var(--hx-line-soft);
+  --el-border-color-lighter: var(--hx-line-lighter);
+  --el-border-color-extra-light: var(--hx-line-faintest);
   --el-border-color-dark: var(--hx-line-strong);
   --el-border-color-darker: var(--hx-line-strong);
 
@@ -99,10 +217,10 @@ html.dark {
   --el-fill-color-dark: var(--hx-panel-3);
   --el-fill-color-darker: var(--hx-panel-3);
 
-  --el-mask-color: rgba(3, 6, 10, 0.82);
-  --el-box-shadow: 0 18px 48px rgba(0, 0, 0, 0.65);
-  --el-box-shadow-light: 0 6px 18px rgba(0, 0, 0, 0.55);
-  --el-box-shadow-lighter: 0 2px 8px rgba(0, 0, 0, 0.5);
+  --el-mask-color: var(--hx-mask);
+  --el-box-shadow: var(--hx-shadow);
+  --el-box-shadow-light: var(--hx-shadow-light);
+  --el-box-shadow-lighter: var(--hx-shadow-lighter);
 
   /* 直角边缘:整个组件库不做圆角 */
   --el-border-radius-base: 0px;
@@ -147,10 +265,10 @@ html.dark {
 }
 .el-button--primary.is-plain {
   --el-button-text-color: var(--hx-blue);
-  --el-button-bg-color: rgba(53, 184, 232, 0.08);
-  --el-button-border-color: rgba(53, 184, 232, 0.45);
+  --el-button-bg-color: var(--hx-tint-blue-soft);
+  --el-button-border-color: color-mix(in srgb, var(--hx-blue) 45%, transparent);
   --el-button-hover-text-color: var(--hx-blue-bright);
-  --el-button-hover-bg-color: rgba(53, 184, 232, 0.16);
+  --el-button-hover-bg-color: var(--hx-tint-blue-mid);
   --el-button-hover-border-color: var(--hx-blue);
   box-shadow: none;
 }
@@ -158,20 +276,20 @@ html.dark {
 /* 金色按钮:次级交互 */
 .hx-gold.el-button {
   --el-button-text-color: var(--hx-gold);
-  --el-button-bg-color: rgba(200, 170, 110, 0.08);
+  --el-button-bg-color: var(--hx-tint-gold-soft);
   --el-button-border-color: var(--hx-line-strong);
   --el-button-hover-text-color: var(--hx-gold-bright);
-  --el-button-hover-bg-color: rgba(200, 170, 110, 0.18);
+  --el-button-hover-bg-color: var(--hx-tint-gold-mid);
   --el-button-hover-border-color: var(--hx-gold);
   --el-button-active-text-color: var(--hx-gold-bright);
-  --el-button-active-bg-color: rgba(200, 170, 110, 0.26);
+  --el-button-active-bg-color: var(--hx-tint-gold-strong);
   --el-button-active-border-color: var(--hx-gold-bright);
   --el-button-disabled-text-color: var(--hx-text-faint);
   --el-button-disabled-bg-color: transparent;
   --el-button-disabled-border-color: var(--hx-line);
 }
 .hx-gold.el-button.is-text {
-  --el-button-hover-bg-color: rgba(200, 170, 110, 0.12);
+  --el-button-hover-bg-color: var(--hx-tint-gold);
 }
 
 /* 输入框 / 下拉 */
@@ -200,7 +318,7 @@ html.dark {
   background: var(--hx-panel);
   border: 1px solid var(--hx-line-strong);
   border-radius: 0;
-  box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.6), 0 24px 60px rgba(0, 0, 0, 0.7);
+  box-shadow: 0 0 0 1px var(--hx-mask), var(--hx-shadow);
 }
 .el-dialog__title {
   color: var(--hx-gold);
@@ -266,7 +384,7 @@ html.dark {
   background: var(--hx-panel);
   border: 1px solid var(--hx-line-strong);
   border-radius: 0;
-  box-shadow: 0 18px 48px rgba(0, 0, 0, 0.65);
+  box-shadow: var(--hx-shadow);
 }
 .el-select-dropdown__item {
   font-size: 12px;
@@ -287,7 +405,7 @@ html.dark {
 
 /* 加载遮罩 */
 .el-loading-mask {
-  background-color: rgba(5, 7, 10, 0.7);
+  background-color: var(--hx-mask);
 }
 
 /* 通知 / 消息 */
@@ -296,7 +414,7 @@ html.dark {
   background: var(--hx-panel);
   border: 1px solid var(--hx-line-strong);
   border-radius: 0;
-  box-shadow: 0 18px 48px rgba(0, 0, 0, 0.65);
+  box-shadow: var(--hx-shadow);
 }
 .el-notification__title {
   color: var(--hx-gold);
@@ -352,7 +470,7 @@ html.dark {
   background: var(--hx-void);
 }
 ::-webkit-scrollbar-thumb {
-  background: #223040;
+  background: var(--hx-scroll-thumb);
   border: 2px solid var(--hx-void);
 }
 ::-webkit-scrollbar-thumb:hover {
@@ -394,5 +512,5 @@ html.dark {
   content: '';
   flex: 1;
   height: 1px;
-  background: linear-gradient(90deg, var(--hx-line-strong), rgba(200, 170, 110, 0));
+  background: linear-gradient(90deg, var(--hx-line-strong), transparent);
 }

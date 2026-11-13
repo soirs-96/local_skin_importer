@@ -133,7 +133,7 @@ onMounted(() => {
   margin-bottom: 12px;
   padding: 8px 12px;
   border-left: 2px solid var(--hx-gold);
-  background: rgba(200, 170, 110, 0.08);
+  background: var(--hx-tint-gold-soft);
   color: var(--hx-gold);
   font-size: 12px;
 }

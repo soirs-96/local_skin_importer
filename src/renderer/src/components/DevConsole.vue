@@ -142,7 +142,7 @@ function onClose(): void {
   min-height: 180px;
   display: flex;
   flex-direction: column;
-  background: #04070a;
+  background: var(--hx-console-bg);
   border-top: 1px solid var(--hx-line-strong);
 }
 .dc-head {
@@ -232,7 +232,7 @@ function onClose(): void {
   padding: 1px 0;
 }
 .dc-ts {
-  color: #4a5668;
+  color: var(--hx-text-faint);
   flex-shrink: 0;
 }
 .dc-src {
@@ -261,9 +261,9 @@ function onClose(): void {
   color: var(--hx-text);
 }
 .lv-ERROR .dc-msg {
-  color: #ffb3b3;
+  color: var(--hx-danger-bright);
 }
 .lv-WARN .dc-msg {
-  color: #e8d29a;
+  color: var(--hx-gold-bright);
 }
 </style>

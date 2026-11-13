@@ -38,8 +38,8 @@ const tooltipText = computed<string>(() => {
   flex-shrink: 0;
 }
 .status-dot--disconnected {
-  background: #64748b;
-  box-shadow: 0 0 0 1px rgba(100, 116, 139, 0.35);
+  background: var(--hx-text-faint);
+  box-shadow: 0 0 0 1px var(--hx-ring);
 }
 .status-dot--running {
   background: var(--hx-blue);
@@ -47,6 +47,6 @@ const tooltipText = computed<string>(() => {
 }
 .status-dot--error {
   background: var(--hx-danger);
-  box-shadow: 0 0 8px rgba(255, 107, 107, 0.45);
+  box-shadow: 0 0 8px var(--hx-danger-glow);
 }
 </style>

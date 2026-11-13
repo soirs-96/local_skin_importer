@@ -294,7 +294,7 @@ function onLock(): void {
   margin-top: 12px;
 }
 .dev-log {
-  background: #04070a;
+  background: var(--hx-console-bg);
   border: 1px solid var(--hx-line);
   border-radius: 0;
   padding: 10px;
@@ -314,7 +314,7 @@ function onLock(): void {
   word-break: break-all;
 }
 .dev-log-ts {
-  color: #4a5668;
+  color: var(--hx-text-faint);
 }
 .dev-log-level {
   width: 50px;

@@ -64,7 +64,7 @@ watch(
   box-sizing: border-box;
   border-radius: 0;
   overflow: hidden;
-  background: #0a1017;
+  background: var(--hx-inset);
   border: 1px solid var(--hx-line);
   transition: border-color 0.15s ease, box-shadow 0.15s ease;
 }
@@ -76,7 +76,7 @@ watch(
   border-color: var(--hx-line-strong);
 }
 .is-locked .thumb {
-  border-color: rgba(139, 147, 167, 0.14);
+  border-color: var(--hx-line-dim);
 }
 .thumb img {
   width: 100%;
@@ -87,7 +87,7 @@ watch(
 .thumb-placeholder {
   width: 100%;
   height: 100%;
-  background: #0a1017;
+  background: var(--hx-inset);
 }
 .is-locked .thumb img {
   filter: grayscale(1) brightness(0.55);
@@ -95,7 +95,7 @@ watch(
 .mask {
   position: absolute;
   inset: 0;
-  background: rgba(0, 0, 0, 0.35);
+  background: var(--hx-overlay);
 }
 .lock-badge {
   position: absolute;
@@ -109,8 +109,8 @@ watch(
   line-height: 18px;
   letter-spacing: 0.16em;
   text-transform: uppercase;
-  color: var(--hx-gold);
-  background: rgba(5, 7, 10, 0.85);
+  color: var(--hx-badge-text);
+  background: var(--hx-badge-bg);
 }
 .meta {
   padding-top: 6px;

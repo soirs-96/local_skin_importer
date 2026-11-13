@@ -271,7 +271,7 @@ defineExpose({ open });
   justify-content: center;
   background: conic-gradient(
     var(--hx-blue) 0deg var(--pct),
-    rgba(139, 147, 167, 0.16) var(--pct) 360deg
+    var(--hx-ring-track) var(--pct) 360deg
   );
 }
 .stat-ring::before {

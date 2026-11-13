@@ -7,6 +7,10 @@
         <span class="brand-text">LOL 皮肤助手</span>
       </span>
       <span class="spacer" />
+      <el-button size="small" text class="hx-gold" :title="themeTitle" @click="toggleTheme">
+        <span class="hx-diamond" />
+        <span>{{ mode === 'dark' ? '日间' : '夜间' }}</span>
+      </el-button>
       <el-button size="small" text class="hx-gold" @click="openConsole">开发日志</el-button>
     </header>
 
@@ -39,6 +43,10 @@
         <div class="foot-version">{{ APP_VERSION }}</div>
 
         <div class="foot-actions">
+          <el-button size="small" text class="hx-gold" :title="themeTitle" @click="toggleTheme">
+            <span class="hx-diamond" />
+            <span>{{ mode === 'dark' ? '日间' : '夜间' }}</span>
+          </el-button>
           <el-button size="small" text class="hx-gold" @click="openConsole">开发日志</el-button>
           <el-button
             v-if="loggedIn"
@@ -71,6 +79,7 @@ import DevConsole from './components/DevConsole.vue';
 import DevPanel from './components/DevPanel.vue';
 import { useAuthStore } from './stores/auth';
 import { useConsoleEntry } from './composables/useConsoleEntry';
+import { useTheme } from './composables/useTheme';
 import { APP_VERSION } from './config/dev';
 import type { LcuStatus } from '../../preload/index';
 
@@ -79,6 +88,12 @@ const route = useRoute();
 const auth = useAuthStore();
 const { loggedIn } = storeToRefs(auth);
 const { openConsole } = useConsoleEntry();
+const { mode, toggleTheme } = useTheme();
+
+/** 主题按钮上的提示 —— 说清楚点了会切到哪一边。 */
+const themeTitle = computed<string>(() =>
+  mode.value === 'dark' ? '切换到日间模式' : '切换到夜间模式'
+);
 
 /** 左边栏的栏目 —— 编号跟参考工具一样,一眼能数到第几项。 */
 const NAV_ITEMS = [
@@ -149,7 +164,7 @@ watch(
   align-items: center;
   gap: 8px;
   padding: 10px 18px;
-  background: linear-gradient(180deg, rgba(13, 26, 38, 0.92), rgba(5, 7, 10, 0.92));
+  background: linear-gradient(180deg, var(--hx-shell-top), var(--hx-shell-bottom));
   border-bottom: 1px solid var(--hx-line);
 }
 
@@ -159,7 +174,7 @@ watch(
   flex-shrink: 0;
   display: flex;
   flex-direction: column;
-  background: linear-gradient(180deg, rgba(16, 26, 36, 0.9), rgba(5, 7, 10, 0.96));
+  background: linear-gradient(180deg, var(--hx-shell-top), var(--hx-shell-bottom));
   border-right: 1px solid var(--hx-line);
 }
 .rail-brand {
@@ -213,7 +228,7 @@ watch(
 }
 .rail-item:hover {
   color: var(--hx-gold);
-  background: rgba(200, 170, 110, 0.06);
+  background: var(--hx-tint-gold-faint);
 }
 .rail-index {
   font-family: monospace;
@@ -225,7 +240,7 @@ watch(
 .rail-item.router-link-active {
   color: var(--hx-blue);
   border-left-color: var(--hx-blue);
-  background: rgba(53, 184, 232, 0.07);
+  background: var(--hx-tint-blue-faint);
 }
 .rail-item.router-link-active .rail-index {
   opacity: 1;

@@ -326,14 +326,14 @@ onMounted(async () => {
   padding: 12px 14px;
   font-size: 13px;
   color: var(--hx-danger);
-  background: rgba(255, 107, 107, 0.08);
-  border: 1px solid rgba(255, 107, 107, 0.3);
+  background: var(--hx-tint-danger-soft);
+  border: 1px solid var(--hx-line-danger);
 }
 .hint {
   padding: 10px 14px;
   font-size: 12px;
   color: var(--hx-gold);
-  background: rgba(200, 170, 110, 0.08);
+  background: var(--hx-tint-gold-soft);
   border: 1px solid var(--hx-line);
 }
 .placeholder {
