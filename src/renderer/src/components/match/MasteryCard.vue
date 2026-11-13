@@ -5,7 +5,7 @@
         <span class="hx-diamond" />
         <span class="hx-label">英雄熟练度</span>
         <span class="mastery-count hx-label">{{ entries.length }} 个英雄</span>
-        <div class="sort-switch">
+        <div class="sort-switch" v-show="!collapsed">
           <button
             class="sort-btn"
             :class="{ 'is-active': mode === 'mastery' }"
@@ -23,10 +23,15 @@
             近 20 局胜率
           </button>
         </div>
+        <button class="fold-btn" type="button" @click="collapsed = !collapsed">
+          {{ collapsed ? '展开' : '收起' }}
+        </button>
       </div>
     </template>
 
-    <div v-if="entries.length === 0" class="empty-text">
+    <div v-if="collapsed" class="folded-text">英雄熟练度已收起 —— 点右上角「展开」再看</div>
+
+    <div v-else-if="entries.length === 0" class="empty-text">
       暂无熟练度数据(需要游戏客户端运行并已登录)
     </div>
 
@@ -71,8 +76,13 @@
         </div>
       </div>
 
-      <button v-if="rows.length > visibleRows.length" class="expand-btn" type="button" @click="expanded = true">
-        展开全部 {{ rows.length }} 个
+      <button
+        v-if="rows.length > VISIBLE_LIMIT"
+        class="expand-btn"
+        type="button"
+        @click="expanded = !expanded"
+      >
+        {{ expanded ? '收起' : `展开全部 ${rows.length} 个` }}
       </button>
     </div>
   </el-card>
@@ -95,6 +105,8 @@ const { isBroken, markBroken } = useBrokenIcons();
 
 const mode = ref<MasterySortMode>('mastery');
 const expanded = ref<boolean>(false);
+/** 整张卡折起来 —— 熟练度在页面最下面,不用时可以整块收掉。 */
+const collapsed = ref<boolean>(false);
 
 const VISIBLE_LIMIT = 12;
 
@@ -134,11 +146,32 @@ function formatDate(timestampMs: number): string {
 .mastery-count {
   font-size: 10px;
   color: var(--hx-text-faint);
+  margin-right: auto;
 }
 .sort-switch {
-  margin-left: auto;
   display: flex;
   border: 1px solid var(--hx-line);
+}
+.fold-btn {
+  background: transparent;
+  border: 1px solid var(--hx-line);
+  color: var(--hx-text-dim);
+  font-size: 11px;
+  letter-spacing: 0.12em;
+  padding: 3px 10px;
+  cursor: pointer;
+}
+.fold-btn:hover {
+  color: var(--hx-gold);
+  border-color: var(--hx-line-strong);
+}
+/* 排序按钮和折叠按钮并排时,折叠按钮贴最右 */
+.sort-switch + .fold-btn {
+  margin-left: 10px;
+}
+.folded-text {
+  font-size: 12px;
+  color: var(--hx-text-faint);
 }
 .sort-btn {
   background: transparent;

@@ -6,8 +6,6 @@
 
     <RecommendationCard :available="canRecommend" />
 
-    <MasteryCard :entries="snapshot?.mastery ?? []" :recent="snapshot?.recent ?? null" />
-
     <OpponentsCard
       :snapshot="opponents"
       :loading="opponentsLoading"
@@ -20,6 +18,9 @@
     </div>
 
     <LlmSettingsCard />
+
+    <!-- 熟练度放最后:它是最长的一块,又只是参考信息 -->
+    <MasteryCard :entries="snapshot?.mastery ?? []" :recent="snapshot?.recent ?? null" />
   </div>
 </template>
 

@@ -118,6 +118,13 @@ describe('parseLedgeGame', () => {
     expect(parsed?.gameMode).toBe('KIWI');
   });
 
+  it('地图编号、站位、定位都要带出来 —— 界面靠它们分清大乱斗和召唤师峡谷', () => {
+    const parsed = parseLedgeGame(game([participant()]), ME, staticData);
+    expect(parsed?.mapId).toBe(12);
+    expect(parsed?.lane).toBe('MIDDLE');
+    expect(parsed?.role).toBe('SUPPORT');
+  });
+
   it('这一局里没有目标玩家就当没有', () => {
     const parsed = parseLedgeGame(game([participant({ puuid: OTHER })]), ME, staticData);
     expect(parsed).toBeNull();

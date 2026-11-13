@@ -1,30 +1,57 @@
 <template>
   <div class="app">
-    <header class="topbar">
+    <!-- 登录页没有左边栏,只留一条顶栏放品牌和开发日志 -->
+    <header v-if="isLogin" class="login-bar">
       <span class="brand">
         <span class="hx-diamond" />
         <span class="brand-text">LOL 皮肤助手</span>
       </span>
       <span class="spacer" />
-      <nav v-if="route.path !== '/login'" class="tabs">
-        <router-link to="/sync" class="tab">皮肤同步</router-link>
-        <router-link to="/match" class="tab">对局助手</router-link>
-        <router-link to="/players" class="tab">战绩查询</router-link>
-      </nav>
-      <span class="spacer" />
       <el-button size="small" text class="hx-gold" @click="openConsole">开发日志</el-button>
-      <span v-if="loggedIn" class="auth-info">已登录</span>
-      <el-button
-        v-if="loggedIn"
-        size="small"
-        text
-        class="hx-gold"
-        @click="onLogout"
-      >
-        退出登录
-      </el-button>
-      <el-button v-else size="small" text class="hx-gold" @click="goLogin">登录</el-button>
     </header>
+
+    <aside v-else class="rail">
+      <div class="rail-brand">
+        <span class="rail-logo">
+          <span class="hx-diamond" />
+        </span>
+        <span class="brand-text">LOL 皮肤助手</span>
+        <span class="rail-version">{{ APP_VERSION }}</span>
+      </div>
+
+      <nav class="rail-nav">
+        <router-link v-for="item in NAV_ITEMS" :key="item.path" :to="item.path" class="rail-item">
+          <span class="rail-index">{{ item.index }}</span>
+          <span class="rail-label">{{ item.label }}</span>
+        </router-link>
+      </nav>
+
+      <div class="rail-foot">
+        <div class="foot-row">
+          <span class="foot-dot" :class="lcuDotClass" />
+          <span class="foot-text">{{ lcuText }}</span>
+        </div>
+
+        <div class="foot-row">
+          <span class="hx-diamond hx-diamond--blue" />
+          <span class="foot-text">{{ loggedIn ? '账号已登录' : '账号未登录' }}</span>
+        </div>
+
+        <div class="foot-actions">
+          <el-button size="small" text class="hx-gold" @click="openConsole">开发日志</el-button>
+          <el-button
+            v-if="loggedIn"
+            size="small"
+            text
+            class="hx-gold"
+            @click="onLogout"
+          >
+            退出登录
+          </el-button>
+          <el-button v-else size="small" text class="hx-gold" @click="goLogin">登录</el-button>
+        </div>
+      </div>
+    </aside>
 
     <main class="main">
       <router-view />
@@ -36,19 +63,50 @@
 </template>
 
 <script setup lang="ts">
-import { onMounted } from 'vue';
+import { computed, onMounted, ref, watch } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
 import { storeToRefs } from 'pinia';
 import DevConsole from './components/DevConsole.vue';
 import DevPanel from './components/DevPanel.vue';
 import { useAuthStore } from './stores/auth';
 import { useConsoleEntry } from './composables/useConsoleEntry';
+import { APP_VERSION } from './config/dev';
+import type { LcuStatus } from '../../preload/index';
 
 const router = useRouter();
 const route = useRoute();
 const auth = useAuthStore();
 const { loggedIn } = storeToRefs(auth);
 const { openConsole } = useConsoleEntry();
+
+/** 左边栏的栏目 —— 编号跟参考工具一样,一眼能数到第几项。 */
+const NAV_ITEMS = [
+  { index: '01', label: '皮肤同步', path: '/sync' },
+  { index: '02', label: '对局助手', path: '/match' },
+  { index: '03', label: '战绩查询', path: '/players' }
+];
+
+const isLogin = computed<boolean>(() => route.path === '/login');
+
+const lcu = ref<LcuStatus | null>(null);
+
+/** 客户端状态只做浅检测 —— 挂在界面上顺手查一下,不扫盘。 */
+async function refreshLcu(): Promise<void> {
+  if (isLogin.value) return;
+  try {
+    lcu.value = await window.api.checkLcu();
+  } catch (e: unknown) {
+    console.warn('check lcu failed', e);
+    lcu.value = null;
+  }
+}
+
+const lcuText = computed<string>(() => {
+  if (!lcu.value) return '客户端未运行';
+  return lcu.value.running ? '客户端运行中' : '客户端未运行';
+});
+
+const lcuDotClass = computed<string>(() => (lcu.value?.running ? 'is-on' : 'is-off'));
 
 function goLogin(): void {
   void router.push('/login');
@@ -67,66 +125,157 @@ async function onLogout(): Promise<void> {
 
 onMounted(async () => {
   await auth.refresh();
+  await refreshLcu();
 });
+
+// 换页面就顺手刷新一次客户端状态 —— 玩家常常是打完游戏才切过来的。
+watch(
+  () => route.path,
+  () => {
+    void refreshLcu();
+  }
+);
 </script>
 
 <style scoped>
 .app {
   height: 100%;
   display: flex;
-  flex-direction: column;
+  flex-direction: row;
 }
-.topbar {
+.login-bar {
   display: flex;
   align-items: center;
+  gap: 8px;
   padding: 10px 18px;
   background: linear-gradient(180deg, rgba(13, 26, 38, 0.92), rgba(5, 7, 10, 0.92));
   border-bottom: 1px solid var(--hx-line);
-  gap: 8px;
 }
-.brand {
+
+/* ============================ 左边栏 ============================ */
+.rail {
+  width: 212px;
+  flex-shrink: 0;
+  display: flex;
+  flex-direction: column;
+  background: linear-gradient(180deg, rgba(16, 26, 36, 0.9), rgba(5, 7, 10, 0.96));
+  border-right: 1px solid var(--hx-line);
+}
+.rail-brand {
   display: flex;
   align-items: center;
   gap: 10px;
-  font-weight: 600;
+  padding: 18px 16px;
+  border-bottom: 1px solid var(--hx-line);
+  position: relative;
+}
+.rail-logo {
+  width: 30px;
+  height: 30px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid var(--hx-line-strong);
+  background: var(--hx-panel-2);
+  flex-shrink: 0;
 }
 .brand-text {
   color: var(--hx-gold);
   font-size: 12px;
-  letter-spacing: 0.28em;
+  letter-spacing: 0.24em;
   text-transform: uppercase;
+  white-space: nowrap;
+}
+.rail-version {
+  position: absolute;
+  left: 16px;
+  bottom: 5px;
+  color: var(--hx-text-faint);
+  font-size: 9px;
+  font-family: monospace;
+  letter-spacing: 0.12em;
+  opacity: 0.6;
+}
+.rail-nav {
+  display: flex;
+  flex-direction: column;
+  padding: 12px 0;
+}
+.rail-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 11px 16px;
+  border-left: 2px solid transparent;
+  color: var(--hx-text-dim);
+  text-decoration: none;
+  font-size: 13px;
+  transition:
+    color 0.12s,
+    background 0.12s;
+}
+.rail-item:hover {
+  color: var(--hx-gold);
+  background: rgba(200, 170, 110, 0.06);
+}
+.rail-index {
+  font-family: monospace;
+  font-size: 10px;
+  letter-spacing: 0.12em;
+  color: var(--hx-gold);
+  opacity: 0.5;
+}
+.rail-item.router-link-active {
+  color: var(--hx-blue);
+  border-left-color: var(--hx-blue);
+  background: rgba(53, 184, 232, 0.07);
+}
+.rail-item.router-link-active .rail-index {
+  opacity: 1;
+}
+.rail-foot {
+  margin-top: auto;
+  padding: 14px 16px;
+  border-top: 1px solid var(--hx-line);
+  display: flex;
+  flex-direction: column;
+  gap: 9px;
+}
+.foot-row {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+}
+.foot-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+.foot-dot.is-on {
+  background: var(--hx-blue);
+  box-shadow: 0 0 8px var(--hx-blue-glow);
+}
+.foot-dot.is-off {
+  background: var(--hx-text-faint);
+}
+.foot-text {
+  font-size: 11px;
+  letter-spacing: 0.08em;
+  color: var(--hx-text-dim);
+}
+.foot-actions {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  margin-top: 2px;
 }
 .spacer {
   flex: 1;
 }
-.tabs {
-  display: flex;
-  gap: 4px;
-}
-.tab {
-  padding: 5px 14px;
-  font-size: 11px;
-  letter-spacing: 0.18em;
-  text-transform: uppercase;
-  color: var(--hx-text-faint);
-  text-decoration: none;
-  border: 1px solid transparent;
-}
-.tab:hover {
-  color: var(--hx-gold);
-}
-.tab.router-link-active {
-  color: var(--hx-blue);
-  border-color: var(--hx-line-strong);
-  background: rgba(53, 184, 232, 0.08);
-}
-.auth-info {
-  color: var(--hx-text-faint);
-  font-size: 11px;
-  font-family: monospace;
-}
 .main {
   flex: 1;
   overflow-y: auto;
+  min-width: 0;
 }
 </style>

@@ -53,7 +53,9 @@
             <span class="game-title">
               <span class="champ-name">{{ game.championName }}</span>
               <span class="result-tag">{{ game.win ? '胜利' : '失败' }}</span>
-              <span v-if="laneLabel(game.lane)" class="lane-tag">{{ laneLabel(game.lane) }}</span>
+              <span v-if="positionLabel(game.mapId, game.lane, game.role)" class="lane-tag">
+                {{ positionLabel(game.mapId, game.lane, game.role) }}
+              </span>
             </span>
             <span class="game-mode">{{ modeText(game) }}</span>
           </div>
@@ -105,7 +107,7 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue';
 import type { PlayerGame } from '../../../../shared/match';
-import { gameTitle, laneLabel } from '../../../../shared/gameLabels';
+import { gameTitle, positionLabel } from '../../../../shared/gameLabels';
 import { useBrokenIcons } from '../../composables/useBrokenIcons';
 import GamePeersPanel from './GamePeersPanel.vue';
 
@@ -173,8 +175,7 @@ function toggle(gameId: string): void {
 }
 
 function modeText(game: PlayerGame): string {
-  const title = gameTitle(game.gameMode, game.queueId);
-  return title || `模式 ${game.gameMode || '未知'}`;
+  return gameTitle(game.mapId, game.queueId);
 }
 
 function formatGold(gold: number): string {
