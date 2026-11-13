@@ -25,7 +25,6 @@
 
         <el-select v-model="filter" class="filter" size="small">
           <el-option label="全部" value="all" />
-          <el-option label="只看排位" value="ranked" />
           <el-option label="只看胜利" value="win" />
           <el-option label="只看失败" value="lose" />
         </el-select>
@@ -54,7 +53,7 @@
             <span class="game-title">
               <span class="champ-name">{{ game.championName }}</span>
               <span class="result-tag">{{ game.win ? '胜利' : '失败' }}</span>
-              <span v-if="lane" class="lane-tag">{{ lane }}</span>
+              <span v-if="laneLabel(game.lane)" class="lane-tag">{{ laneLabel(game.lane) }}</span>
             </span>
             <span class="game-mode">{{ modeText(game) }}</span>
           </div>
@@ -106,7 +105,7 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue';
 import type { PlayerGame } from '../../../../shared/match';
-import { gameTitle, isRankedGame, laneLabel } from '../../../../shared/gameLabels';
+import { gameTitle, laneLabel } from '../../../../shared/gameLabels';
 import { useBrokenIcons } from '../../composables/useBrokenIcons';
 import GamePeersPanel from './GamePeersPanel.vue';
 
@@ -122,15 +121,12 @@ defineEmits<{ 'load-more': [] }>();
 
 const { isBroken, markBroken } = useBrokenIcons();
 
-type Filter = 'all' | 'ranked' | 'win' | 'lose';
+type Filter = 'all' | 'win' | 'lose';
 
 const filter = ref<Filter>('all');
 const expandedId = ref<string | null>(null);
 
 const visibleGames = computed<PlayerGame[]>(() => {
-  if (filter.value === 'ranked') {
-    return props.games.filter((game) => isRankedGame(game.gameMode, game.queueId));
-  }
   if (filter.value === 'win') return props.games.filter((game) => game.win);
   if (filter.value === 'lose') return props.games.filter((game) => !game.win);
   return props.games;
@@ -174,10 +170,6 @@ const champions = computed<ChampCount[]>(() => {
 
 function toggle(gameId: string): void {
   expandedId.value = expandedId.value === gameId ? null : gameId;
-}
-
-function lane(game: PlayerGame): string {
-  return laneLabel(game.lane);
 }
 
 function modeText(game: PlayerGame): string {

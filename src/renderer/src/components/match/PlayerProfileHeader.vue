@@ -1,9 +1,11 @@
 <template>
   <div class="profile">
     <div class="profile-main">
-      <div class="avatar">
-        <img v-if="badgeUrl" class="badge" :src="badgeUrl" :alt="profile.rankedDisplay" />
-        <span v-else class="avatar-fallback hx-label">?</span>
+      <div class="avatar-wrap">
+        <div class="avatar">
+          <img v-if="badgeUrl" class="badge" :src="badgeUrl" :alt="profile.rankedDisplay" />
+          <span v-else class="avatar-fallback hx-label">?</span>
+        </div>
         <span v-if="profile.summonerLevel > 0" class="level">{{ profile.summonerLevel }}</span>
       </div>
 
@@ -69,11 +71,13 @@ const badgeUrl = computed<string | null>(() =>
   min-width: 0;
   flex: 1;
 }
-.avatar {
+.avatar-wrap {
   position: relative;
+  flex-shrink: 0;
+}
+.avatar {
   width: 58px;
   height: 58px;
-  flex-shrink: 0;
   display: flex;
   align-items: center;
   justify-content: center;
@@ -83,8 +87,8 @@ const badgeUrl = computed<string | null>(() =>
   overflow: hidden;
 }
 .badge {
-  width: 46px;
-  height: 46px;
+  width: 44px;
+  height: 44px;
 }
 .avatar-fallback {
   font-size: 18px;
@@ -92,15 +96,16 @@ const badgeUrl = computed<string | null>(() =>
 }
 .level {
   position: absolute;
-  bottom: 0;
-  right: 0;
-  padding: 0 4px;
-  font-size: 10px;
+  right: -10px;
+  bottom: -2px;
+  min-width: 24px;
+  padding: 1px 5px;
+  font-size: 11px;
   font-family: monospace;
   color: var(--hx-blue);
   background: var(--hx-void);
-  border-left: 1px solid var(--hx-line);
-  border-top: 1px solid var(--hx-line);
+  border: 1px solid var(--hx-line-strong);
+  text-align: center;
 }
 .identity {
   display: flex;
