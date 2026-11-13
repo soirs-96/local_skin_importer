@@ -765,6 +765,9 @@ describe('IPC wiring', () => {
       puuid: 'puuid-1',
       summonerLevel: 300,
       rankedDisplay: '荣耀黄金 III',
+      rankedTier: 'GOLD',
+      rankedDivision: 'III',
+      ranked: [],
       isSelf: false,
       error: null
     };

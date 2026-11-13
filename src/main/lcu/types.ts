@@ -41,7 +41,12 @@ export type LcuProbeOutcome = 'alive' | 'dead' | 'unauthorized' | 'not-lcu' | 'n
 export type LcuFailureCode =
   | 'client-not-running'
   | 'client-query-failed'
+  /** 进程在跑,端口还没开始监听 */
   | 'client-starting'
+  /** 连上了端口,但客户端还没准备好(请求超时/5xx) */
+  | 'client-not-ready'
+  /** 进程在跑,但一条凭据都没拿到 —— 多半是权限问题 */
+  | 'client-credentials-unavailable'
   | 'stale-credentials'
   | 'not-cn-client'
   | 'not-a-lcu'
@@ -53,6 +58,8 @@ export const FAILURE_CODES: readonly LcuFailureCode[] = [
   'client-not-running',
   'client-query-failed',
   'client-starting',
+  'client-not-ready',
+  'client-credentials-unavailable',
   'stale-credentials',
   'not-cn-client',
   'not-a-lcu',
@@ -71,7 +78,11 @@ export const FAILURE_SUMMARIES: Record<LcuFailureCode, string> = {
     '没检测到英雄联盟客户端 —— 确认客户端已进到大厅再点检测;若客户端确实开着,请点顶部「开发日志」把日志发给我们。',
   'client-query-failed':
     '没能查询客户端进程 —— 可能被安全软件拦截,或客户端以管理员身份运行(试试右键本程序「以管理员身份运行」)。',
-  'client-starting': '找到了客户端但它还没准备好 —— 等 5 秒再点检测。',
+  'client-starting':
+    '找到了客户端但它的端口还没开始监听 —— 等 5 秒再点检测;一直这样就重启一下客户端。',
+  'client-not-ready': '连上了客户端但它还没准备好 —— 等 5 秒再点检测。',
+  'client-credentials-unavailable':
+    '看到了客户端进程,但读不到它的端口和凭据 —— 客户端多半是以管理员身份运行的,请右键本程序「以管理员身份运行」再试一次。',
   'stale-credentials': '客户端重启过、凭据失效 —— 点检测重试。',
   'not-cn-client': '装的是国际服客户端 —— 本工具只支持国服,请装国服客户端。',
   'not-a-lcu': '连上的不是游戏客户端接口 —— 可能是端口被别的程序占用。',

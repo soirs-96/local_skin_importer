@@ -8,6 +8,12 @@
 
     <MasteryCard :entries="snapshot?.mastery ?? []" :recent="snapshot?.recent ?? null" />
 
+    <OpponentsCard
+      :snapshot="opponents"
+      :loading="opponentsLoading"
+      @refresh="loadOpponents"
+    />
+
     <div class="two-col">
       <RankedCard :entries="snapshot?.ranked ?? []" :source="snapshot?.rankedSource ?? null" />
       <RecentMatchesCard :summary="snapshot?.recent ?? null" />
@@ -26,12 +32,17 @@ import RecentMatchesCard from '../components/match/RecentMatchesCard.vue';
 import RecommendationCard from '../components/match/RecommendationCard.vue';
 import MasteryCard from '../components/match/MasteryCard.vue';
 import LlmSettingsCard from '../components/match/LlmSettingsCard.vue';
-import type { MatchSnapshot } from '../../../shared/match';
+import OpponentsCard from '../components/match/OpponentsCard.vue';
+import type { MatchSnapshot, OpponentsSnapshot } from '../../../shared/match';
 
 // shallowRef: 快照是主进程 structured-clone 过来的对象,不需要深层响应式,
 // 而且深层代理过的对象再往下传容易出问题。
 const snapshot = shallowRef<MatchSnapshot | null>(null);
 const refreshing = ref<boolean>(false);
+
+// 对局双方不在快照里 —— 它是单独一条 IPC(gameflow 的当前对局)。
+const opponents = shallowRef<OpponentsSnapshot | null>(null);
+const opponentsLoading = ref<boolean>(false);
 
 let unsubscribe: (() => void) | null = null;
 
@@ -51,12 +62,25 @@ async function onRefresh(): Promise<void> {
   }
 }
 
+async function loadOpponents(): Promise<void> {
+  opponentsLoading.value = true;
+  try {
+    opponents.value = await window.api.getOpponents();
+  } catch (e: unknown) {
+    console.warn('get opponents failed', e);
+    opponents.value = null;
+  } finally {
+    opponentsLoading.value = false;
+  }
+}
+
 onMounted(async () => {
   try {
     snapshot.value = await window.api.getMatchState();
   } catch (e: unknown) {
     console.warn('get match state failed', e);
   }
+  await loadOpponents();
   unsubscribe = window.api.onMatchState((next) => {
     snapshot.value = next;
   });

@@ -121,6 +121,53 @@ export function extractRankedFromProfile(profile: unknown): RankedEntry[] {
   return [];
 }
 
+/**
+ * 查**某个玩家**的排位明细(不是当前召唤师)。
+ *
+ * 跟 {@link getRankedEntries} 分开是有原因的:那条路的第一个候选端点是
+ * `current-ranked-stats` —— 那是**当前召唤师**的段位。拿它去查别人,
+ * 页面上就会出现别人的段位顶着这个人的名字。
+ */
+export async function getRankedEntriesByPuuid(
+  client: AxiosInstance,
+  puuid: string
+): Promise<RankedEntry[]> {
+  if (!puuid) return [];
+
+  const rankedPaths = [
+    `/lol-ranked/v1/ranked-stats/by-puuid/${puuid}`,
+    `/lol-ranked/v2/ranked-stats/by-puuid/${puuid}`,
+    `/lol-ranked/v5/ranked-stats/by-puuid/${puuid}`,
+    `/lol-ranked/v6/ranked-stats/by-puuid/${puuid}`
+  ];
+  for (const path of rankedPaths) {
+    try {
+      const { data } = await client.get(path, { timeout: 5000 });
+      const entries = parseRankedEntries(data);
+      if (entries.length > 0) return entries;
+    } catch {
+      // 这个端点不存在 / 被删了,试下一个
+    }
+  }
+
+  // 召唤师档案里也可能塞着段位
+  const profilePaths = [
+    `/lol-summoner/v1/summoners/by-puuid/${puuid}`,
+    `/lol-summoner/v2/summoners/by-puuid/${puuid}`
+  ];
+  for (const path of profilePaths) {
+    try {
+      const { data } = await client.get(path, { timeout: 5000 });
+      const entries = extractRankedFromProfile(data);
+      if (entries.length > 0) return entries;
+    } catch {
+      // 同上
+    }
+  }
+
+  return [];
+}
+
 export async function getRankedEntries(
   client: AxiosInstance,
   puuid: string

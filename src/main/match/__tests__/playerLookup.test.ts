@@ -120,6 +120,45 @@ describe('toPlayerLookup', () => {
   it('客户端没给段位就是空串 —— 不猜', () => {
     const lookup = toPlayerLookup('x#1', { puuid: 'p' }, '');
     expect(lookup.rankedDisplay).toBe('');
+    expect(lookup.rankedTier).toBe('');
+    expect(lookup.rankedDivision).toBe('');
+  });
+
+  it('段位徽章的 tier/division 单独拆出来 —— 画徽章要用', () => {
+    const lookup = toPlayerLookup(
+      'x#1',
+      { regalia: { highestRankedEntry: { tier: 'GOLD', division: 'III' } } },
+      ''
+    );
+    expect(lookup.rankedTier).toBe('GOLD');
+    expect(lookup.rankedDivision).toBe('III');
+  });
+
+  it('各队列的段位明细也一起带出来', () => {
+    const lookup = toPlayerLookup(
+      'x#1',
+      {
+        rankedQueues: [
+          { queueType: 'RANKED_SOLO_5x5', tier: 'GOLD', division: 'III', wins: 30, losses: 20, leaguePoints: 45 },
+          { queueType: 'RANKED_FLEX_5x5', tier: 'PLATINUM', division: 'IV', wins: 10, losses: 10, leaguePoints: 12 }
+        ]
+      },
+      ''
+    );
+    expect(lookup.ranked).toHaveLength(2);
+    expect(lookup.ranked[0].queueType).toBe('RANKED_SOLO_5x5');
+    expect(lookup.ranked[0].wins).toBe(30);
+    expect(lookup.ranked[0].losses).toBe(20);
+    expect(lookup.ranked[0].winrate).toBeCloseTo(0.6);
+  });
+
+  it('一场没打的队列不显示 —— 总场次 0 是假数据', () => {
+    const lookup = toPlayerLookup(
+      'x#1',
+      { rankedQueues: [{ queueType: 'RANKED_SOLO_5x5', tier: 'GOLD', division: 'III', wins: 0, losses: 0 }] },
+      ''
+    );
+    expect(lookup.ranked).toHaveLength(0);
   });
 });
 
@@ -205,6 +244,25 @@ describe('lookupPlayer', () => {
 
     expect(result.found).toBe(false);
     expect(result.error).toContain('游戏客户端');
+  });
+
+  it('搜人响应里没带段位明细时,再去 by-puuid 端点补一次', async () => {
+    const seen: { url: string; params?: unknown }[] = [];
+    const client = fakeClient(
+      {
+        '/lol-summoner/v1/summoners/17785561676': { puuid: 'puuid-1', summonerId: 17785561676 },
+        '/lol-ranked/v1/ranked-stats/by-puuid/puuid-1': [
+          { queueType: 'RANKED_SOLO_5x5', tier: 'GOLD', division: 'III', wins: 8, losses: 2, leaguePoints: 40 }
+        ]
+      },
+      seen
+    );
+
+    const result = await lookupPlayer(client, '17785561676');
+
+    expect(result.ranked).toHaveLength(1);
+    expect(result.ranked[0].wins).toBe(8);
+    expect(seen.some((s) => s.url.includes('/lol-ranked/'))).toBe(true);
   });
 
   it('客户端回空对象时不当成查到了', async () => {

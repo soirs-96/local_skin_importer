@@ -1,6 +1,7 @@
 import type { AxiosInstance } from 'axios';
-import type { PlayerLookup } from '../../shared/match';
+import type { PlayerLookup, RankedEntry } from '../../shared/match';
 import { formatRankDisplay } from '../../shared/rankLabels';
+import { getRankedEntriesByPuuid, parseRankedEntries } from './ranked';
 
 /**
  * 查玩家(任意召唤师)的**资料**。
@@ -83,14 +84,48 @@ export function parseLookupQuery(raw: string): LookupQuery {
   return { kind: 'riotId', riotId: `${name}#${tag}` };
 }
 
+/**
+ * 各队列的段位明细。
+ *
+ * **只收有真实场次的队列** —— 客户端有时只给一个「最高段位」徽章,没有场次。
+ * 那一行显示成「总场次 0」是假数据,宁可整行不显示。
+ */
+function extractRankedRows(raw: Record<string, unknown>): RankedEntry[] {
+  const keys = ['rankedQueues', 'rankedStats', 'rankedQueueStats', 'queues', 'ranked'];
+  for (const key of keys) {
+    const value = raw[key];
+    const list = Array.isArray(value)
+      ? value
+      : isRecord(value) && Array.isArray(value.queues)
+        ? value.queues
+        : null;
+    if (!list) continue;
+    const rows = parseRankedEntries(list).filter((entry) => entry.wins + entry.losses > 0);
+    if (rows.length > 0) return rows;
+  }
+  return [];
+}
+
 /** 段位:对象里可能带,也可能不带 —— 不带就是没有,不用猜。 */
-function extractRankedDisplay(raw: Record<string, unknown>): string {
+interface RankedBadge {
+  tier: string;
+  division: string;
+  display: string;
+}
+
+/** 从召唤师对象里刨出段位徽章信息。 */
+function extractRankedBadge(raw: Record<string, unknown>): RankedBadge {
+  const empty: RankedBadge = { tier: '', division: '', display: '' };
+
   const regalia = raw.regalia;
   if (isRecord(regalia)) {
     const highest = regalia.highestRankedEntry;
     if (isRecord(highest)) {
       const tier = str(highest.tier);
-      if (tier) return formatRankDisplay(tier, str(highest.division));
+      if (tier) {
+        const division = str(highest.division);
+        return { tier, division, display: formatRankDisplay(tier, division) };
+      }
     }
   }
 
@@ -106,11 +141,12 @@ function extractRankedDisplay(raw: Record<string, unknown>): string {
       if (!isRecord(entry)) continue;
       const tier = str(entry.tier);
       if (!tier) continue;
-      return formatRankDisplay(tier, str(entry.division) || str(entry.rank));
+      const division = str(entry.division) || str(entry.rank);
+      return { tier, division, display: formatRankDisplay(tier, division) };
     }
   }
 
-  return '';
+  return empty;
 }
 
 /**
@@ -142,6 +178,7 @@ export function toPlayerLookup(
     str(summoner.gameName) || str(summoner.displayName) || str(summoner.summonerName);
   const tagLine = str(summoner.tagLine);
   const puuid = str(summoner.puuid);
+  const badge = extractRankedBadge(summoner);
   return {
     query,
     found: true,
@@ -151,7 +188,10 @@ export function toPlayerLookup(
     summonerId: num(summoner.summonerId),
     puuid,
     summonerLevel: num(summoner.summonerLevel),
-    rankedDisplay: extractRankedDisplay(summoner),
+    rankedDisplay: badge.display,
+    rankedTier: badge.tier,
+    rankedDivision: badge.division,
+    ranked: extractRankedRows(summoner),
     isSelf: Boolean(myPuuid) && puuid === myPuuid,
     error: null
   };
@@ -169,6 +209,9 @@ export function failedLookup(query: string, error: string): PlayerLookup {
     puuid: '',
     summonerLevel: 0,
     rankedDisplay: '',
+    rankedTier: '',
+    rankedDivision: '',
+    ranked: [],
     isSelf: false,
     error
   };
@@ -221,6 +264,13 @@ export async function lookupPlayer(
     const lookup = toPlayerLookup(query, summoner, myPuuid);
     if (!lookup.puuid && !lookup.summonerId) {
       return failedLookup(query, '客户端没返回这个召唤师的资料');
+    }
+
+    // 段位明细:搜人响应里没带的话,再去 by-puuid 端点找一次。
+    // 找不到就空着 —— 界面上整行不显示,不拿别的玩家的段位来凑。
+    if (lookup.ranked.length === 0 && lookup.puuid) {
+      const entries = await getRankedEntriesByPuuid(client, lookup.puuid);
+      lookup.ranked = entries.filter((entry) => entry.wins + entry.losses > 0);
     }
 
     return lookup;

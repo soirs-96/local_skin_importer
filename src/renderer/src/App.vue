@@ -9,7 +9,7 @@
       <nav v-if="route.path !== '/login'" class="tabs">
         <router-link to="/sync" class="tab">皮肤同步</router-link>
         <router-link to="/match" class="tab">对局助手</router-link>
-        <router-link to="/players" class="tab">查玩家</router-link>
+        <router-link to="/players" class="tab">战绩查询</router-link>
       </nav>
       <span class="spacer" />
       <el-button size="small" text class="hx-gold" @click="openConsole">开发日志</el-button>

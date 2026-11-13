@@ -282,6 +282,42 @@ describe('detectLcu', () => {
     expect(result.code).toBe('client-starting');
   });
 
+  it('有活进程但一条候选都没拿到判为 client-credentials-unavailable', async () => {
+    // 进程在跑,但我们连它的端口/token 都没拿到 —— 多半是客户端以管理员身份运行,
+    // 命令行读不到。这时候说「等 5 秒再点检测」完全没用,用户会一直等下去。
+    const deps = makeDeps({
+      queryProcesses: vi.fn(async () => ({
+        processes: [],
+        exeDirs: [],
+        liveProcess: true,
+        detail: '找到 1 个游戏客户端进程,但读不到它的命令行'
+      }))
+    });
+
+    const result = await detectLcu(deps);
+
+    if (result.ok) throw new Error('unreachable');
+    expect(result.code).toBe('client-credentials-unavailable');
+    expect(result.summary).toBe(FAILURE_SUMMARIES['client-credentials-unavailable']);
+  });
+
+  it('连上了端口但客户端还没就绪判为 client-not-ready', async () => {
+    const deps = makeDeps({
+      queryProcesses: vi.fn(async () => ({
+        processes: [{ executablePath: '', commandLine: CN_CMD }],
+        exeDirs: [],
+        liveProcess: true,
+        detail: 'found'
+      })),
+      probe: vi.fn(probeBy('not-ready'))
+    });
+
+    const result = await detectLcu(deps);
+
+    if (result.ok) throw new Error('unreachable');
+    expect(result.code).toBe('client-not-ready');
+  });
+
   it('没有活进程也没有候选判为 client-not-running', async () => {
     const result = await detectLcu(makeDeps());
 
@@ -375,7 +411,7 @@ describe('detectLcu', () => {
     expect(deps.scanForClients).toHaveBeenCalled();
   });
 
-  it('有活进程时不扫盘 —— 客户端在,只是没就绪', async () => {
+  it('深检测时即使有活进程也扫盘 —— 进程在跑不代表我们知道它的端口在哪', async () => {
     const deps = makeDeps({
       queryProcesses: vi.fn(async () => ({
         processes: [],
@@ -385,7 +421,7 @@ describe('detectLcu', () => {
       }))
     });
     await detectLcuDeep(deps);
-    expect(deps.scanForClients).not.toHaveBeenCalled();
+    expect(deps.scanForClients).toHaveBeenCalled();
   });
 
   it('扫盘超时判为 scan-timeout', async () => {

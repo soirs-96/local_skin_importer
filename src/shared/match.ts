@@ -289,6 +289,17 @@ export interface PlayerLookup {
   summonerLevel: number;
   /** 段位显示串(如「荣耀黄金 III」);客户端没给就是空串 */
   rankedDisplay: string;
+  /** 段位代号(GOLD / PLATINUM …),画段位徽章用;空串 = 没有段位 */
+  rankedTier: string;
+  /** 段位小段(IV / III …) */
+  rankedDivision: string;
+  /**
+   * 各队列的段位明细(总场次/胜场/负场/胜点)。
+   *
+   * 只收**有真实场次**的队列 —— 客户端只给一个「最高段位」而没有场次时,
+   * 那一行显示的总场次会是 0,那是假数据,宁可整行不显示。
+   */
+  ranked: RankedEntry[];
   /** 查的是不是自己 */
   isSelf: boolean;
   /** 查不到的原因;null = 查到了 */

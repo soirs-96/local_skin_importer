@@ -26,11 +26,13 @@ describe('失败分类词汇表', () => {
     }
   });
 
-  it('分类码是联合类型里声明的那八个', () => {
+  it('分类码是联合类型里声明的那十个', () => {
     const expected: LcuFailureCode[] = [
       'client-not-running',
       'client-query-failed',
       'client-starting',
+      'client-not-ready',
+      'client-credentials-unavailable',
       'stale-credentials',
       'not-cn-client',
       'not-a-lcu',

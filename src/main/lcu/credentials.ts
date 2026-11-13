@@ -236,12 +236,17 @@ async function* stageSequence(
     liveProcess: proc.liveProcess
   };
 
-  // C3 磁盘扫描。只在深度检测里跑,而且只在没有活进程时跑 ——
-  // 客户端进程在,说明它就是没就绪,扫盘没意义。
+  // C3 磁盘扫描。只在深度检测里跑。
+  //
+  // **不再要求「没有活进程」了** —— 那个假设是错的:
+  // 「进程在跑」只说明客户端活着,不代表我们知道它的端口在哪。
+  // 用户把游戏装在 F 盘自定义目录、或者客户端以管理员身份运行(读不到命令行)
+  // 时,前面几条通道一个候选都吐不出来,扫盘是最后一条能拿到凭据的路 ——
+  // 恰好在这个场景下被跳过,用户就永远卡在「找到了客户端但还没准备好」。
   //
   // 扫到的路径会写进路径缓存(C4),所以「用户手点一次深检测」之后,后面的
   // 浅检测(轮询器、图标代理)也能通过 C4 通道找到同一个客户端 —— 不需要每轮扫全盘。
-  if (allowDiskScan && !proc.liveProcess) {
+  if (allowDiskScan) {
     const scan = await deps.scanForClients();
     yield {
       source: 'disk-scan',
@@ -290,7 +295,23 @@ function classify(
   if (hasCnCandidate && records.some((r) => r.origin === 'cn' && r.probe === 'not-lcu')) {
     return 'not-a-lcu';
   }
-  if (liveProcess) return 'client-starting';
+  if (liveProcess) {
+    /**
+     * 进程在,但没连上 —— 要分三种,给的下一步完全不同:
+     *
+     *   - **一条候选都没拿到**:我们压根不知道它的端口在哪。多半是客户端
+     *     以管理员身份运行的(读不到它的命令行),也可能是国服这个版本
+     *     不写标准 lockfile。→ 让用户「以管理员身份运行本程序」。
+     *   - **候选都探测成 dead**:端口没在监听。→ 让用户等 / 重启客户端。
+     *   - **其它**(连上了但请求超时、5xx):客户端还没就绪。→ 等 5 秒。
+     *
+     * 以前这三样都报「等 5 秒再点检测」—— 对第一种情况那句话完全没用,
+     * 用户会一直等下去。
+     */
+    if (records.length === 0) return 'client-credentials-unavailable';
+    if (records.every((r) => r.probe === 'dead')) return 'client-starting';
+    return 'client-not-ready';
+  }
   // 查询本身失败 —— 我们没查成,不能断言「客户端没启动」。
   if (queryFailed) return 'client-query-failed';
   if (scanTimedOut) return 'scan-timeout';
