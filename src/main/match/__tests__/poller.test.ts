@@ -105,7 +105,8 @@ const summoner = {
   displayName: '测试召唤师',
   tagLine: 'CN1',
   puuid: 'puuid-1',
-  summonerId: 42
+  summonerId: 42,
+  profileIconId: 588
 };
 
 const flush = async (): Promise<void> => {

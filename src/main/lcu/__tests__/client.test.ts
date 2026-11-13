@@ -82,6 +82,14 @@ describe('getCurrentSummoner', () => {
     const client = fakeClient('nope');
     await expect(getCurrentSummoner(client)).rejects.toThrow(/Unexpected/);
   });
+
+  it('国服客户端 displayName 是空的,真名在 gameName 里', async () => {
+    const client = fakeClient({ displayName: '', gameName: '林俊杰', puuid: 'p-1' });
+    await expect(getCurrentSummoner(client)).resolves.toEqual({
+      displayName: '林俊杰',
+      puuid: 'p-1'
+    });
+  });
 });
 
 describe('getInventoryOwnedSkinIds', () => {

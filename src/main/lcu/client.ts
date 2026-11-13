@@ -112,8 +112,11 @@ export function toSummoner(data: unknown): CurrentSummoner {
   if (!isPlainObject(data)) {
     throw new Error(`Unexpected ${SUMMONER_PATH} response.`);
   }
+  const gameName = typeof data.gameName === 'string' ? data.gameName : '';
+  const displayName = typeof data.displayName === 'string' ? data.displayName : '';
   return {
-    displayName: typeof data.displayName === 'string' ? data.displayName : '',
+    // 国服客户端的 displayName 是空的,真名在 gameName 里。
+    displayName: gameName || displayName,
     puuid: typeof data.puuid === 'string' ? data.puuid : ''
   };
 }

@@ -12,7 +12,16 @@
     <div v-if="summoner" class="summoner-row">
       <div class="summoner-field">
         <span class="field-label hx-label">当前账号</span>
-        <span class="field-value">{{ summonerName }}</span>
+        <span class="field-value account-value">
+          <img
+            v-if="avatarUrl && !isBroken(avatarUrl)"
+            class="account-avatar"
+            :src="avatarUrl"
+            :alt="summonerName"
+            @error="markBroken(avatarUrl)"
+          />
+          <span class="account-name">{{ summonerName }}</span>
+        </span>
       </div>
       <div v-if="live" class="summoner-field">
         <span class="field-label hx-label">对局时间</span>
@@ -44,6 +53,8 @@
 <script setup lang="ts">
 import { computed } from 'vue';
 import type { LcuWsStatus, MatchSnapshot, MatchState } from '../../../../shared/match';
+import { lcuIconUrl } from '../../../../shared/icons';
+import { useBrokenIcons } from '../../composables/useBrokenIcons';
 
 const props = defineProps<{
   snapshot: MatchSnapshot | null;
@@ -68,8 +79,17 @@ const isBusy = computed<boolean>(() => state.value === 'champ_select' || state.v
 const summonerName = computed<string>(() => {
   const s = summoner.value;
   if (!s) return '';
+  if (!s.displayName) return s.tagLine ? `#${s.tagLine}` : '';
   return s.tagLine ? `${s.displayName}#${s.tagLine}` : s.displayName;
 });
+
+// 召唤师头像走 `lcuicon://profile/{id}.jpg` —— 图在客户端本机,不用出网。
+const { isBroken, markBroken } = useBrokenIcons();
+const avatarUrl = computed<string | null>(() =>
+  summoner.value && summoner.value.profileIconId > 0
+    ? lcuIconUrl('profile', summoner.value.profileIconId)
+    : null
+);
 
 const stateClass = computed<string>(() => {
   if (state.value === 'idle') return 'is-idle';
@@ -138,6 +158,22 @@ function formatDuration(seconds: number): string {
 .field-value {
   font-size: 14px;
   color: var(--hx-text);
+}
+.account-value {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.account-avatar {
+  width: 26px;
+  height: 26px;
+  border-radius: 50%;
+  object-fit: cover;
+  border: 1px solid var(--hx-gold-deep);
+  box-shadow: 0 0 6px var(--hx-gold-glow);
+}
+.account-name {
+  white-space: nowrap;
 }
 .mode-row {
   display: flex;

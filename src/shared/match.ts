@@ -24,6 +24,12 @@ export interface MatchSummoner {
   tagLine: string;
   puuid: string;
   summonerId: number;
+  /**
+   * 头像编号(`profileIconId`)。
+   * 头像图从本机客户端取:`/lol-game-data/assets/v1/profile-icons/{id}.jpg`。
+   * 0 = 客户端没给,界面上不显示头像。
+   */
+  profileIconId: number;
 }
 
 /** 英雄的最小引用:够画头像和写名字就行。 */

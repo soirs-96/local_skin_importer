@@ -21,9 +21,11 @@ export async function getMatchSummoner(client: AxiosInstance): Promise<MatchSumm
   const { data } = await client.get(SUMMONER_PATH, { timeout: 5000 });
   if (!isRecord(data)) return null;
   return {
-    displayName: str(data.displayName),
+    // 国服客户端的 displayName 是空的,真名在 gameName 里 —— 不兜底就只剩「#标签」。
+    displayName: str(data.gameName) || str(data.displayName),
     tagLine: str(data.tagLine),
     puuid: str(data.puuid),
-    summonerId: num(data.summonerId)
+    summonerId: num(data.summonerId),
+    profileIconId: num(data.profileIconId)
   };
 }
