@@ -4,7 +4,7 @@
       <div class="head-left">
         <span class="hx-diamond" />
         <span class="hx-label">近期对局</span>
-        <span class="head-count">{{ games.length }} 场</span>
+        <span class="head-count">{{ visibleGames.length }} 场</span>
         <span v-if="summary" class="head-summary">{{ summary }}</span>
       </div>
 
@@ -23,6 +23,16 @@
           </template>
         </div>
 
+        <el-select v-model="mode" class="mode-filter" size="small">
+          <el-option label="全部模式" :value="ALL_MODES" />
+          <el-option
+            v-for="option in modeOptions"
+            :key="option.key"
+            :label="`${option.label} (${option.count})`"
+            :value="option.key"
+          />
+        </el-select>
+
         <el-select v-model="filter" class="filter" size="small">
           <el-option label="全部" value="all" />
           <el-option label="只看胜利" value="win" />
@@ -33,7 +43,7 @@
 
     <div v-if="loading" class="state hx-label">正在从腾讯拉取对局…</div>
     <div v-else-if="error" class="state state--error">{{ error }}</div>
-    <div v-else-if="visibleGames.length === 0" class="state">没有符合条件的对局</div>
+    <div v-else-if="visibleGames.length === 0" class="state">{{ emptyText }}</div>
 
     <div v-else class="game-list">
       <div v-for="game in visibleGames" :key="game.gameId" class="game">
@@ -119,10 +129,11 @@
 </template>
 
 <script setup lang="ts">
-import { computed, ref } from 'vue';
+import { computed, ref, watch } from 'vue';
 import type { PlayerGame, PlayerPeer } from '../../../../shared/match';
 import type { GameScore, PlayerScoreDetail } from '../../../../shared/scoring';
 import { gameTitle, positionLabel } from '../../../../shared/gameLabels';
+import { ALL_MODES, filterByMatchMode, matchModeOptions } from '../../../../shared/matchModes';
 import { useBrokenIcons } from '../../composables/useBrokenIcons';
 import GamePeersPanel from './GamePeersPanel.vue';
 
@@ -153,17 +164,40 @@ const { isBroken, markBroken } = useBrokenIcons();
 type Filter = 'all' | 'win' | 'lose';
 
 const filter = ref<Filter>('all');
+/** 模式筛选:默认全要。 */
+const mode = ref<string>(ALL_MODES);
 const expandedId = ref<string | null>(null);
 
-const visibleGames = computed<PlayerGame[]>(() => {
-  if (filter.value === 'win') return props.games.filter((game) => game.win);
-  if (filter.value === 'lose') return props.games.filter((game) => !game.win);
-  return props.games;
+/**
+ * 模式筛选的下拉选项 —— 只列已加载对局里真实存在的模式。
+ *
+ * 列出没有数据的模式没用,点进去是空列表,反而像坏了。
+ */
+const modeOptions = computed(() => matchModeOptions(props.games));
+
+// 换人之后原来选的模式可能不存在了 —— 那就退回「全部」。
+watch(modeOptions, (options) => {
+  if (mode.value !== ALL_MODES && !options.some((option) => option.key === mode.value)) {
+    mode.value = ALL_MODES;
+  }
 });
 
-/** 汇总行:胜负场次 + 三个数加起来 + KDA 比。 */
+const visibleGames = computed<PlayerGame[]>(() => {
+  const list = filterByMatchMode(props.games, mode.value);
+  if (filter.value === 'win') return list.filter((game) => game.win);
+  if (filter.value === 'lose') return list.filter((game) => !game.win);
+  return list;
+});
+
+/** 空列表时把原因说清楚 —— 「没数据」和「这个模式还没加载出来」是两回事。 */
+const emptyText = computed<string>(() => {
+  if (mode.value === ALL_MODES) return '没有符合条件的对局';
+  return '这个模式在已加载的对局里没有 —— 点「再看 20 局」继续加载';
+});
+
+/** 汇总行:胜负场次 + 三个数加起来 + KDA 比(按当前筛选后的对局算)。 */
 const summary = computed<string>(() => {
-  const list = props.games;
+  const list = visibleGames.value;
   if (list.length === 0) return '';
   const wins = list.filter((game) => game.win).length;
   const kills = list.reduce((sum, game) => sum + game.kills, 0);
@@ -274,6 +308,9 @@ function formatTime(timestampMs: number): string {
 }
 .filter {
   width: 110px;
+}
+.mode-filter {
+  width: 132px;
 }
 .state {
   padding: 22px 14px;
