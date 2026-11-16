@@ -25,9 +25,24 @@ describe('parseChampSelectMembers', () => {
         championIconUrl: 'lcuicon://champion/1.png',
         assignedPosition: 'MIDDLE',
         cellId: 3,
-        summonerId: 111
+        summonerId: 111,
+        puuid: '',
+        displayName: '',
+        tagLine: '',
+        summonerLevel: 0,
+        profileIconId: 0,
+        rankedDisplay: ''
       }
     ]);
+  });
+
+  it('puuid 和 playerId 都认 —— 老客户端用 playerId 当召唤师 ID', () => {
+    const members = parseChampSelectMembers(
+      [{ puuid: 'puuid-1', playerId: 222, cellId: 1 }],
+      staticData
+    );
+    expect(members[0].puuid).toBe('puuid-1');
+    expect(members[0].summonerId).toBe(222);
   });
 
   it('静态数据里没有的英雄退回 #id,头像地址照样按 id 拼', () => {
@@ -77,5 +92,16 @@ describe('parseChampSelectSession', () => {
 
   it('非对象输入返回 null', () => {
     expect(parseChampSelectSession(null, staticData, 1)).toBeNull();
+  });
+
+  it('puuid 对上就是「我」', () => {
+    const withPuuid = {
+      localPlayerCellId: -1,
+      myTeam: [{ puuid: 'puuid-mine', cellId: 2, championId: 1 }],
+      theirTeam: []
+    };
+    const session = parseChampSelectSession(withPuuid, staticData, -1, 'puuid-mine');
+    expect(session?.myCellId).toBe(2);
+    expect(session?.myChampionId).toBe(1);
   });
 });

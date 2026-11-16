@@ -36,7 +36,13 @@ const session: ChampSelectSession = {
       championIconUrl: null,
       assignedPosition: 'JUNGLE',
       cellId: 4,
-      summonerId: 222
+      summonerId: 222,
+      puuid: '',
+      displayName: '',
+      tagLine: '',
+      summonerLevel: 0,
+      profileIconId: 0,
+      rankedDisplay: ''
     }
   ],
   theirTeam: [],

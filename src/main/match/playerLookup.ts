@@ -1,7 +1,7 @@
 import type { AxiosInstance } from 'axios';
 import type { PlayerLookup, RankedEntry } from '../../shared/match';
-import { formatRankDisplay } from '../../shared/rankLabels';
 import { getRankedEntriesByPuuid, parseRankedEntries } from './ranked';
+import { extractRankedBadge } from './rankBadge';
 
 /**
  * 查玩家(任意召唤师)的**资料**。
@@ -107,47 +107,6 @@ function extractRankedRows(raw: Record<string, unknown>): RankedEntry[] {
 }
 
 /** 段位:对象里可能带,也可能不带 —— 不带就是没有,不用猜。 */
-interface RankedBadge {
-  tier: string;
-  division: string;
-  display: string;
-}
-
-/** 从召唤师对象里刨出段位徽章信息。 */
-function extractRankedBadge(raw: Record<string, unknown>): RankedBadge {
-  const empty: RankedBadge = { tier: '', division: '', display: '' };
-
-  const regalia = raw.regalia;
-  if (isRecord(regalia)) {
-    const highest = regalia.highestRankedEntry;
-    if (isRecord(highest)) {
-      const tier = str(highest.tier);
-      if (tier) {
-        const division = str(highest.division);
-        return { tier, division, display: formatRankDisplay(tier, division) };
-      }
-    }
-  }
-
-  for (const key of ['rankedQueues', 'rankedStats', 'queues', 'ranked']) {
-    const value = raw[key];
-    const list = Array.isArray(value)
-      ? value
-      : isRecord(value) && Array.isArray(value.queues)
-        ? value.queues
-        : null;
-    if (!list) continue;
-    for (const entry of list) {
-      if (!isRecord(entry)) continue;
-      const tier = str(entry.tier);
-      if (!tier) continue;
-      const division = str(entry.division) || str(entry.rank);
-      return { tier, division, display: formatRankDisplay(tier, division) };
-    }
-  }
-
-  return empty;
-}
 
 /**
  * 从搜人响应里挑出召唤师对象。

@@ -513,7 +513,12 @@ export class MatchPoller {
     // 别把召唤师信息一起拖住。
     const staticData = await this.ensureStaticData(client);
 
-    const champSelect = await getChampSelectSession(client, staticData, summoner.summonerId);
+    const champSelect = await getChampSelectSession(
+      client,
+      staticData,
+      summoner.summonerId,
+      summoner.puuid
+    );
     const state: MatchState = champSelect ? 'champ_select' : 'lobby';
 
     // 熟练度跟当前在不在选人无关 —— 大厅和选人阶段都要显示。

@@ -44,6 +44,18 @@ export interface ChampSelectMember extends ChampionRef {
   assignedPosition: string;
   cellId: number;
   summonerId: number;
+  /** 召唤师的 puuid;空串 = 客户端没给 */
+  puuid: string;
+  /** 昵称;空串 = 客户端没给(客户端只给游戏名,不一定是这个字段) */
+  displayName: string;
+  /** 名字后面的标签(国服是玩家 QQ 号后几位);空串 = 没有 */
+  tagLine: string;
+  /** 召唤师等级;0 = 没查到 */
+  summonerLevel: number;
+  /** 头像编号;0 = 没查到,界面上不画头像 */
+  profileIconId: number;
+  /** 段位显示串(如「荣耀黄金 III」);空串 = 没有段位 */
+  rankedDisplay: string;
 }
 
 export interface ChampSelectSession {
