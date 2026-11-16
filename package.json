@@ -10,7 +10,7 @@
     "node": ">=18.18.0"
   },
   "scripts": {
-    "dev": "node scripts/dev.mjs",
+    "dev": "electron-vite dev",
     "build": "electron-vite build",
     "preview": "electron-vite preview",
     "pack": "electron-vite build && electron-builder --win --x64",
@@ -28,6 +28,7 @@
   "dependencies": {
     "element-plus": "2.14.4",
     "axios": "1.7.7",
+    "iconv-lite": "0.6.3",
     "pinia": "3.0.4",
     "vue": "3.5.41",
     "vue-router": "4.6.3",

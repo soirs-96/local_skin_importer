@@ -2,12 +2,16 @@ import { app, BrowserWindow } from 'electron';
 import { join } from 'node:path';
 import { registerIpcHandlers } from './ipc';
 import { installMainConsoleBridge } from './devLogger';
+import { installConsoleEncoding } from './consoleEncoding';
 import { registerIconProtocol, registerIconScheme } from './match/iconAssets';
 import { autoAcceptService } from './match/autoAccept';
 import { readAutoAcceptPrefs } from './autoAcceptState';
 
 // 自定义协议要先登记成特权协议,这一步必须发生在 app ready 之前
 registerIconScheme();
+
+// 终端编码要先定下来 —— 启动横幅也是中文的,晚了就成乱码了。
+const consoleInfo = installConsoleEncoding();
 
 // 尽早接管 console —— 启动阶段的报错也得进日志。
 installMainConsoleBridge();
@@ -72,6 +76,17 @@ app.whenReady().then(() => {
       '/' +
       process.arch +
       (app.isPackaged ? ' · 已打包' : ' · 开发模式')
+  );
+  // 纯 ASCII —— 万一终端还在乱码,这一行也读得到。
+  console.info(
+    '[app] console encoding: ' +
+      consoleInfo.encoding +
+      ' · code page ' +
+      String(consoleInfo.codePage) +
+      ' · ansi ' +
+      String(consoleInfo.ansiCodePage) +
+      ' · tty ' +
+      String(consoleInfo.isTty)
   );
   registerIconProtocol();
   registerIpcHandlers();
