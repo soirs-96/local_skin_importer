@@ -8,6 +8,7 @@
 
     <OpponentsCard
       :snapshot="opponents"
+      :champ-select="champSelect"
       :loading="opponentsLoading"
       @refresh="loadOpponents"
     />
@@ -25,7 +26,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onMounted, onUnmounted, ref, shallowRef } from 'vue';
+import { computed, onMounted, onUnmounted, ref, shallowRef, watch } from 'vue';
 import MatchStatusCard from '../components/match/MatchStatusCard.vue';
 import ChampSelectCard from '../components/match/ChampSelectCard.vue';
 import RankedCard from '../components/match/RankedCard.vue';
@@ -86,6 +87,20 @@ onMounted(async () => {
     snapshot.value = next;
   });
 });
+
+/**
+ * 状态一变就重取两队人。
+ *
+ * 之前这张卡只在打开页面时取一次 —— 页面开着去开一局,它一直空着,
+ * 得手动点「刷新」才出数据。gameflow 的队伍信息是对局开始后才有的,
+ * 所以跟着状态走才不用盯着刷新键。
+ */
+watch(
+  () => snapshot.value?.state,
+  (next, prev) => {
+    if (next !== prev) void loadOpponents();
+  }
+);
 
 onUnmounted(() => {
   unsubscribe?.();

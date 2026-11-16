@@ -358,6 +358,12 @@ export interface Opponent {
   championId: number;
   championName: string;
   championIconUrl: string | null;
+  /**
+   * 召唤师头像编号(`profileIconId`)。
+   * 头像图从本机客户端取:`/lol-game-data/assets/v1/profile-icons/{id}.jpg`。
+   * 0 = 客户端没给,界面上不画头像。
+   */
+  profileIconId: number;
   /** ally = 我这一队;enemy = 对面 */
   side: 'ally' | 'enemy';
   /** 是不是我 */

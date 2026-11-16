@@ -84,6 +84,7 @@ function parseTeam(
       championId,
       championName: info?.name ?? (championId > 0 ? `#${championId}` : ''),
       championIconUrl: championId > 0 ? lcuIconUrl('champion', championId) : null,
+      profileIconId: num(entry.profileIconId),
       side: isMyTeam ? 'ally' : 'enemy',
       isSelf: teamOwner || (Boolean(myPuuid) && puuid === myPuuid)
     });

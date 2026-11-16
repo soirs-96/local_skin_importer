@@ -800,7 +800,7 @@ describe('IPC wiring', () => {
       phase: 'InProgress',
       queueType: 'CLASSIC',
       inGame: true,
-      opponents: [{ summonerId: 1, puuid: 'p1', summonerName: '对手甲', championId: 523, championName: '亚索', championIconUrl: null, side: 'enemy', isSelf: false }]
+      opponents: [{ summonerId: 1, puuid: 'p1', summonerName: '对手甲', championId: 523, championName: '亚索', championIconUrl: null, profileIconId: 0, side: 'enemy', isSelf: false }]
     };
     mocks.matchPollerFetchOpponents.mockResolvedValue(snapshot);
 

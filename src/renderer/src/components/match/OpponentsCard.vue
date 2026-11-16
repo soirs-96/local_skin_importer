@@ -3,7 +3,7 @@
     <template #header>
       <div class="card-header">
         <span class="hx-diamond" />
-        <span class="hx-label">对局双方</span>
+        <span class="hx-label">{{ cardTitle }}</span>
         <span v-if="queueLabel" class="queue-label hx-label">{{ queueLabel }}</span>
         <span v-if="phaseLabel" class="phase-tag hx-label">{{ phaseLabel }}</span>
         <el-button
@@ -18,8 +18,8 @@
       </div>
     </template>
 
-    <div v-if="!snapshot || !snapshot.inGame" class="empty-text">
-      客户端里没有对局 —— 开一局之后这里会列出两队人
+    <div v-if="roster.length === 0" class="empty-text">
+      还没进选人,也没有对局 —— 进入<strong>选人</strong>后这里会列出我方队友,开局后是完整两队人
     </div>
 
     <template v-else>
@@ -28,24 +28,37 @@
         <div class="team-list">
           <div
             v-for="player in side.players"
-            :key="`${player.summonerId}-${player.puuid}`"
+            :key="player.key"
             class="player-row"
             :class="{ 'player-row--self': player.isSelf }"
           >
             <img
-              v-if="player.championIconUrl"
+              v-if="player.championIconUrl && !isBroken(player.championIconUrl)"
               class="champ-icon"
               :src="player.championIconUrl"
               :alt="player.championName"
+              @error="markBroken(player.championIconUrl)"
             />
             <span v-else class="champ-icon champ-icon--empty">—</span>
 
+            <img
+              v-if="player.avatarUrl && !isBroken(player.avatarUrl)"
+              class="avatar"
+              :src="player.avatarUrl"
+              :alt="player.name"
+              @error="markBroken(player.avatarUrl)"
+            />
+
             <div class="player-info">
               <span class="player-name">
-                {{ player.summonerName || '未知召唤师' }}
+                {{ player.name || '未知召唤师' }}
                 <span v-if="player.isSelf" class="tag-self">我</span>
               </span>
-              <span class="player-sub">{{ player.championName || '未选英雄' }}</span>
+              <span class="player-sub">
+                {{ player.championName || '未选英雄' }}
+                <span v-if="player.rankText" class="player-rank">{{ player.rankText }}</span>
+                <span v-if="player.level > 0" class="player-level">Lv.{{ player.level }}</span>
+              </span>
             </div>
 
             <el-button
@@ -62,7 +75,10 @@
       </div>
 
       <p class="hint">
-        <template v-if="phaseLabel === '对局结束'">
+        <template v-if="!enemyKnown">
+          选人阶段只拿得到<strong>我方</strong> —— 对方的身份客户端不给,得等开局。
+        </template>
+        <template v-else-if="phaseLabel === '对局结束'">
           这一局已经结束,上面是刚才那局的两队人。
         </template>
         点「查战绩」会跳到<strong>战绩查询</strong>页,按这个人的游戏 ID 拉他的历史对局 ——
@@ -75,36 +91,67 @@
 <script setup lang="ts">
 import { computed } from 'vue';
 import { useRouter } from 'vue-router';
-import type { Opponent, OpponentsSnapshot } from '../../../../shared/match';
+import type { ChampSelectSession, OpponentsSnapshot } from '../../../../shared/match';
+import { buildRoster, type RosterPlayer } from '../../../../shared/roster';
 import { queueLabel as formatQueueLabel } from '../../../../shared/rankLabels';
 import { lcuPhaseLabel } from '../../../../shared/gameLabels';
+import { useBrokenIcons } from '../../composables/useBrokenIcons';
 
 const props = defineProps<{
   snapshot: OpponentsSnapshot | null;
+  /** 选人会话 —— 有它就说明在选人阶段,那时候只有我方拿得到 */
+  champSelect?: ChampSelectSession | null;
   loading?: boolean;
 }>();
 
 defineEmits<{ refresh: [] }>();
 
 const router = useRouter();
+const { isBroken, markBroken } = useBrokenIcons();
 
 const queueLabel = computed<string>(() =>
   props.snapshot?.queueType ? formatQueueLabel(props.snapshot.queueType) : ''
 );
 
-/** 这一局的状态。局末了会显示「对局结束」—— 面板里的两队人是刚才那局的。 */
-const phaseLabel = computed<string>(() => lcuPhaseLabel(props.snapshot?.phase ?? ''));
+/**
+ * 这一局的状态。
+ * gameflow 没给阶段,但选人会话在 —— 那就是选人阶段。
+ */
+const phaseLabel = computed<string>(() => {
+  const phase = props.snapshot?.phase ?? '';
+  if (phase) return lcuPhaseLabel(phase);
+  return props.champSelect ? lcuPhaseLabel('ChampSelect') : '';
+});
 
-const sides = computed<{ key: string; title: string; players: Opponent[] }[]>(() => {
-  const opponents = props.snapshot?.opponents ?? [];
+/** 卡上该显示的人:选人阶段是我方,其余时候是两队人。 */
+const roster = computed<RosterPlayer[]>(() =>
+  buildRoster(props.snapshot?.opponents ?? [], props.champSelect ?? null)
+);
+
+/** 对面看得见吗?选人阶段看不见。 */
+const enemyKnown = computed<boolean>(
+  () =>
+    !props.champSelect && (props.snapshot?.opponents ?? []).some((p) => p.side === 'enemy')
+);
+
+/**
+ * 卡标题。
+ * 只列得出我方的时候不写「对局双方」 —— 写着两队、只给一队,是在骗人。
+ */
+const cardTitle = computed<string>(() =>
+  roster.value.length > 0 && !enemyKnown.value ? '我方队友' : '对局双方'
+);
+
+const sides = computed<{ key: string; title: string; players: RosterPlayer[] }[]>(() => {
+  const players = roster.value;
   return [
-    { key: 'ally', title: '我方', players: opponents.filter((p) => p.side === 'ally') },
-    { key: 'enemy', title: '对方', players: opponents.filter((p) => p.side === 'enemy') }
+    { key: 'ally', title: '我方', players: players.filter((p) => p.side === 'ally') },
+    { key: 'enemy', title: '对方', players: players.filter((p) => p.side === 'enemy') }
   ].filter((group) => group.players.length > 0);
 });
 
 /** 跳到战绩查询页,顺便把要查的人带过去。 */
-function goLookup(player: Opponent): void {
+function goLookup(player: RosterPlayer): void {
   void router.push({
     path: '/players',
     query: { sid: String(player.summonerId), puuid: player.puuid }
@@ -135,6 +182,9 @@ function goLookup(player: Opponent): void {
 .empty-text {
   font-size: 13px;
   color: var(--hx-text-faint);
+}
+.empty-text strong {
+  color: var(--hx-text-dim);
 }
 .team-block + .team-block {
   margin-top: 14px;
@@ -172,6 +222,14 @@ function goLookup(player: Opponent): void {
   justify-content: center;
   color: var(--hx-text-faint);
 }
+.avatar {
+  width: 26px;
+  height: 26px;
+  border-radius: 50%;
+  object-fit: cover;
+  flex-shrink: 0;
+  border: 1px solid var(--hx-line-strong);
+}
 .player-info {
   display: flex;
   flex-direction: column;
@@ -195,6 +253,15 @@ function goLookup(player: Opponent): void {
 .player-sub {
   font-size: 11px;
   color: var(--hx-text-faint);
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.player-rank {
+  color: var(--hx-gold);
+}
+.player-level {
+  color: var(--hx-text-dim);
 }
 .lookup-btn {
   margin-left: auto;
