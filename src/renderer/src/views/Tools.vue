@@ -87,39 +87,20 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onMounted, onUnmounted, ref } from 'vue';
-import { ElMessage } from 'element-plus';
-import {
-  ACCEPT_DELAY_OPTIONS,
-  countdownRemaining,
-  DEFAULT_ACCEPT_DELAY_SECONDS,
-  phaseLabel,
-  statusLabel
-} from '../../../shared/autoAccept';
-import type { AutoAcceptState } from '../../../shared/autoAccept';
+import { computed } from 'vue';
+import { ACCEPT_DELAY_OPTIONS, DEFAULT_ACCEPT_DELAY_SECONDS } from '../../../shared/autoAccept';
+import { useAutoAccept } from '../composables/useAutoAccept';
 
-const state = ref<AutoAcceptState | null>(null);
-
-/** 状态是后台推的 —— 每 2 秒取一次,页面上就能看到刚接受完。 */
-const REFRESH_INTERVAL_MS = 2000;
-let timer: ReturnType<typeof setInterval> | null = null;
-
-/**
- * 本地时钟。
- *
- * 倒计时不能跟着 2 秒的轮询走 —— 那会一跳一跳的。
- * 自己每秒走一下,剩余秒数按起算时刻现算。
- */
-const now = ref(Date.now());
-let clockTimer: ReturnType<typeof setInterval> | null = null;
-
-const statusText = computed<string>(() => {
-  const s = state.value;
-  if (!s) return '读取中';
-  if (!s.enabled) return '未开启';
-  if (!s.clientConnected) return '客户端未运行';
-  return statusLabel(s.status);
-});
+const {
+  state,
+  statusText,
+  phaseText,
+  countdownText,
+  countdownActive,
+  lastAcceptedText,
+  toggle,
+  setDelay
+} = useAutoAccept();
 
 const dotClass = computed<string>(() => {
   const s = state.value;
@@ -129,79 +110,15 @@ const dotClass = computed<string>(() => {
   return 'is-idle';
 });
 
-const phaseText = computed<string>(() => {
-  const s = state.value;
-  if (!s || !s.phase) return '—';
-  return phaseLabel(s.phase);
-});
-
-/** 还在倒计时就显示秒数,不在就显示「—」。 */
-const countdownText = computed<string>(() => {
-  const s = state.value;
-  if (!s) return '—';
-  const left = countdownRemaining(s.pendingAt, s.delaySeconds, now.value);
-  return left > 0 ? left + ' 秒' : '—';
-});
-
-const countdownActive = computed<boolean>(() => countdownText.value !== '—');
-
-const lastAcceptedText = computed<string>(() => {
-  const at = state.value?.lastAcceptedAt;
-  if (!at) return '—';
-  const d = new Date(at);
-  const pad = (n: number): string => String(n).padStart(2, '0');
-  return `${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
-});
-
-async function load(): Promise<void> {
-  try {
-    state.value = await window.api.getAutoAccept();
-  } catch (e: unknown) {
-    console.warn('get auto accept state failed', e);
-  }
-}
-
-async function onToggle(value: string | number | boolean): Promise<void> {
-  const enabled = value === true;
-  try {
-    state.value = await window.api.setAutoAccept(enabled);
-    ElMessage.success(enabled ? '自动接受已开启' : '自动接受已关闭');
-  } catch (e: unknown) {
-    ElMessage.error((e as { message?: string }).message ?? '设置失败');
-    await load();
-  }
+function onToggle(value: string | number | boolean): void {
+  void toggle(value === true);
 }
 
 /** 改「接受延时」。 */
-async function onDelayChange(value: unknown): Promise<void> {
+function onDelayChange(value: unknown): void {
   const seconds = typeof value === 'number' ? value : Number(value);
-  if (!Number.isFinite(seconds)) return;
-  try {
-    state.value = await window.api.setAutoAcceptDelay(seconds);
-  } catch (e: unknown) {
-    ElMessage.error((e as { message?: string }).message ?? '设置失败');
-    await load();
-  }
+  void setDelay(seconds);
 }
-
-onMounted(() => {
-  void load();
-  timer = setInterval(() => void load(), REFRESH_INTERVAL_MS);
-  clockTimer = setInterval(() => {
-    now.value = Date.now();
-  }, 500);
-});
-
-onUnmounted(() => {
-  if (timer) {
-    clearInterval(timer);
-    timer = null;
-  }
-  if (clockTimer) {
-    clearInterval(clockTimer);
-    clockTimer = null;
-  }
-});
 </script>
 
 <style scoped>

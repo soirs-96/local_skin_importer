@@ -10,28 +10,33 @@
     </div>
 
     <div class="body-row">
-      <div v-if="summoner" class="summoner-row">
-        <div class="summoner-field">
-          <span class="field-label hx-label">当前账号</span>
-          <span class="field-value account-value">
-            <img
-              v-if="avatarUrl && !isBroken(avatarUrl)"
-              class="account-avatar"
-              :src="avatarUrl"
-              :alt="summonerName"
-              @error="markBroken(avatarUrl)"
-            />
-            <span class="account-name">{{ summonerName }}</span>
-          </span>
+      <div class="left-col">
+        <div v-if="summoner" class="summoner-row">
+          <div class="summoner-field">
+            <span class="field-label hx-label">当前账号</span>
+            <span class="field-value account-value">
+              <img
+                v-if="avatarUrl && !isBroken(avatarUrl)"
+                class="account-avatar"
+                :src="avatarUrl"
+                :alt="summonerName"
+                @error="markBroken(avatarUrl)"
+              />
+              <span class="account-name">{{ summonerName }}</span>
+            </span>
+          </div>
+          <div v-if="live" class="summoner-field">
+            <span class="field-label hx-label">对局时间</span>
+            <span class="field-value">{{ formatDuration(live.gameTime) }}</span>
+          </div>
+          <div v-if="live" class="summoner-field">
+            <span class="field-label hx-label">当前金币</span>
+            <span class="field-value">{{ Math.round(live.currentGold) }}</span>
+          </div>
         </div>
-        <div v-if="live" class="summoner-field">
-          <span class="field-label hx-label">对局时间</span>
-          <span class="field-value">{{ formatDuration(live.gameTime) }}</span>
-        </div>
-        <div v-if="live" class="summoner-field">
-          <span class="field-label hx-label">当前金币</span>
-          <span class="field-value">{{ Math.round(live.currentGold) }}</span>
-        </div>
+
+        <!-- 账号下面空着一块,自动接受开关放这儿 -->
+        <AutoAcceptSwitch />
       </div>
 
       <!-- 段位贴在账号右边:那本来就是「我的」信息,单独一张卡是多余的 -->
@@ -96,6 +101,7 @@ import { lcuIconUrl } from '../../../../shared/icons';
 import { queueLabel } from '../../../../shared/rankLabels';
 import { tierIconDataUrl } from '../../../../shared/tierIcon';
 import { useBrokenIcons } from '../../composables/useBrokenIcons';
+import AutoAcceptSwitch from '../AutoAcceptSwitch.vue';
 
 const props = defineProps<{
   snapshot: MatchSnapshot | null;
@@ -216,6 +222,12 @@ function formatDuration(seconds: number): string {
   gap: 28px;
   margin-top: 14px;
   flex-wrap: wrap;
+}
+/* 左列:账号那几项 + 下面的自动接受开关 */
+.left-col {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
 }
 .summoner-row {
   display: flex;
