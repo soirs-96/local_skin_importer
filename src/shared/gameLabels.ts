@@ -5,8 +5,11 @@
  * 界面上要显示中文名 —— 这里放一份映射,主进程和渲染进程共用一份,
  * 免得同一局在两个页面上显示成两个名字。
  *
- * 这个文件不许 import 任何东西(理由同 rankLabels.ts)。
+ * 除了同目录的纯映射模块(rankLabels.ts)之外不许 import 别的 ——
+ * 免得把主进程的东西拖进渲染进程。
  */
+
+import { queueLabel } from './rankLabels';
 
 /**
  * 地图编号 → 地图名。
@@ -50,7 +53,9 @@ const SUMMONERS_RIFT_QUEUE_IDS = new Set([400, 420, 440, 490]);
 export const QUEUE_ID_LABELS: Record<number, string> = {
   400: '灵活排位',
   420: '单双排',
-  440: '单双排',
+  // 440 = 灵活排位(国服叫灵活组排)—— 实测确认过:国服客户端的战绩里
+  // 440 的局是灵活组排,420 才是单双排。写反过一次,把灵活组排说成了单双排。
+  440: '灵活排位',
   1001: '云顶之弈',
   1002: '云顶之弈',
   1003: '云顶之弈',
@@ -87,6 +92,29 @@ export function queueIdLabel(queueId: number): string {
   return QUEUE_ID_LABELS[queueId] ?? '';
 }
 
+/**
+ * 只认这几个队列串 —— 普通匹配(`CLASSIC`)之类没有信息量,不写出来。
+ */
+const RANKED_QUEUE_TYPES = new Set([
+  'RANKED_SOLO_5X5',
+  'RANKED_TEAM_5X5',
+  'RANKED_FLEX_SR',
+  'RANKED_FLEX_5X5',
+  'RANKED_URF'
+]);
+
+/**
+ * 队列名 —— **先认队列串,认不出才退回队列号**。
+ *
+ * 队列串(`RANKED_FLEX_SR` 之类)是权威的:队列号在国服和国际服不是一套
+ * 编号,光按号猜会把一局灵活组排说成单双排(实测踩过)。
+ */
+export function queueNameLabel(game: GameModeRef): string {
+  const type = game.queueType ? game.queueType.trim().toUpperCase() : '';
+  if (RANKED_QUEUE_TYPES.has(type)) return queueLabel(type);
+  return queueIdLabel(game.queueId);
+}
+
 export function roleLabel(role: string): string {
   return ROLE_LABELS[role.toUpperCase()] ?? '';
 }
@@ -100,9 +128,9 @@ export function laneLabel(lane: string): string {
  *
  * 排位显示成「召唤师峡谷 · 单双排」;大乱斗只有一个名字,显示一次就够。
  */
-export function gameTitle(mapId: number, queueId: number): string {
+export function gameTitle(mapId: number, queueId: number, queueType = ''): string {
   const map = mapIdLabel(mapId);
-  const queue = queueIdLabel(queueId);
+  const queue = queueNameLabel({ mapId, queueId, queueType, gameMode: '' });
   if (!map) return queue;
   if (!queue || queue === map) return map;
   return `${map} · ${queue}`;
@@ -238,7 +266,7 @@ export function gameMapId(game: GameModeRef): number {
  */
 export function gameModeName(game: GameModeRef): string {
   const mapId = gameMapId(game);
-  if (mapId === SUMMONERS_RIFT_MAP_ID) return gameTitle(mapId, game.queueId);
+  if (mapId === SUMMONERS_RIFT_MAP_ID) return gameTitle(mapId, game.queueId, game.queueType);
   if (mapId === HOWLING_ABYSS_MAP_ID) return '大乱斗';
   return '';
 }

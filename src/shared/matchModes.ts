@@ -47,13 +47,13 @@ export const MATCH_MODE_GROUPS: MatchModeGroup[] = [
   {
     key: 'solo',
     label: '单双排',
-    matches: (game) =>
-      game.mapId === SUMMONERS_RIFT_MAP_ID && (game.queueId === 420 || game.queueId === 440)
+    matches: (game) => game.mapId === SUMMONERS_RIFT_MAP_ID && game.queueId === 420
   },
   {
     key: 'flex',
     label: '灵活排位',
-    matches: (game) => game.mapId === SUMMONERS_RIFT_MAP_ID && game.queueId === 400
+    matches: (game) =>
+      game.mapId === SUMMONERS_RIFT_MAP_ID && (game.queueId === 400 || game.queueId === 440)
   },
   {
     key: 'urf',

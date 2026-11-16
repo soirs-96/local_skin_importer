@@ -25,6 +25,16 @@ describe('queueLabel', () => {
     expect(queueLabel('RANKED_SOLO_5x5')).toBe('单双排');
   });
 
+  it('灵活排位两种叫法都认', () => {
+    expect(queueLabel('RANKED_FLEX_SR')).toBe('灵活排位');
+    expect(queueLabel('RANKED_FLEX_5x5')).toBe('灵活排位');
+  });
+
+  it('队列串的大小写不统一 —— 比的时候统一成大写', () => {
+    expect(queueLabel('ranked_flex_5x5')).toBe('灵活排位');
+    expect(queueLabel('RANKED_SOLO_5X5')).toBe('单双排');
+  });
+
   it('未知队列原样返回', () => {
     expect(queueLabel('CUSTOM_5X5')).toBe('CUSTOM_5X5');
   });

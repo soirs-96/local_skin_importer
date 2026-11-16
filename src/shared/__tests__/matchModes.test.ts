@@ -19,7 +19,7 @@ describe('matchModeKey', () => {
 
   it('排位分单双排和灵活排位', () => {
     expect(matchModeKey({ mapId: 11, queueId: 420 })).toBe('solo');
-    expect(matchModeKey({ mapId: 11, queueId: 440 })).toBe('solo');
+    expect(matchModeKey({ mapId: 11, queueId: 440 })).toBe('flex');
     expect(matchModeKey({ mapId: 11, queueId: 400 })).toBe('flex');
   });
 
@@ -41,8 +41,9 @@ describe('matchModeOptions', () => {
       { mapId: 12, queueId: 450 }
     ]);
 
-    expect(options.map((option) => option.key)).toEqual(['aram', 'solo']);
-    expect(options.find((option) => option.key === 'solo')?.count).toBe(2);
+    expect(options.map((option) => option.key)).toEqual(['aram', 'solo', 'flex']);
+    expect(options.find((option) => option.key === 'solo')?.count).toBe(1);
+    expect(options.find((option) => option.key === 'flex')?.count).toBe(1);
     expect(options.find((option) => option.key === 'aram')?.count).toBe(1);
   });
 

@@ -22,6 +22,8 @@ export const TIER_LABELS: Record<string, string> = {
 export const QUEUE_LABELS: Record<string, string> = {
   RANKED_SOLO_5x5: '单双排',
   RANKED_FLEX_SR: '灵活排位',
+  // 同一个灵活排位,有的接口叫 SR、有的叫 5x5 —— 两种都得认。
+  RANKED_FLEX_5x5: '灵活排位',
   RANKED_TEAM_5x5: '组队单双排',
   RANKED_TFT: '斗魂竞技场',
   RANKED_TFT_DOUBLE_UP: '斗魂竞技场(双)',
@@ -38,6 +40,14 @@ export const QUEUE_LABELS: Record<string, string> = {
   ONEFORALL: '斗魂竞技场'
 };
 
+/**
+ * 大写键的查找表 —— 队列串的大小写在各接口里不统一
+ * (`RANKED_FLEX_5x5` / `RANKED_FLEX_5X5` 都见过),比的时候统一成大写。
+ */
+const QUEUE_LABELS_BY_UPPER = new Map(
+  Object.entries(QUEUE_LABELS).map(([key, label]) => [key.toUpperCase(), label])
+);
+
 /** 段位展示名:中文段位 + 罗马数字。 */
 export function formatRankDisplay(tier: string, division: string): string {
   const label = TIER_LABELS[tier.toUpperCase()] ?? tier;
@@ -47,5 +57,6 @@ export function formatRankDisplay(tier: string, division: string): string {
 }
 
 export function queueLabel(queueType: string): string {
-  return QUEUE_LABELS[queueType] ?? queueType;
+  const key = queueType.trim();
+  return QUEUE_LABELS_BY_UPPER.get(key.toUpperCase()) ?? key;
 }

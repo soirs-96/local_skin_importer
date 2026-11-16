@@ -11,6 +11,7 @@ import {
   mapIdLabel,
   positionLabel,
   queueIdLabel,
+  queueNameLabel,
   roleLabel
 } from '../gameLabels';
 
@@ -32,12 +33,41 @@ describe('queueIdLabel', () => {
     expect(queueIdLabel(400)).toBe('灵活排位');
   });
 
+  it('440 是灵活排位 —— 实测国服客户端的战绩里 440 是灵活组排', () => {
+    expect(queueIdLabel(440)).toBe('灵活排位');
+  });
+
   it('2400 不给名字 —— 那是普通匹配,写出来没有信息量', () => {
     expect(queueIdLabel(2400)).toBe('');
   });
 
   it('认不出来的给空串', () => {
     expect(queueIdLabel(99999)).toBe('');
+  });
+});
+
+describe('queueNameLabel', () => {
+  it('认得出队列串就认队列串 —— 队列号在国服和国际服不是一套编号', () => {
+    expect(queueNameLabel({ mapId: 11, queueId: 440, gameMode: 'KIWI', queueType: 'RANKED_FLEX_SR' })).toBe(
+      '灵活排位'
+    );
+    expect(
+      queueNameLabel({ mapId: 11, queueId: 440, gameMode: 'KIWI', queueType: 'RANKED_FLEX_5x5' })
+    ).toBe('灵活排位');
+  });
+
+  it('队列串跟队列号冲突时以队列串为准', () => {
+    expect(
+      queueNameLabel({ mapId: 11, queueId: 420, gameMode: 'KIWI', queueType: 'RANKED_FLEX_SR' })
+    ).toBe('灵活排位');
+  });
+
+  it('普通匹配的队列串不显示 —— 没有信息量', () => {
+    expect(queueNameLabel({ mapId: 11, queueId: 2400, gameMode: 'KIWI', queueType: 'CLASSIC' })).toBe('');
+  });
+
+  it('没有队列串就退回队列号', () => {
+    expect(queueNameLabel({ mapId: 11, queueId: 420, gameMode: 'KIWI' })).toBe('单双排');
   });
 });
 
@@ -68,6 +98,10 @@ describe('gameTitle', () => {
 
   it('地图和队列不同就两个都显示', () => {
     expect(gameTitle(11, 420)).toBe('召唤师峡谷 · 单双排');
+  });
+
+  it('给了队列串就以队列串为准', () => {
+    expect(gameTitle(11, 440, 'RANKED_FLEX_SR')).toBe('召唤师峡谷 · 灵活排位');
   });
 
   it('大乱斗的普通匹配就只显示地图名', () => {
@@ -166,6 +200,12 @@ describe('gameMapId', () => {
 describe('gameModeName', () => {
   it('召唤师峡谷带队列名', () => {
     expect(gameModeName({ mapId: 11, queueId: 420, gameMode: 'KIWI' })).toBe('召唤师峡谷 · 单双排');
+  });
+
+  it('队列串优先 —— 一局灵活组排不该被说成单双排', () => {
+    expect(
+      gameModeName({ mapId: 11, queueId: 440, gameMode: 'KIWI', queueType: 'RANKED_FLEX_SR' })
+    ).toBe('召唤师峡谷 · 灵活排位');
   });
 
   it('大乱斗只有一个名字', () => {
