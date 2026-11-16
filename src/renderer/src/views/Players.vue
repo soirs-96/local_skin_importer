@@ -30,6 +30,19 @@
       </el-button>
     </div>
 
+    <div v-if="recentSearches.length > 0" class="recent-row">
+      <span class="recent-label hx-label">最近查询</span>
+      <button
+        v-for="item in recentSearches"
+        :key="item"
+        class="recent-chip"
+        type="button"
+        @click="searchRecent(item)"
+      >
+        {{ item }}
+      </button>
+    </div>
+
     <div v-if="notice" class="notice">{{ notice }}</div>
     <div v-if="hint" class="hint">{{ hint }}</div>
 
@@ -70,12 +83,15 @@ import PlayerRankedTable from '../components/match/PlayerRankedTable.vue';
 import PlayerGameList from '../components/match/PlayerGameList.vue';
 import PlayerScoreCard from '../components/match/PlayerScoreCard.vue';
 import { buildScoreIndex, summarizePlayerScores } from '../../../shared/scoring';
+import { useRecentSearches } from '../composables/useRecentSearches';
 import type { PlayerGame, PlayerLookup, PlayerPeer } from '../../../shared/match';
 
 const PAGE_SIZE = 20;
 
 const route = useRoute();
 const router = useRouter();
+
+const { items: recentSearches, remember: rememberSearch } = useRecentSearches();
 
 const keyword = ref<string>('');
 const profile = shallowRef<PlayerLookup | null>(null);
@@ -127,6 +143,7 @@ async function onSearch(): Promise<void> {
     }
     profile.value = result;
     keyword.value = result.riotId || query;
+    rememberSearch(result.riotId || query);
     await applyRoute(result.summonerId, result.puuid);
     if (result.puuid) await loadGames(result.puuid, 0, false);
   } catch (e: unknown) {
@@ -134,6 +151,12 @@ async function onSearch(): Promise<void> {
   } finally {
     searching.value = false;
   }
+}
+
+/** 点最近查询里的一条 —— 把它填进搜索框,照常查一遍。 */
+async function searchRecent(query: string): Promise<void> {
+  keyword.value = query;
+  await onSearch();
 }
 
 /**
@@ -156,6 +179,7 @@ async function onSelectPeer(peer: PlayerPeer): Promise<void> {
       if (result.found) {
         profile.value = result;
         keyword.value = result.riotId || name;
+        rememberSearch(result.riotId || name);
         await applyRoute(result.summonerId, result.puuid);
         if (result.puuid) await loadGames(result.puuid, 0, false);
         return;
@@ -254,16 +278,35 @@ function reloadGames(): void {
   void loadGames(currentPuuid.value, 0, false);
 }
 
+/** 自己的游戏 ID —— 查一次就记住,不用每次都去问客户端。 */
+async function resolveSelfSummonerId(): Promise<number> {
+  if (selfSummonerId.value) return selfSummonerId.value;
+  const state = await window.api.getMatchState();
+  selfSummonerId.value = state.summoner?.summonerId ?? 0;
+  return selfSummonerId.value;
+}
+
+/**
+ * 切到自己的战绩。
+ *
+ * `warn` 说的是「用户主动点的」还是「自动的」—— 主动点还拿不到 ID,得说一声;
+ * 打开页面时自动切,弹个窗只会烦人。
+ */
+async function showSelf(warn: boolean): Promise<void> {
+  const sid = await resolveSelfSummonerId();
+  if (!sid) {
+    if (warn) {
+      ElNotification({ type: 'warning', message: '没拿到自己的游戏 ID —— 游戏客户端可能没开' });
+    }
+    return;
+  }
+  keyword.value = '';
+  await router.replace({ path: '/players', query: { sid: String(sid) } });
+}
+
 async function backToMe(): Promise<void> {
   try {
-    const state = await window.api.getMatchState();
-    const sid = state.summoner?.summonerId ?? 0;
-    if (!sid) {
-      ElNotification({ type: 'warning', message: '没拿到自己的游戏 ID —— 游戏客户端可能没开' });
-      return;
-    }
-    keyword.value = '';
-    await router.replace({ path: '/players', query: { sid: String(sid) } });
+    await showSelf(true);
   } catch (e: unknown) {
     notice.value = describeFailure(e);
   }
@@ -288,10 +331,14 @@ watch(() => route.query, () => void loadFromRoute(), { immediate: true });
 
 onMounted(async () => {
   try {
-    const state = await window.api.getMatchState();
-    selfSummonerId.value = state.summoner?.summonerId ?? 0;
+    await resolveSelfSummonerId();
+    // 打开这一页默认看自己的战绩 —— 不用先把自己的名字输一遍。
+    // 带着别人参数进来的(比如从对局里点「查战绩」跳过来)就不动。
+    if (!route.query.sid && !route.query.puuid) {
+      await showSelf(false);
+    }
   } catch {
-    // 拿不到自己的 ID 只影响「回到我」按钮,不影响别的
+    // 拿不到自己的 ID 只影响「回到我」和默认展示,不影响别的
   }
 });
 </script>
@@ -321,6 +368,29 @@ onMounted(async () => {
 }
 .spacer {
   flex: 1;
+}
+.recent-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.recent-label {
+  font-size: 10px;
+  color: var(--hx-text-faint);
+}
+.recent-chip {
+  padding: 2px 8px;
+  font-size: 11px;
+  font-family: inherit;
+  color: var(--hx-text-dim);
+  border: 1px solid var(--hx-line);
+  background: var(--hx-panel-2);
+  cursor: pointer;
+}
+.recent-chip:hover {
+  color: var(--hx-blue);
+  border-color: var(--hx-line-strong);
 }
 .notice {
   padding: 12px 14px;
