@@ -9,27 +9,66 @@
       <el-button class="hx-gold" :loading="loading" @click="$emit('refresh')">立即刷新</el-button>
     </div>
 
-    <div v-if="summoner" class="summoner-row">
-      <div class="summoner-field">
-        <span class="field-label hx-label">当前账号</span>
-        <span class="field-value account-value">
+    <div class="body-row">
+      <div v-if="summoner" class="summoner-row">
+        <div class="summoner-field">
+          <span class="field-label hx-label">当前账号</span>
+          <span class="field-value account-value">
+            <img
+              v-if="avatarUrl && !isBroken(avatarUrl)"
+              class="account-avatar"
+              :src="avatarUrl"
+              :alt="summonerName"
+              @error="markBroken(avatarUrl)"
+            />
+            <span class="account-name">{{ summonerName }}</span>
+          </span>
+        </div>
+        <div v-if="live" class="summoner-field">
+          <span class="field-label hx-label">对局时间</span>
+          <span class="field-value">{{ formatDuration(live.gameTime) }}</span>
+        </div>
+        <div v-if="live" class="summoner-field">
+          <span class="field-label hx-label">当前金币</span>
+          <span class="field-value">{{ Math.round(live.currentGold) }}</span>
+        </div>
+      </div>
+
+      <!-- 段位贴在账号右边:那本来就是「我的」信息,单独一张卡是多余的 -->
+      <div v-if="ranked.length > 0" class="ranked-block">
+        <div class="ranked-head">
+          <span class="field-label hx-label">排位段位</span>
+          <span v-if="sourceLabel" class="rank-source hx-label">{{ sourceLabel }}</span>
+        </div>
+        <div v-for="entry in ranked" :key="entry.queueType" class="rank-row">
           <img
-            v-if="avatarUrl && !isBroken(avatarUrl)"
-            class="account-avatar"
-            :src="avatarUrl"
-            :alt="summonerName"
-            @error="markBroken(avatarUrl)"
+            v-if="tierIcon(entry)"
+            class="tier-icon"
+            :src="tierIcon(entry) ?? ''"
+            :alt="entry.display"
           />
-          <span class="account-name">{{ summonerName }}</span>
-        </span>
-      </div>
-      <div v-if="live" class="summoner-field">
-        <span class="field-label hx-label">对局时间</span>
-        <span class="field-value">{{ formatDuration(live.gameTime) }}</span>
-      </div>
-      <div v-if="live" class="summoner-field">
-        <span class="field-label hx-label">当前金币</span>
-        <span class="field-value">{{ Math.round(live.currentGold) }}</span>
+          <span v-else class="tier-icon tier-icon--empty">—</span>
+
+          <div class="rank-info">
+            <span class="rank-queue">{{ queueLabel(entry.queueType) }}</span>
+            <span class="rank-tier">{{ entry.display }}</span>
+          </div>
+
+          <div class="rank-stat">
+            <span class="stat-value">{{ entry.wins }} / {{ entry.losses }}</span>
+            <span class="stat-label hx-label">胜负</span>
+          </div>
+
+          <div class="rank-stat">
+            <span class="stat-value">{{ Math.round(entry.winrate * 100) }}%</span>
+            <span class="stat-label hx-label">胜率</span>
+          </div>
+
+          <div v-if="entry.leaguePoints > 0" class="rank-stat">
+            <span class="stat-value">{{ entry.leaguePoints }}</span>
+            <span class="stat-label hx-label">胜点</span>
+          </div>
+        </div>
       </div>
     </div>
 
@@ -52,13 +91,19 @@
 
 <script setup lang="ts">
 import { computed } from 'vue';
-import type { LcuWsStatus, MatchSnapshot, MatchState } from '../../../../shared/match';
+import type { LcuWsStatus, MatchSnapshot, MatchState, RankedEntry } from '../../../../shared/match';
 import { lcuIconUrl } from '../../../../shared/icons';
+import { queueLabel } from '../../../../shared/rankLabels';
+import { tierIconDataUrl } from '../../../../shared/tierIcon';
 import { useBrokenIcons } from '../../composables/useBrokenIcons';
 
 const props = defineProps<{
   snapshot: MatchSnapshot | null;
   loading: boolean;
+  /** 排位段位(贴在账号右边) */
+  ranked?: RankedEntry[];
+  /** 段位是从哪儿来的 */
+  rankedSource?: string | null;
 }>();
 
 defineEmits<{ refresh: [] }>();
@@ -110,6 +155,27 @@ const wsHint = computed<string>(() =>
 );
 const wsClass = computed<string>(() => (wsStatus.value === 'connected' ? 'is-connected' : 'is-idle'));
 
+/** 排位段位。 */
+const ranked = computed<RankedEntry[]>(() => props.ranked ?? []);
+
+/**
+ * 段位是从哪儿来的。
+ *
+ * 显示出来是有必要的:新版客户端把 /lol-ranked/* 端点删了之后,段位只能走
+ * 事件流兜底,这时候跟「客户端接口」拿到的不是一回事,用户得能看出来。
+ */
+const sourceLabel = computed<string>(() => {
+  const s = props.rankedSource;
+  if (!s) return '';
+  if (s === 'ws') return '来源:事件流';
+  if (s === 'summoner-profile') return '来源:召唤师档案';
+  return '来源:客户端接口';
+});
+
+function tierIcon(entry: RankedEntry): string | null {
+  return tierIconDataUrl(entry.tier, entry.division);
+}
+
 function formatDuration(seconds: number): string {
   const total = Math.max(0, Math.floor(seconds));
   const m = Math.floor(total / 60);
@@ -144,10 +210,16 @@ function formatDuration(seconds: number): string {
 .status-value.is-live {
   color: var(--hx-blue);
 }
+.body-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 28px;
+  margin-top: 14px;
+  flex-wrap: wrap;
+}
 .summoner-row {
   display: flex;
   gap: 28px;
-  margin-top: 14px;
   flex-wrap: wrap;
 }
 .summoner-field {
@@ -174,6 +246,76 @@ function formatDuration(seconds: number): string {
 }
 .account-name {
   white-space: nowrap;
+}
+/* 段位块贴在账号右边 */
+.ranked-block {
+  margin-left: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.ranked-head {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+}
+.rank-source {
+  font-size: 10px;
+  color: var(--hx-text-faint);
+}
+.rank-row {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 6px 10px;
+  background: var(--hx-panel-2);
+  border: 1px solid var(--hx-line);
+}
+.tier-icon {
+  width: 30px;
+  height: 30px;
+  object-fit: contain;
+  flex-shrink: 0;
+}
+.tier-icon--empty {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--hx-text-faint);
+}
+.rank-info {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 108px;
+}
+.rank-queue {
+  font-size: 11px;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--hx-text-faint);
+}
+.rank-tier {
+  font-size: 14px;
+  color: var(--hx-gold);
+  font-weight: 600;
+}
+.rank-stat {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  align-items: flex-end;
+}
+.rank-stat + .rank-stat {
+  min-width: 52px;
+}
+.stat-value {
+  font-size: 15px;
+  color: var(--hx-text);
+  font-family: monospace;
+}
+.stat-label {
+  font-size: 10px;
 }
 .mode-row {
   display: flex;

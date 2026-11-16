@@ -1,6 +1,12 @@
 <template>
   <div class="match-view">
-    <MatchStatusCard :snapshot="snapshot" :loading="refreshing" @refresh="onRefresh" />
+    <MatchStatusCard
+      :snapshot="snapshot"
+      :loading="refreshing"
+      :ranked="snapshot?.ranked ?? []"
+      :ranked-source="snapshot?.rankedSource ?? null"
+      @refresh="onRefresh"
+    />
 
     <ChampSelectCard v-if="champSelect" :session="champSelect" />
 
@@ -13,10 +19,7 @@
       @refresh="loadOpponents"
     />
 
-    <div class="two-col">
-      <RankedCard :entries="snapshot?.ranked ?? []" :source="snapshot?.rankedSource ?? null" />
-      <RecentMatchesCard :summary="snapshot?.recent ?? null" />
-    </div>
+    <RecentMatchesCard :summary="snapshot?.recent ?? null" />
 
     <LlmSettingsCard />
 
@@ -29,7 +32,6 @@
 import { computed, onMounted, onUnmounted, ref, shallowRef, watch } from 'vue';
 import MatchStatusCard from '../components/match/MatchStatusCard.vue';
 import ChampSelectCard from '../components/match/ChampSelectCard.vue';
-import RankedCard from '../components/match/RankedCard.vue';
 import RecentMatchesCard from '../components/match/RecentMatchesCard.vue';
 import RecommendationCard from '../components/match/RecommendationCard.vue';
 import MasteryCard from '../components/match/MasteryCard.vue';
@@ -116,10 +118,5 @@ onUnmounted(() => {
   padding: 20px;
   max-width: 900px;
   margin: 0 auto;
-}
-.two-col {
-  display: flex;
-  flex-direction: column;
-  gap: 16px;
 }
 </style>
