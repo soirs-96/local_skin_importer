@@ -1,8 +1,10 @@
 import type { AxiosInstance } from 'axios';
 import * as lcu from '../lcu';
 import {
+  countdownRemaining,
   decideAccept,
   findMyMember,
+  DEFAULT_ACCEPT_DELAY_SECONDS,
   type AcceptAction,
   type AcceptProbe,
   type AcceptProbeMember,
@@ -141,6 +143,15 @@ export class AutoAcceptService {
   private endpoint: string | null = null;
   private clientConnected = false;
 
+  /** 接受前要等多久(秒)。 */
+  private delaySeconds = DEFAULT_ACCEPT_DELAY_SECONDS;
+  /** 倒计时起算时刻;null = 现在没在倒计时。 */
+  private pendingAt: number | null = null;
+  /** 倒计时是在等哪件事 —— 换了件事就得重新计时。 */
+  private pendingAction: AcceptAction = 'none';
+  /** 上一轮看到的自己的英雄编号 —— 变了说明改主意了,倒计时重开。 */
+  private lastChampionId = 0;
+
   getState(): AutoAcceptState {
     return {
       enabled: this.enabled,
@@ -150,8 +161,17 @@ export class AutoAcceptService {
       lastError: this.lastError,
       phase: this.phase,
       endpoint: this.endpoint,
-      clientConnected: this.clientConnected
+      clientConnected: this.clientConnected,
+      delaySeconds: this.delaySeconds,
+      pendingAt: this.pendingAt
     };
+  }
+
+  /** 改延时。倒计时中的话,剩余时间按新延时重算。 */
+  setDelay(seconds: number): AutoAcceptState {
+    this.delaySeconds = seconds;
+    console.info('[自动接受] 延时改成 ' + seconds + ' 秒');
+    return this.getState();
   }
 
   setEnabled(enabled: boolean): AutoAcceptState {
@@ -162,6 +182,8 @@ export class AutoAcceptService {
       void this.tick();
     } else {
       this.status = 'off';
+      this.pendingAt = null;
+      this.pendingAction = 'none';
       this.stop();
     }
     console.info('[自动接受] ' + (enabled ? '已开启' : '已关闭'));
@@ -200,6 +222,8 @@ export class AutoAcceptService {
       if (probe.phase !== this.lastPhase) {
         this.acceptedPhase = '';
         this.lastPhase = probe.phase;
+        this.pendingAt = null;
+        this.pendingAction = 'none';
       }
 
       if (this.acceptedPhase && this.acceptedPhase === probe.phase) {
@@ -209,7 +233,24 @@ export class AutoAcceptService {
 
       const action = decideAccept(probe);
       if (action === 'none') {
+        this.pendingAt = null;
+        this.pendingAction = 'none';
         this.status = 'waiting';
+        return;
+      }
+
+      /**
+       * 延时 —— 不给用户反应时间就太霸道了。
+       * 换了件事(从弹窗变成选人)或者换了英雄,都重新计时。
+       */
+      if (this.pendingAction !== action) {
+        this.pendingAction = action;
+        this.pendingAt = Date.now();
+      } else if (!this.pendingAt) {
+        this.pendingAt = Date.now();
+      }
+      if (countdownRemaining(this.pendingAt, this.delaySeconds, Date.now()) > 0) {
+        this.status = 'countdown';
         return;
       }
 
@@ -273,6 +314,12 @@ export class AutoAcceptService {
     });
     this.myCellId = me?.cellId ?? -1;
     this.myChampionId = me?.championId ?? 0;
+
+    // 换了英雄 = 改主意了 —— 倒计时重新开始,别拿着上一次的犹豫去接受。
+    if (this.myChampionId !== this.lastChampionId) {
+      this.lastChampionId = this.myChampionId;
+      this.pendingAt = null;
+    }
 
     return {
       phase: phase || (session ? 'ChampSelect' : ''),
@@ -383,6 +430,8 @@ export class AutoAcceptService {
         this.acceptedCount += 1;
         this.lastAcceptedAt = Date.now();
         this.acceptedPhase = this.phase;
+        this.pendingAt = null;
+        this.pendingAction = 'none';
         this.lastError = null;
         this.failedAttempts = 0;
         this.status = 'accepted';

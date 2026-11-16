@@ -67,6 +67,7 @@ const mocks = vi.hoisted(() => {
     devLoggerTakeBacklog: vi.fn((_afterSeq: number): DevLogLine[] => []),
     autoAcceptGetState: vi.fn(),
     autoAcceptSetEnabled: vi.fn(),
+    autoAcceptSetDelay: vi.fn(),
     writeAutoAcceptPrefs: vi.fn()
   };
 });
@@ -158,7 +159,8 @@ vi.mock('../devLogger', () => ({
 vi.mock('../match/autoAccept', () => ({
   autoAcceptService: {
     getState: mocks.autoAcceptGetState,
-    setEnabled: mocks.autoAcceptSetEnabled
+    setEnabled: mocks.autoAcceptSetEnabled,
+    setDelay: mocks.autoAcceptSetDelay
   }
 }));
 
@@ -186,6 +188,7 @@ type ExposedApi = {
   detachConsole: () => unknown;
   getAutoAccept: () => unknown;
   setAutoAccept: (enabled: boolean) => unknown;
+  setAutoAcceptDelay: (delaySeconds: number) => unknown;
 };
 
 function handlerFor(channel: string): Handler {
@@ -238,6 +241,7 @@ describe('IPC wiring', () => {
     mocks.devLoggerTakeBacklog.mockReturnValue([]);
     mocks.autoAcceptGetState.mockReset();
     mocks.autoAcceptSetEnabled.mockReset();
+    mocks.autoAcceptSetDelay.mockReset();
     mocks.writeAutoAcceptPrefs.mockReset();
     mocks.getFocusedWindow.mockReset();
     mocks.clipboardWriteText.mockReset();
@@ -265,6 +269,7 @@ describe('IPC wiring', () => {
     api.detachConsole();
     api.getAutoAccept();
     api.setAutoAccept(true);
+    api.setAutoAcceptDelay(5);
 
     expect(mocks.ipcRendererInvoke.mock.calls).toEqual([
       ['lcu:check-status'],
@@ -280,11 +285,12 @@ describe('IPC wiring', () => {
       ['dev:console-attach', 5],
       ['dev:console-detach'],
       ['tools:get-auto-accept'],
-      ['tools:set-auto-accept', { enabled: true }]
+      ['tools:set-auto-accept', { enabled: true }],
+      ['tools:set-auto-accept-delay', { delaySeconds: 5 }]
     ]);
   });
 
-  it('registers all 25 ipc channels on call to registerIpcHandlers', () => {
+  it('registers all 26 ipc channels on call to registerIpcHandlers', () => {
     expect(mocks.ipcMainHandle.mock.calls.map(([channel]) => channel)).toEqual([
       'lcu:check-status',
       'lcu:fetch-skins',
@@ -310,7 +316,8 @@ describe('IPC wiring', () => {
       'llm:set-key',
       'llm:clear-key',
       'tools:get-auto-accept',
-      'tools:set-auto-accept'
+      'tools:set-auto-accept',
+      'tools:set-auto-accept-delay'
     ]);
   });
 
@@ -852,5 +859,31 @@ describe('IPC wiring', () => {
 
     expect(await invoke('llm:clear-key')).toEqual(status);
     expect(mocks.clearLlmApiKey).toHaveBeenCalledOnce();
+  });
+
+  it('tools:set-auto-accept saves the switch and turns the service on', async () => {
+    const state = { enabled: true, status: 'waiting' };
+    mocks.autoAcceptSetEnabled.mockReturnValue(state);
+
+    expect(await invoke('tools:set-auto-accept', {}, { enabled: true })).toEqual(state);
+    expect(mocks.writeAutoAcceptPrefs).toHaveBeenCalledWith({ enabled: true });
+    expect(mocks.autoAcceptSetEnabled).toHaveBeenCalledWith(true);
+  });
+
+  it('tools:set-auto-accept-delay saves the delay and applies it', async () => {
+    const state = { enabled: true, status: 'waiting', delaySeconds: 10 };
+    mocks.autoAcceptSetDelay.mockReturnValue(state);
+
+    expect(await invoke('tools:set-auto-accept-delay', {}, { delaySeconds: 10 })).toEqual(state);
+    expect(mocks.writeAutoAcceptPrefs).toHaveBeenCalledWith({ delaySeconds: 10 });
+    expect(mocks.autoAcceptSetDelay).toHaveBeenCalledWith(10);
+  });
+
+  it('tools:set-auto-accept-delay rejects a non-numeric delay', async () => {
+    await expect(
+      invoke('tools:set-auto-accept-delay', {}, { delaySeconds: 'soon' })
+    ).rejects.toThrow('invalid delaySeconds');
+    expect(mocks.writeAutoAcceptPrefs).not.toHaveBeenCalled();
+    expect(mocks.autoAcceptSetDelay).not.toHaveBeenCalled();
   });
 });

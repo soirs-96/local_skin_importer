@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
+  countdownRemaining,
   decideAccept,
   findMyMember,
   phaseLabel,
@@ -70,10 +71,33 @@ describe('decideAccept', () => {
   });
 });
 
+describe('倒计时', () => {
+  const start = 1_000_000;
+
+  it('没在倒计时就是 0', () => {
+    expect(countdownRemaining(null, 5, start)).toBe(0);
+  });
+
+  it('按起算时刻算剩余秒数', () => {
+    // 起算后 1.2 秒 —— 还剩 3.8 秒,向上取整 4 秒
+    expect(countdownRemaining(start, 5, start + 1200)).toBe(4);
+  });
+
+  it('时间到了就是 0 —— 不给负数', () => {
+    expect(countdownRemaining(start, 5, start + 5000)).toBe(0);
+    expect(countdownRemaining(start, 5, start + 60_000)).toBe(0);
+  });
+
+  it('延时 0 就是不等待', () => {
+    expect(countdownRemaining(start, 0, start)).toBe(0);
+  });
+});
+
 describe('文案', () => {
   it('状态有中文名', () => {
     expect(statusLabel('off')).toBe('未开启');
     expect(statusLabel('accepted')).toBe('已接受');
+    expect(statusLabel('countdown')).toBe('即将接受');
   });
 
   it('阶段有中文名', () => {

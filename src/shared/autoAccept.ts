@@ -11,7 +11,18 @@
  */
 
 /** 界面上显示的状态。 */
-export type AutoAcceptStatus = 'off' | 'waiting' | 'acting' | 'accepted' | 'error';
+export type AutoAcceptStatus = 'off' | 'waiting' | 'countdown' | 'acting' | 'accepted' | 'error';
+
+/**
+ * 接受前要等多久(秒)。
+ *
+ * 不等的话一进选人就被点掉了 —— 用户连反应时间都没有。
+ * 延时期间改主意还来得及:换英雄会让倒计时重新开始。
+ */
+export const DEFAULT_ACCEPT_DELAY_SECONDS = 5;
+
+/** 界面上的延时选项 —— 固定几档,不用手输。 */
+export const ACCEPT_DELAY_OPTIONS: number[] = [0, 3, 5, 10, 15];
 
 export interface AutoAcceptState {
   /** 总开关。关掉就什么都不做。 */
@@ -29,6 +40,26 @@ export interface AutoAcceptState {
   endpoint: string | null;
   /** 客户端连上了没。 */
   clientConnected: boolean;
+  /** 接受前要等多久(秒)。 */
+  delaySeconds: number;
+  /** 倒计时起算的时刻(epoch ms);null = 现在没在倒计时。 */
+  pendingAt: number | null;
+}
+
+/**
+ * 还剩几秒。
+ *
+ * 主进程只给起算时刻,剩余秒数由界面自己按当前时间算 ——
+ * 否则界面每秒轮询一次,倒计时会一跳一跳的。
+ */
+export function countdownRemaining(
+  pendingAt: number | null,
+  delaySeconds: number,
+  now: number
+): number {
+  if (!pendingAt) return 0;
+  const left = Math.ceil((pendingAt + delaySeconds * 1000 - now) / 1000);
+  return left > 0 ? left : 0;
 }
 
 /** 现在要做什么。 */
@@ -95,6 +126,8 @@ export function statusLabel(status: AutoAcceptStatus): string {
       return '未开启';
     case 'waiting':
       return '等待对局';
+    case 'countdown':
+      return '即将接受';
     case 'acting':
       return '正在接受';
     case 'accepted':

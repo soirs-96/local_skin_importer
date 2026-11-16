@@ -29,6 +29,28 @@
           <span class="meta-value">{{ phaseText }}</span>
         </div>
         <div class="meta-field">
+          <span class="hx-label">接受延时</span>
+          <el-select
+            class="delay-select"
+            size="small"
+            :model-value="state?.delaySeconds ?? DEFAULT_ACCEPT_DELAY_SECONDS"
+            @change="onDelayChange"
+          >
+            <el-option
+              v-for="sec in ACCEPT_DELAY_OPTIONS"
+              :key="sec"
+              :label="sec === 0 ? '不等待' : sec + ' 秒'"
+              :value="sec"
+            />
+          </el-select>
+        </div>
+        <div class="meta-field">
+          <span class="hx-label">倒计时</span>
+          <span class="meta-value" :class="{ 'meta-value--hot': countdownActive }">
+            {{ countdownText }}
+          </span>
+        </div>
+        <div class="meta-field">
           <span class="hx-label">已接受</span>
           <span class="meta-value">{{ state?.acceptedCount ?? 0 }} 次</span>
         </div>
@@ -48,6 +70,12 @@
           <li>匹配成功后的「接受对局」弹窗 —— 自动点掉。</li>
           <li>选人阶段锁定英雄后 —— 自动点确认。</li>
         </ul>
+        <p class="tip-line">倒计时期间你还能改主意:</p>
+        <ul class="tip-list">
+          <li>先等「接受延时」那么久,再动手 —— 不给你反应时间就太霸道了。</li>
+          <li>这段时间里换英雄,倒计时重新开始。</li>
+          <li>自己在客户端里点了接受,倒计时也会自己取消。</li>
+        </ul>
         <p class="tip-line">它不会做的事:</p>
         <ul class="tip-list">
           <li>不替你选英雄 —— 锁定英雄这一步仍然由你决定。</li>
@@ -61,7 +89,13 @@
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted, ref } from 'vue';
 import { ElMessage } from 'element-plus';
-import { phaseLabel, statusLabel } from '../../../shared/autoAccept';
+import {
+  ACCEPT_DELAY_OPTIONS,
+  countdownRemaining,
+  DEFAULT_ACCEPT_DELAY_SECONDS,
+  phaseLabel,
+  statusLabel
+} from '../../../shared/autoAccept';
 import type { AutoAcceptState } from '../../../shared/autoAccept';
 
 const state = ref<AutoAcceptState | null>(null);
@@ -69,6 +103,15 @@ const state = ref<AutoAcceptState | null>(null);
 /** 状态是后台推的 —— 每 2 秒取一次,页面上就能看到刚接受完。 */
 const REFRESH_INTERVAL_MS = 2000;
 let timer: ReturnType<typeof setInterval> | null = null;
+
+/**
+ * 本地时钟。
+ *
+ * 倒计时不能跟着 2 秒的轮询走 —— 那会一跳一跳的。
+ * 自己每秒走一下,剩余秒数按起算时刻现算。
+ */
+const now = ref(Date.now());
+let clockTimer: ReturnType<typeof setInterval> | null = null;
 
 const statusText = computed<string>(() => {
   const s = state.value;
@@ -91,6 +134,16 @@ const phaseText = computed<string>(() => {
   if (!s || !s.phase) return '—';
   return phaseLabel(s.phase);
 });
+
+/** 还在倒计时就显示秒数,不在就显示「—」。 */
+const countdownText = computed<string>(() => {
+  const s = state.value;
+  if (!s) return '—';
+  const left = countdownRemaining(s.pendingAt, s.delaySeconds, now.value);
+  return left > 0 ? left + ' 秒' : '—';
+});
+
+const countdownActive = computed<boolean>(() => countdownText.value !== '—');
 
 const lastAcceptedText = computed<string>(() => {
   const at = state.value?.lastAcceptedAt;
@@ -119,15 +172,34 @@ async function onToggle(value: string | number | boolean): Promise<void> {
   }
 }
 
+/** 改「接受延时」。 */
+async function onDelayChange(value: unknown): Promise<void> {
+  const seconds = typeof value === 'number' ? value : Number(value);
+  if (!Number.isFinite(seconds)) return;
+  try {
+    state.value = await window.api.setAutoAcceptDelay(seconds);
+  } catch (e: unknown) {
+    ElMessage.error((e as { message?: string }).message ?? '设置失败');
+    await load();
+  }
+}
+
 onMounted(() => {
   void load();
   timer = setInterval(() => void load(), REFRESH_INTERVAL_MS);
+  clockTimer = setInterval(() => {
+    now.value = Date.now();
+  }, 500);
 });
 
 onUnmounted(() => {
   if (timer) {
     clearInterval(timer);
     timer = null;
+  }
+  if (clockTimer) {
+    clearInterval(clockTimer);
+    clockTimer = null;
   }
 });
 </script>
@@ -201,6 +273,13 @@ onUnmounted(() => {
   font-size: 13px;
   color: var(--hx-text);
   font-family: monospace;
+}
+/* 倒计时在走的时候得显眼 —— 这是用户等着改主意的窗口。 */
+.meta-value--hot {
+  color: var(--hx-gold);
+}
+.delay-select {
+  width: 110px;
 }
 .warn-row {
   margin-bottom: 12px;

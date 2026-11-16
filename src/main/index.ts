@@ -76,7 +76,9 @@ app.whenReady().then(() => {
   registerIconProtocol();
   registerIpcHandlers();
   // 上次开着就接着开 —— 自动接受这种事,重启一次就得重设一遍太烦人。
-  if (readAutoAcceptPrefs().enabled) autoAcceptService.setEnabled(true);
+  const autoAcceptPrefs = readAutoAcceptPrefs();
+  autoAcceptService.setDelay(autoAcceptPrefs.delaySeconds);
+  if (autoAcceptPrefs.enabled) autoAcceptService.setEnabled(true);
   createWindow();
 
   app.on('activate', () => {

@@ -43,6 +43,10 @@ interface AutoAcceptPayload {
   enabled: boolean;
 }
 
+interface AutoAcceptDelayPayload {
+  delaySeconds: number;
+}
+
 interface SyncPayload {
   puuid: string;
   summonerName: string;
@@ -428,5 +432,16 @@ export function registerIpcHandlers(): void {
     if (typeof payload.enabled !== 'boolean') throw new Error('invalid enabled');
     writeAutoAcceptPrefs({ enabled: payload.enabled });
     return autoAcceptService.setEnabled(payload.enabled);
+  });
+
+  ipcMain.handle('tools:set-auto-accept-delay', async (_event, payload: AutoAcceptDelayPayload) => {
+    if (typeof payload !== 'object' || payload === null) throw new Error('invalid payload');
+    if (typeof payload.delaySeconds !== 'number' || !Number.isFinite(payload.delaySeconds)) {
+      throw new Error('invalid delaySeconds');
+    }
+    // 上限 5 分钟 —— 再长就没意义了。
+    const seconds = Math.max(0, Math.min(300, Math.round(payload.delaySeconds)));
+    writeAutoAcceptPrefs({ delaySeconds: seconds });
+    return autoAcceptService.setDelay(seconds);
   });
 }

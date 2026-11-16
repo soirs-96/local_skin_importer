@@ -222,6 +222,9 @@ const api = {
   /** 开关自动接受对局 */
   setAutoAccept: (enabled: boolean): Promise<AutoAcceptState> =>
     invoke('tools:set-auto-accept', { enabled }),
+  /** 设置接受前要等多久(秒) */
+  setAutoAcceptDelay: (delaySeconds: number): Promise<AutoAcceptState> =>
+    invoke('tools:set-auto-accept-delay', { delaySeconds }),
 
   /** 订阅主进程推来的对局快照,返回取消订阅的函数 */
   onMatchState: (cb: (snapshot: MatchSnapshot) => void): (() => void) => {
