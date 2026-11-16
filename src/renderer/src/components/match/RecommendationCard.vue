@@ -4,14 +4,17 @@
       <div class="card-header">
         <span class="hx-diamond hx-diamond--blue" />
         <span class="hx-label">AI 阵容推荐</span>
-        <span v-if="state?.generatedAt" class="generated-at">{{ generatedAtText }}</span>
+        <!-- 右边一组:时间戳和按钮一起靠右,没有时间戳时按钮也贴右边 -->
+        <div class="card-head-right">
+          <span v-if="state?.generatedAt" class="generated-at">{{ generatedAtText }}</span>
+          <el-button type="primary" :loading="busy" :disabled="!available" @click="onRecommend">
+            生成推荐
+          </el-button>
+        </div>
       </div>
     </template>
 
-    <div class="action-row">
-      <el-button type="primary" :loading="busy" :disabled="!available" @click="onRecommend">
-        生成推荐
-      </el-button>
+    <div v-if="!available || state?.usedFallback" class="action-row">
       <span v-if="!available" class="hint-text">进入英雄选择阶段后可用</span>
       <span v-else-if="state?.usedFallback" class="hint-text hint-text--warn">
         这次是降级内容(AI 响应不完整)
@@ -92,8 +95,13 @@ onMounted(async () => {
   align-items: center;
   gap: 10px;
 }
-.generated-at {
+.card-head-right {
   margin-left: auto;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+.generated-at {
   font-family: monospace;
   font-size: 11px;
   color: var(--hx-text-faint);
