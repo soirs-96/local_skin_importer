@@ -54,17 +54,17 @@
             <span class="rank-tier">{{ entry.display }}</span>
           </div>
 
-          <div class="rank-stat">
+          <div class="rank-stat rank-stat--record">
             <span class="stat-value">{{ entry.wins }} / {{ entry.losses }}</span>
             <span class="stat-label hx-label">胜负</span>
           </div>
 
-          <div class="rank-stat">
+          <div class="rank-stat rank-stat--rate">
             <span class="stat-value">{{ Math.round(entry.winrate * 100) }}%</span>
             <span class="stat-label hx-label">胜率</span>
           </div>
 
-          <div v-if="entry.leaguePoints > 0" class="rank-stat">
+          <div v-if="entry.leaguePoints > 0" class="rank-stat rank-stat--lp">
             <span class="stat-value">{{ entry.leaguePoints }}</span>
             <span class="stat-label hx-label">胜点</span>
           </div>
@@ -300,14 +300,23 @@ function formatDuration(seconds: number): string {
   color: var(--hx-gold);
   font-weight: 600;
 }
+/* 三个数字列固定宽度 —— 每一行是独立的 flex 容器,不定宽的话
+   「282 / 277」和「2 / 1」宽度不同,列就散了。 */
 .rank-stat {
   display: flex;
   flex-direction: column;
   gap: 2px;
   align-items: flex-end;
+  flex: 0 0 auto;
 }
-.rank-stat + .rank-stat {
-  min-width: 52px;
+.rank-stat--record {
+  width: 86px;
+}
+.rank-stat--rate {
+  width: 54px;
+}
+.rank-stat--lp {
+  width: 54px;
 }
 .stat-value {
   font-size: 15px;
@@ -332,6 +341,8 @@ function formatDuration(seconds: number): string {
   align-items: center;
   gap: 10px;
   margin-top: 10px;
+  flex-wrap: nowrap;
+  white-space: nowrap;
 }
 .ws-value {
   font-size: 13px;
