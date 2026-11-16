@@ -35,6 +35,15 @@
           </div>
         </div>
 
+        <!-- 事件加速原来自己占一整行,拉到账号下面换行排 -->
+        <div class="summoner-field">
+          <span class="field-label hx-label">事件加速</span>
+          <span class="field-value ws-field">
+            <span class="ws-value" :class="wsClass">{{ wsLabel }}</span>
+            <span class="ws-hint">{{ wsHint }}</span>
+          </span>
+        </div>
+
         <!-- 账号下面空着一块,自动接受开关放这儿 -->
         <AutoAcceptSwitch />
       </div>
@@ -80,12 +89,6 @@
     <div v-if="live?.gameMode" class="mode-row">
       <span class="hx-label">模式</span>
       <span class="mode-value">{{ live.gameMode }}</span>
-    </div>
-
-    <div class="ws-row">
-      <span class="hx-label">事件加速</span>
-      <span class="ws-value" :class="wsClass">{{ wsLabel }}</span>
-      <span class="ws-hint">{{ wsHint }}</span>
     </div>
 
     <div v-if="snapshot?.lastError" class="error-row">
@@ -348,13 +351,11 @@ function formatDuration(seconds: number): string {
   font-size: 12px;
   color: var(--hx-text-dim);
 }
-.ws-row {
+/* 事件加速:标签一行,状态一行 */
+.ws-field {
   display: flex;
-  align-items: center;
-  gap: 10px;
-  margin-top: 10px;
-  flex-wrap: nowrap;
-  white-space: nowrap;
+  align-items: baseline;
+  gap: 8px;
 }
 .ws-value {
   font-size: 13px;
