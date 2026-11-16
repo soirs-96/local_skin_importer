@@ -13,7 +13,10 @@ import type {
 } from '../shared/match';
 import { DEV_LOG_CHANNEL } from '../shared/dev';
 import type { DevLogLine } from '../shared/dev';
+import type { AutoAcceptState } from '../shared/autoAccept';
 import type { LcuDiagnosis, LcuFailureCode } from '../main/lcu/types';
+
+export type { AutoAcceptState, AutoAcceptStatus } from '../shared/autoAccept';
 
 export type {
   ChampSelectMember,
@@ -212,6 +215,14 @@ const api = {
   getLlmStatus: (): Promise<LlmStatus> => invoke('llm:get-status'),
   setLlmApiKey: (apiKey: string): Promise<LlmStatus> => invoke('llm:set-key', { apiKey }),
   clearLlmApiKey: (): Promise<LlmStatus> => invoke('llm:clear-key'),
+
+  // ---- 实用功能 ------------------------------------------------------------
+  /** 自动接受对局的当前状态 */
+  getAutoAccept: (): Promise<AutoAcceptState> => invoke('tools:get-auto-accept'),
+  /** 开关自动接受对局 */
+  setAutoAccept: (enabled: boolean): Promise<AutoAcceptState> =>
+    invoke('tools:set-auto-accept', { enabled }),
+
   /** 订阅主进程推来的对局快照,返回取消订阅的函数 */
   onMatchState: (cb: (snapshot: MatchSnapshot) => void): (() => void) => {
     const listener = (_e: Electron.IpcRendererEvent, snapshot: MatchSnapshot): void => {

@@ -3,6 +3,8 @@ import { join } from 'node:path';
 import { registerIpcHandlers } from './ipc';
 import { installMainConsoleBridge } from './devLogger';
 import { registerIconProtocol, registerIconScheme } from './match/iconAssets';
+import { autoAcceptService } from './match/autoAccept';
+import { readAutoAcceptPrefs } from './autoAcceptState';
 
 // 自定义协议要先登记成特权协议,这一步必须发生在 app ready 之前
 registerIconScheme();
@@ -73,6 +75,8 @@ app.whenReady().then(() => {
   );
   registerIconProtocol();
   registerIpcHandlers();
+  // 上次开着就接着开 —— 自动接受这种事,重启一次就得重设一遍太烦人。
+  if (readAutoAcceptPrefs().enabled) autoAcceptService.setEnabled(true);
   createWindow();
 
   app.on('activate', () => {

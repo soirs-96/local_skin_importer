@@ -13,6 +13,8 @@ import {
   requestRecommendation
 } from './match/recommendationService';
 import { clearLlmApiKey, getLlmStatus, saveLlmApiKey } from './llm';
+import { autoAcceptService } from './match/autoAccept';
+import { writeAutoAcceptPrefs } from './autoAcceptState';
 import * as devLogger from './devLogger';
 import { MATCH_STATE_CHANNEL } from '../shared/match';
 import type { TopChampion } from '../shared/match';
@@ -35,6 +37,10 @@ interface PlayerGamesPayload {
   startIndex?: number;
   /** 要几局 */
   count?: number;
+}
+
+interface AutoAcceptPayload {
+  enabled: boolean;
 }
 
 interface SyncPayload {
@@ -411,5 +417,16 @@ export function registerIpcHandlers(): void {
   ipcMain.handle('llm:clear-key', async () => {
     clearLlmApiKey();
     return getLlmStatus();
+  });
+
+  // ---- 实用功能 ------------------------------------------------------------
+
+  ipcMain.handle('tools:get-auto-accept', () => autoAcceptService.getState());
+
+  ipcMain.handle('tools:set-auto-accept', async (_event, payload: AutoAcceptPayload) => {
+    if (typeof payload !== 'object' || payload === null) throw new Error('invalid payload');
+    if (typeof payload.enabled !== 'boolean') throw new Error('invalid enabled');
+    writeAutoAcceptPrefs({ enabled: payload.enabled });
+    return autoAcceptService.setEnabled(payload.enabled);
   });
 }

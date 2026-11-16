@@ -5,13 +5,15 @@ const Login = () => import('../views/Login.vue');
 const Sync = () => import('../views/Sync.vue');
 const Match = () => import('../views/Match.vue');
 const Players = () => import('../views/Players.vue');
+const Tools = () => import('../views/Tools.vue');
 
 const routes: RouteRecordRaw[] = [
   { path: '/', redirect: '/sync' },
   { path: '/login', name: 'login', component: Login },
   { path: '/sync', name: 'sync', component: Sync },
   { path: '/match', name: 'match', component: Match },
-  { path: '/players', name: 'players', component: Players }
+  { path: '/players', name: 'players', component: Players },
+  { path: '/tools', name: 'tools', component: Tools }
 ];
 
 export const router = createRouter({

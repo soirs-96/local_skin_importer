@@ -64,7 +64,10 @@ const mocks = vi.hoisted(() => {
     clearLlmApiKey: vi.fn(),
     devLoggerAttach: vi.fn(),
     devLoggerDetach: vi.fn(),
-    devLoggerTakeBacklog: vi.fn((_afterSeq: number): DevLogLine[] => [])
+    devLoggerTakeBacklog: vi.fn((_afterSeq: number): DevLogLine[] => []),
+    autoAcceptGetState: vi.fn(),
+    autoAcceptSetEnabled: vi.fn(),
+    writeAutoAcceptPrefs: vi.fn()
   };
 });
 
@@ -151,6 +154,18 @@ vi.mock('../devLogger', () => ({
   takeConsoleBacklog: mocks.devLoggerTakeBacklog
 }));
 
+// 自动接受服务会真的去连 LCU,单测里换掉。
+vi.mock('../match/autoAccept', () => ({
+  autoAcceptService: {
+    getState: mocks.autoAcceptGetState,
+    setEnabled: mocks.autoAcceptSetEnabled
+  }
+}));
+
+vi.mock('../autoAcceptState', () => ({
+  writeAutoAcceptPrefs: mocks.writeAutoAcceptPrefs
+}));
+
 // Importing the preload module is itself the behavior under test: it exposes the bridge.
 await import('../../preload/index');
 
@@ -169,6 +184,8 @@ type ExposedApi = {
   copyText: (text: string) => unknown;
   attachConsole: (afterSeq?: number) => unknown;
   detachConsole: () => unknown;
+  getAutoAccept: () => unknown;
+  setAutoAccept: (enabled: boolean) => unknown;
 };
 
 function handlerFor(channel: string): Handler {
@@ -219,6 +236,9 @@ describe('IPC wiring', () => {
     mocks.devLoggerDetach.mockReset();
     mocks.devLoggerTakeBacklog.mockReset();
     mocks.devLoggerTakeBacklog.mockReturnValue([]);
+    mocks.autoAcceptGetState.mockReset();
+    mocks.autoAcceptSetEnabled.mockReset();
+    mocks.writeAutoAcceptPrefs.mockReset();
     mocks.getFocusedWindow.mockReset();
     mocks.clipboardWriteText.mockReset();
     mocks.readSyncState.mockReturnValue({ lastSyncAt: null });
@@ -243,6 +263,8 @@ describe('IPC wiring', () => {
     api.copyText('诊断信息');
     api.attachConsole(5);
     api.detachConsole();
+    api.getAutoAccept();
+    api.setAutoAccept(true);
 
     expect(mocks.ipcRendererInvoke.mock.calls).toEqual([
       ['lcu:check-status'],
@@ -256,11 +278,13 @@ describe('IPC wiring', () => {
       ['dev:open-devtools'],
       ['dev:copy-text', '诊断信息'],
       ['dev:console-attach', 5],
-      ['dev:console-detach']
+      ['dev:console-detach'],
+      ['tools:get-auto-accept'],
+      ['tools:set-auto-accept', { enabled: true }]
     ]);
   });
 
-  it('registers all 23 ipc channels on call to registerIpcHandlers', () => {
+  it('registers all 25 ipc channels on call to registerIpcHandlers', () => {
     expect(mocks.ipcMainHandle.mock.calls.map(([channel]) => channel)).toEqual([
       'lcu:check-status',
       'lcu:fetch-skins',
@@ -284,7 +308,9 @@ describe('IPC wiring', () => {
       'match:recommend',
       'llm:get-status',
       'llm:set-key',
-      'llm:clear-key'
+      'llm:clear-key',
+      'tools:get-auto-accept',
+      'tools:set-auto-accept'
     ]);
   });
 
