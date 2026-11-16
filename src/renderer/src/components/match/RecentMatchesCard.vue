@@ -73,9 +73,12 @@ const summaryText = computed<string>(() => {
  *
  * 大乱斗没有上下路,腾讯给的 `role` 是乱的;地图认不出来的时候宁可空着,
  * 也不能给一局大乱斗挂上「辅助」。
+ *
+ * 角色任务道具(`roleBoundItemName`)最优先 —— 它的名字里直接写着位置;
+ * 没有任务道具才退回 lane / role(那两个字段实测会写错)。
  */
 function positionText(match: RecentMatch): string {
-  return positionLabel(gameMapId(match), match.lane, match.role);
+  return positionLabel(gameMapId(match), match.lane, match.role, match.roleBoundItemName);
 }
 
 /** 模式 · 时间。 */

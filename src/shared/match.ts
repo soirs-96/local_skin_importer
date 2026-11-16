@@ -104,6 +104,14 @@ export interface RecentMatch {
   /** 分路:TOP / MIDDLE / BOTTOM / JUNGLE;空串 = 没给。 */
   lane: string;
   role: string;
+  /**
+   * 角色任务道具的名字(LCU 的 `stats.roleBoundItem` 查静态数据拿到的)。
+   *
+   * 客户端派给玩家的那个「角色任务」(打野任务 / 辅助任务 / 上路任务 …),
+   * **名字里就写着位置** —— 比 lane / role 两个字段可靠(那两个字段实测会写错)。
+   * 没给 / 查不到 = 空,位置退回 lane / role 判。
+   */
+  roleBoundItemName?: string;
   kills: number;
   deaths: number;
   assists: number;
@@ -249,6 +257,12 @@ export interface PlayerGame {
   lane: string;
   /** 定位:SOLO / DUO / CARRY / SUPPORT / NONE */
   role: string;
+  /**
+   * 角色任务道具的名字(「打野任务」/「辅助任务」/「上路任务」…)。
+   *
+   * 名字里写着位置,比 lane / role 可靠;没给就退回 lane / role 判。
+   */
+  roleBoundItemName?: string;
   goldEarned: number;
   damageToChampions: number;
   minionKills: number;
@@ -294,6 +308,12 @@ export interface PlayerPeer {
   lane: string;
   /** 定位:SOLO / DUO / CARRY / SUPPORT / NONE */
   role: string;
+  /**
+   * 角色任务道具的名字(「打野任务」/「辅助任务」/「上路任务」…)。
+   *
+   * 名字里写着位置,比 lane / role 可靠;没给就退回 lane / role 判。
+   */
+  roleBoundItemName?: string;
 }
 
 export interface PlayerGamesSummary {

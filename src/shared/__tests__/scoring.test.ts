@@ -99,6 +99,11 @@ describe('resolvePosition', () => {
     expect(resolvePosition(11, 'MIDDLE', 'SUPPORT')).toBe('SUPPORT');
   });
 
+  it('定位优先于分路 —— 实测射手那局 lane 写的是 TOP、role 写的是 DUO', () => {
+    expect(resolvePosition(11, 'TOP', 'DUO')).toBe('ADC');
+    expect(resolvePosition(11, 'TOP', 'CARRY')).toBe('ADC');
+  });
+
   it('分路认不出来就退到定位', () => {
     expect(resolvePosition(11, '', 'SOLO')).toBe('MID');
     expect(resolvePosition(11, '', 'CARRY')).toBe('ADC');
@@ -106,11 +111,24 @@ describe('resolvePosition', () => {
 
   it('都认不出来就说认不出来 —— 不猜', () => {
     expect(resolvePosition(11, '', 'NONE')).toBe('UNKNOWN');
-    expect(resolvePosition(11, '', 'DUO')).toBe('UNKNOWN');
+  });
+
+  it('角色任务道具最优先 —— 名字里写着位置,不会写错', () => {
+    expect(resolvePosition(11, 'NONE', 'SUPPORT', '打野任务')).toBe('JUNGLE');
+    expect(resolvePosition(11, 'BOTTOM', 'SUPPORT', '辅助任务奖励')).toBe('SUPPORT');
+    expect(resolvePosition(11, 'JUNGLE', 'NONE', '上路任务奖励')).toBe('TOP');
+    expect(resolvePosition(11, 'NONE', 'NONE', '中路任务')).toBe('MID');
+    expect(resolvePosition(11, 'NONE', 'NONE', '下路任务')).toBe('ADC');
+  });
+
+  it('不是任务道具就当没有 —— 普通装备名不能当位置判据', () => {
+    expect(resolvePosition(11, 'BOTTOM', 'CARRY', '鞋子')).toBe('ADC');
+    expect(resolvePosition(11, 'NONE', 'SUPPORT', '控制守卫')).toBe('SUPPORT');
   });
 
   it('大乱斗一律认不出来', () => {
     expect(resolvePosition(12, 'MIDDLE', 'SUPPORT')).toBe('UNKNOWN');
+    expect(resolvePosition(12, 'NONE', 'NONE', '打野任务')).toBe('UNKNOWN');
   });
 });
 

@@ -9,6 +9,7 @@ import {
   lcuGameModeLabel,
   lcuPhaseLabel,
   mapIdLabel,
+  positionFromRoleQuest,
   positionLabel,
   queueIdLabel,
   queueNameLabel,
@@ -131,7 +132,40 @@ describe('positionLabel', () => {
 
   it('位置认不出来就不显示 —— 不写个可能错的', () => {
     expect(positionLabel(11, '', 'NONE')).toBe('');
-    expect(positionLabel(11, '', 'DUO')).toBe('');
+  });
+
+  it('角色任务道具最优先 —— 实测打野那局 lane 空、role 写成 SUPPORT,靠它救回来', () => {
+    expect(positionLabel(11, 'NONE', 'SUPPORT', '打野任务')).toBe('打野');
+    expect(positionLabel(11, 'NONE', 'SUPPORT', '打野任务奖励')).toBe('打野');
+    expect(positionLabel(11, 'BOTTOM', 'SUPPORT', '辅助任务奖励')).toBe('辅助');
+    expect(positionLabel(11, 'JUNGLE', 'NONE', '上路任务奖励')).toBe('上单');
+  });
+
+  it('定位优先于分路 —— 射手那局 lane 写的是 TOP,得听 role 的', () => {
+    expect(positionLabel(11, 'TOP', 'DUO')).toBe('射手');
+  });
+});
+
+describe('positionFromRoleQuest', () => {
+  it('中文任务道具认得', () => {
+    expect(positionFromRoleQuest('打野任务')).toBe('JUNGLE');
+    expect(positionFromRoleQuest('打野任务奖励')).toBe('JUNGLE');
+    expect(positionFromRoleQuest('上路任务')).toBe('TOP');
+    expect(positionFromRoleQuest('中路任务奖励')).toBe('MID');
+    expect(positionFromRoleQuest('下路任务')).toBe('ADC');
+    expect(positionFromRoleQuest('辅助任务')).toBe('SUPPORT');
+  });
+
+  it('英文任务道具也认', () => {
+    expect(positionFromRoleQuest('Jungle Role Quest')).toBe('JUNGLE');
+    expect(positionFromRoleQuest('Support Role Quest')).toBe('SUPPORT');
+  });
+
+  it('不是任务道具就认不出来', () => {
+    expect(positionFromRoleQuest('鞋子')).toBe('UNKNOWN');
+    expect(positionFromRoleQuest('轻灵之靴')).toBe('UNKNOWN');
+    expect(positionFromRoleQuest('控制守卫')).toBe('UNKNOWN');
+    expect(positionFromRoleQuest('')).toBe('UNKNOWN');
   });
 });
 

@@ -14,7 +14,11 @@ const OTHER = 'bb668455-b573-50d3-a172-4ce55bfebc35';
 const staticData: StaticData = {
   version: '16.22',
   champions: new Map([[21, { name: '厄运小姐', iconUrl: null }]]),
-  items: new Map([[3040, { name: '无尽之刃', iconUrl: null }]]),
+  items: new Map([
+    [3040, { name: '无尽之刃', iconUrl: null }],
+    // 角色任务道具 —— 名字里写着位置
+    [1204, { name: '打野任务', iconUrl: null }]
+  ]),
   runes: new Map()
 };
 
@@ -123,6 +127,17 @@ describe('parseLedgeGame', () => {
     expect(parsed?.mapId).toBe(12);
     expect(parsed?.lane).toBe('MIDDLE');
     expect(parsed?.role).toBe('SUPPORT');
+  });
+
+  it('角色任务道具的名字带出来 —— 界面靠它判位置', () => {
+    const parsed = parseLedgeGame(game([participant({ roleBoundItem: 1204 })]), ME, staticData);
+    expect(parsed?.roleBoundItemName).toBe('打野任务');
+    expect(parsed?.peers[0].roleBoundItemName).toBe('打野任务');
+  });
+
+  it('没有任务道具就空串 —— 位置退回 lane / role 判', () => {
+    const parsed = parseLedgeGame(game([participant()]), ME, staticData);
+    expect(parsed?.roleBoundItemName).toBe('');
   });
 
   it('这一局里没有目标玩家就当没有', () => {

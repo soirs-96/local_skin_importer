@@ -5,7 +5,11 @@ import type { StaticData } from '../staticData';
 const staticData: StaticData = {
   version: '14.1.1',
   champions: new Map([[1, { name: '安妮', iconUrl: 'https://cdn/annie.png' }]]),
-  items: new Map([[1001, { name: '破败王者之刃', iconUrl: 'https://cdn/1001.png' }]]),
+  items: new Map([
+    [1001, { name: '破败王者之刃', iconUrl: 'https://cdn/1001.png' }],
+    // 角色任务道具 —— 客户端的 items.json 里有,Data Dragon 没有
+    [1204, { name: '打野任务', iconUrl: 'https://cdn/1204.png' }]
+  ]),
   runes: new Map()
 };
 
@@ -162,6 +166,46 @@ describe('parseMatchEntry', () => {
       staticData
     );
     expect(match?.items).toHaveLength(1);
+  });
+
+  it('角色任务道具的名字带出来 —— 界面靠它判位置', () => {
+    const match = parseMatchEntry(
+      {
+        gameId: 30,
+        championId: 1,
+        mapId: 11,
+        participants: [
+          {
+            participantId: 1,
+            championId: 1,
+            timeline: { lane: 'NONE', role: 'SUPPORT' },
+            stats: { kills: 3, deaths: 4, assists: 5, win: true, roleBoundItem: 1204 }
+          }
+        ]
+      },
+      staticData
+    );
+    expect(match?.roleBoundItemName).toBe('打野任务');
+  });
+
+  it('没有任务道具就空串 —— 位置退回 lane / role 判', () => {
+    const match = parseMatchEntry(
+      {
+        gameId: 31,
+        championId: 1,
+        mapId: 11,
+        participants: [
+          {
+            participantId: 1,
+            championId: 1,
+            timeline: { lane: 'BOTTOM', role: 'CARRY' },
+            stats: { kills: 3, deaths: 4, assists: 5, win: true }
+          }
+        ]
+      },
+      staticData
+    );
+    expect(match?.roleBoundItemName).toBe('');
   });
 
   it('非对象返回 null', () => {

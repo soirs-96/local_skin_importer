@@ -1,5 +1,6 @@
 import axios, { AxiosInstance } from 'axios';
 import { lcuIconUrl } from '../../shared/icons';
+import { isRoleQuestItem } from '../../shared/gameLabels';
 import { setChampionFiles, setIconVersion } from './iconMeta';
 import { patchCandidates } from './patchVersion';
 
@@ -422,7 +423,12 @@ function mergeStaticData(primary: StaticData, fallback: StaticData): StaticData 
   for (const [id, info] of primary.champions) champions.set(id, info);
 
   const items = new Map(fallback.items);
-  for (const [id, info] of primary.items) items.set(id, info);
+  for (const [id, info] of primary.items) {
+    // 角色任务道具(打野任务 / 辅助任务 …)只认客户端本地资源给的名字 ——
+    // 它是判位置的关键,别被同编号的别的道具名盖掉。
+    const local = fallback.items.get(id);
+    items.set(id, local && isRoleQuestItem(local.name) ? local : info);
+  }
 
   const runes = new Map(fallback.runes);
   for (const [id, name] of primary.runes) runes.set(id, name);

@@ -124,6 +124,24 @@ function findMyParticipant(raw: Record<string, unknown>, puuid: string): Record<
   return participants[0];
 }
 
+/**
+ * 角色任务道具的名字。
+ *
+ * 客户端在 `stats.roleBoundItem` 里给出一个道具编号,那件道具是玩家这一局的
+ * 「角色任务」(打野任务 / 辅助任务 / 上路任务 …)—— **名字里就写着位置**。
+ *
+ * 名字从静态数据里查(客户端的 items.json 有这些道具,Data Dragon 没有)。
+ * 查不到就空串 —— 位置退回 lane / role 判,不会更差。
+ */
+function roleBoundItemName(
+  stats: Record<string, unknown>,
+  staticData: StaticData
+): string {
+  const id = num(stats.roleBoundItem);
+  if (id <= 0) return '';
+  return staticData.items.get(id)?.name ?? '';
+}
+
 export function parseMatchEntry(
   raw: unknown,
   staticData: StaticData,
@@ -162,6 +180,8 @@ export function parseMatchEntry(
     queueType: pickStr(raw, ['queueType', 'gameMetadata.queueType']),
     lane: str(timeline.lane) || str(stats.lane),
     role: str(timeline.role) || str(stats.role),
+    // 角色任务道具:名字里写着位置,是唯一不会写错的位置来源。
+    roleBoundItemName: roleBoundItemName(stats, staticData),
     kills,
     deaths,
     assists,

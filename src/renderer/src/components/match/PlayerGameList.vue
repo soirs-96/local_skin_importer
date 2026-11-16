@@ -63,9 +63,7 @@
             <span class="game-title">
               <span class="champ-name">{{ game.championName }}</span>
               <span class="result-tag">{{ game.win ? '胜利' : '失败' }}</span>
-              <span v-if="positionLabel(game.mapId, game.lane, game.role)" class="lane-tag">
-                {{ positionLabel(game.mapId, game.lane, game.role) }}
-              </span>
+              <span v-if="positionText(game)" class="lane-tag">{{ positionText(game) }}</span>
             </span>
             <span class="game-mode">{{ modeText(game) }}</span>
           </div>
@@ -132,7 +130,7 @@
 import { computed, ref, watch } from 'vue';
 import type { PlayerGame, PlayerPeer } from '../../../../shared/match';
 import type { GameScore, PlayerScoreDetail } from '../../../../shared/scoring';
-import { gameTitle, positionLabel } from '../../../../shared/gameLabels';
+import { gameMapId, gameTitle, positionLabel } from '../../../../shared/gameLabels';
 import { ALL_MODES, filterByMatchMode, matchModeOptions } from '../../../../shared/matchModes';
 import { useBrokenIcons } from '../../composables/useBrokenIcons';
 import GamePeersPanel from './GamePeersPanel.vue';
@@ -237,6 +235,16 @@ function toggle(gameId: string): void {
 
 function modeText(game: PlayerGame): string {
   return gameTitle(game.mapId, game.queueId);
+}
+
+/**
+ * 这一局打的是什么位置。
+ *
+ * 角色任务道具(`roleBoundItemName`)最优先 —— 名字里直接写着位置;
+ * 没有任务道具才退回 lane / role(那两个字段实测会写错)。
+ */
+function positionText(game: PlayerGame): string {
+  return positionLabel(gameMapId(game), game.lane, game.role, game.roleBoundItemName);
 }
 
 function formatGold(gold: number): string {

@@ -12,3 +12,6 @@ release/
 .vscode/
 .idea/
 *.log
+
+# 诊断脚本抓下来的原始对局数据(含有真实对局记录,不进版本库)
+scripts/matches-dump.json

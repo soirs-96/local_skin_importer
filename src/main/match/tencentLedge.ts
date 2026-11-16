@@ -163,6 +163,22 @@ function extractItemIds(participant: Record<string, unknown>): number[] {
   return ids;
 }
 
+/**
+ * 角色任务道具的名字。
+ *
+ * 腾讯的平铺数据里给了一个 `roleBoundItem` 编号时,那件道具就是玩家这一局的
+ * 「角色任务」(打野任务 / 辅助任务 / 上路任务 …)—— **名字里就写着位置**,
+ * 比 lane / role 可靠。没这个字段 / 查不到就空串,位置退回 lane / role 判。
+ */
+function roleBoundItemName(
+  participant: Record<string, unknown>,
+  staticData: StaticData
+): string {
+  const id = num(participant.roleBoundItem);
+  if (id <= 0) return '';
+  return staticData.items.get(id)?.name ?? '';
+}
+
 /** 找出目标玩家在这一局里的那一条。 */
 function findParticipant(
   participants: Record<string, unknown>[],
@@ -209,7 +225,8 @@ function buildPeers(
       damageToChampions: num(p.totalDamageDealtToChampions),
       minionKills: num(p.totalMinionsKilled),
       lane: str(p.lane),
-      role: str(p.role)
+      role: str(p.role),
+      roleBoundItemName: roleBoundItemName(p, staticData)
     };
   });
 }
@@ -264,6 +281,7 @@ export function parseLedgeGame(
     win: me.win === true,
     lane: str(me.lane),
     role: str(me.role),
+    roleBoundItemName: roleBoundItemName(me, staticData),
     goldEarned: num(me.goldEarned),
     damageToChampions: num(me.totalDamageDealtToChampions),
     minionKills: num(me.totalMinionsKilled),

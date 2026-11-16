@@ -154,29 +154,86 @@ export const POSITION_LABELS: Record<PositionKey, string> = {
 };
 
 /**
+ * 角色任务道具 → 位置。
+ *
+ * 客户端会给每个玩家派一个「角色任务」(打野任务 / 辅助任务 / 上路任务 …),
+ * **任务道具的名字里就写着位置** —— 这是唯一不会骗人的位置来源。
+ *
+ * `lane` 和 `role` 两个字段都会错(实测踩到的三种错法:打野那局 lane 是空的、
+ * role 写成 SUPPORT;射手那局 lane 写成 TOP、role 写成 DUO;上单那局 lane 写成
+ * JUNGLE),只有任务道具是对的。
+ *
+ * 认不出来就 `UNKNOWN` —— 不猜。
+ */
+const ROLE_QUEST_POSITIONS: Array<{ position: PositionKey; keywords: string[] }> = [
+  { position: 'JUNGLE', keywords: ['打野', 'jungle'] },
+  { position: 'TOP', keywords: ['上路', 'top'] },
+  { position: 'MID', keywords: ['中路', 'mid'] },
+  { position: 'ADC', keywords: ['下路', 'bot', 'bottom'] },
+  { position: 'SUPPORT', keywords: ['辅助', 'support'] }
+];
+
+/**
+ * 是不是角色任务道具 —— 中文「……任务」,英文「…… Role Quest」。
+ *
+ * 认得出来才算数:普通的装备名(鞋子 / 控制守卫)不是任务道具,
+ * 不能拿它当位置判据。
+ */
+export function isRoleQuestItem(name: string): boolean {
+  return name.includes('任务') || /quest/i.test(name);
+}
+
+/**
+ * 从角色任务道具的名字认出位置。
+ *
+ * 不是任务道具(或名字里认不出位置)就 `UNKNOWN`。
+ */
+export function positionFromRoleQuest(itemName: string): PositionKey {
+  const name = itemName.trim();
+  if (!name || !isRoleQuestItem(name)) return 'UNKNOWN';
+  const lower = name.toLowerCase();
+  for (const entry of ROLE_QUEST_POSITIONS) {
+    if (entry.keywords.some((keyword) => lower.includes(keyword.toLowerCase()))) {
+      return entry.position;
+    }
+  }
+  return 'UNKNOWN';
+}
+
+/**
  * 定这个人在打什么位置。
  *
- * 腾讯的每个 participant 带两个字段:`lane`(载入时的分路)和 `role`(定位)。
- * 两个都会用,但优先级不一样:
+ * 三个来源,按可靠程度排:
  *
- * - **辅助最优先** —— 辅助玩家爱抢中路,`lane` 常写成 MIDDLE,但他确实是辅助。
- * - 分路说了算 —— lane 认得出来就直接用它定位置。
- * - 分路是空的 —— 退到定位(SOLO = 中单,CARRY = 射手)。
- * - 都认不出来 —— `UNKNOWN`。**不猜。**
+ * 1. **角色任务道具**(最优先)—— 客户端派的那个任务,名字里写着位置,不会错。
+ * 2. **定位(role)** —— SUPPORT = 辅助,CARRY / DUO = 射手。定位比分路准:
+ *    实测射手那局 `lane` 写的是 TOP、`role` 写的是 DUO,按 lane 判就错了。
+ * 3. **分路(lane)** —— 认得出来就用它。
+ * 4. 都认不出来 —— `UNKNOWN`。**不猜。**
  *
  * 大乱斗一律 `UNKNOWN` —— 那边的 `lane` 和 `role` 都是乱的。
  */
-export function resolvePosition(mapId: number, lane: string, role: string): PositionKey {
+export function resolvePosition(
+  mapId: number,
+  lane: string,
+  role: string,
+  roleBoundItemName = ''
+): PositionKey {
   if (mapId !== SUMMONERS_RIFT_MAP_ID) return 'UNKNOWN';
+
+  const quest = positionFromRoleQuest(roleBoundItemName);
+  if (quest !== 'UNKNOWN') return quest;
+
   const r = role.toUpperCase();
-  const l = lane.toUpperCase();
   if (r === 'SUPPORT') return 'SUPPORT';
+  if (r === 'CARRY' || r === 'DUO') return 'ADC';
+
+  const l = lane.toUpperCase();
   if (l === 'JUNGLE') return 'JUNGLE';
   if (l === 'MIDDLE' || l === 'MID') return 'MID';
   if (l === 'TOP') return 'TOP';
   if (l === 'BOTTOM' || l === 'BOT') return 'ADC';
   if (r === 'SOLO') return 'MID';
-  if (r === 'CARRY') return 'ADC';
   return 'UNKNOWN';
 }
 
@@ -189,9 +246,14 @@ export function resolvePosition(mapId: number, lane: string, role: string): Posi
  * 位置认不出来就**不显示** —— 界面上挂个「位置未识别」比写错位置强,
  * 但打标签的地方留空更干净(真要说明去看评分卡)。
  */
-export function positionLabel(mapId: number, lane: string, role: string): string {
+export function positionLabel(
+  mapId: number,
+  lane: string,
+  role: string,
+  roleBoundItemName = ''
+): string {
   if (mapId !== SUMMONERS_RIFT_MAP_ID) return '';
-  const position = resolvePosition(mapId, lane, role);
+  const position = resolvePosition(mapId, lane, role, roleBoundItemName);
   if (position === 'UNKNOWN') return '';
   return POSITION_LABELS[position];
 }
