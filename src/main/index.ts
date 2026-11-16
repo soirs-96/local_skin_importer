@@ -85,8 +85,10 @@ app.whenReady().then(() => {
       String(consoleInfo.codePage) +
       ' · ansi ' +
       String(consoleInfo.ansiCodePage) +
-      ' · tty ' +
-      String(consoleInfo.isTty)
+      ' · file ' +
+      String(consoleInfo.isFile) +
+      ' · override ' +
+      String(consoleInfo.override ?? 'none')
   );
   registerIconProtocol();
   registerIpcHandlers();

@@ -7,11 +7,15 @@
  * 所以反过来做:**按控制台的代码页编码**。
  *   - 控制台代码页(`chcp`):最准;
  *   - 系统 ANSI 代码页(注册表 ACP):控制台读不到时的退路。
- * stdout 不是终端(重定向到文件)时按 UTF-8 写 —— 读的那头一般按 UTF-8 解。
+ *
+ * 判断「输出到哪儿」不能看 `process.stdout.isTTY` —— Electron 的 stdout 在
+ * Windows 上报的是 false,但字节确实是终端在解。判据只能是**是不是普通文件**:
+ * 重定向到文件时按 UTF-8 写,其余一律按控制台代码页写。
  *
  * `LOL_CONSOLE_ENCODING=utf8|gbk` 可以强制指定。
  */
 import { execFileSync } from 'node:child_process';
+import * as fs from 'node:fs';
 import { encode } from 'iconv-lite';
 
 export type ConsoleEncoding = 'utf8' | 'gbk';
@@ -25,8 +29,23 @@ export interface ConsoleEncodingInfo {
   codePage: number | null;
   /** 系统 ANSI 代码页;读不到是 null。 */
   ansiCodePage: number | null;
-  /** stdout 是不是终端。被重定向到文件/管道时按 UTF-8 写。 */
-  isTty: boolean;
+  /** stdout 是不是普通文件(重定向到文件)。是就按 UTF-8 写。 */
+  isFile: boolean;
+  /** 环境变量强制指定的编码;null = 没强制。 */
+  override: ConsoleEncoding | null;
+}
+
+/**
+ * stdout 是不是普通文件。
+ *
+ * `isTTY` 在这里没用 —— Electron 的 stdout 报 false,但解字节的确实是终端。
+ */
+function stdoutIsFile(): boolean {
+  try {
+    return fs.fstatSync(1).isFile();
+  } catch {
+    return false;
+  }
 }
 
 /**
@@ -116,17 +135,19 @@ function patchStream(stream: NodeJS.WriteStream): void {
 export function installConsoleEncoding(): ConsoleEncodingInfo {
   const codePage = detectConsoleCodePage();
   const ansiCodePage = detectAnsiCodePage();
-  // stdout 是终端,才有「控制台按代码页解字节」这回事;
-  // 重定向到文件/管道时读的那头一般按 UTF-8 解,照 UTF-8 写。
-  const isTty = Boolean(process.stdout.isTTY);
 
-  const override = (process.env.LOL_CONSOLE_ENCODING ?? '').trim().toLowerCase();
+  const raw = (process.env.LOL_CONSOLE_ENCODING ?? '').trim().toLowerCase();
+  const isFile = stdoutIsFile();
   let encoding: ConsoleEncoding;
-  if (override === 'utf8' || override === 'utf-8') {
+  let override: ConsoleEncoding | null = null;
+  if (raw === 'utf8' || raw === 'utf-8') {
     encoding = 'utf8';
-  } else if (override === 'gbk' || override === 'gb18030') {
+    override = 'utf8';
+  } else if (raw === 'gbk' || raw === 'gb18030') {
     encoding = 'gbk';
-  } else if (!isTty) {
+    override = 'gbk';
+  } else if (isFile) {
+    // 写文件用 UTF-8 —— 读文件的多半按 UTF-8 解。
     encoding = 'utf8';
   } else {
     // 控制台代码页最准;读不到才退到系统 ANSI 代码页。
@@ -138,5 +159,5 @@ export function installConsoleEncoding(): ConsoleEncodingInfo {
     patchStream(process.stdout);
     patchStream(process.stderr);
   }
-  return { encoding, codePage, ansiCodePage, isTty };
+  return { encoding, codePage, ansiCodePage, isFile, override };
 }
