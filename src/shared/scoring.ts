@@ -236,22 +236,37 @@ const EMPTY_BREAKDOWN: ScoreBreakdown = {
   kda: 0
 };
 
+/** 打了分的一局 —— 目标玩家在这一局里的分和同场平均。 */
+interface ScoredGame {
+  detail: PlayerScoreDetail;
+  average: number;
+  /** 这一局目标玩家赢没赢 */
+  win: boolean;
+}
+
 /**
- * 把一个玩家的几局战绩汇总成一张成绩单。
+ * 把能打分的排位局挑出来。
  *
- * 只统计**排位** —— 大乱斗和普通匹配不进分。
+ * 「能打分」= 排位队列 + 召唤师峡谷 + 十个人齐 + 目标玩家在里面。
+ * 挑不出来的不算 —— 分数和胜场必须出自同一批局,不然会出现「10 场 · 11 胜」。
  */
-export function summarizePlayerScores(games: PlayerGame[]): PlayerScoreSummary {
-  const scored: { detail: PlayerScoreDetail; average: number }[] = [];
+function collectScored(games: PlayerGame[]): ScoredGame[] {
+  const scored: ScoredGame[] = [];
   for (const game of games) {
     if (!isRankedGame(game)) continue;
     const result = scoreGame(game);
     if (!result) continue;
     const me = result.players.find((p) => p.isTarget);
     if (!me) continue;
-    scored.push({ detail: me, average: result.average });
+    scored.push({ detail: me, average: result.average, win: game.win });
   }
+  return scored;
+}
 
+/**
+ * 把挑好的排位局汇总成成绩单。
+ */
+function summarizeScored(scored: ScoredGame[]): PlayerScoreSummary {
   const count = scored.length;
   if (count === 0) {
     return {
@@ -314,6 +329,50 @@ export function summarizePlayerScores(games: PlayerGame[]): PlayerScoreSummary {
         games: entry.games
       }))
       .sort((a, b) => b.games - a.games)
+  };
+}
+
+/**
+ * 把一个玩家的几局战绩汇总成一张成绩单。
+ *
+ * 只统计**排位** —— 大乱斗和普通匹配不进分。
+ */
+export function summarizePlayerScores(games: PlayerGame[]): PlayerScoreSummary {
+  return summarizeScored(collectScored(games));
+}
+
+/**
+ * 一个人的评分摘要 —— 「对局双方」卡上每个人头上的那个分数。
+ *
+ * 跟 {@link PlayerScoreSummary} 是同一套口径,只是挑了几项出来:
+ * 卡片上只有一行位置,塞不下四个维度的平均值。
+ */
+export interface RosterScore {
+  /** 0~10 的均分;0 = 没有排位数据 */
+  score: number;
+  /** 计了分的排位场次 */
+  games: number;
+  /** 排位胜场 */
+  wins: number;
+  /** 打得最多的位置(中文);空串 = 没有排位数据 */
+  positionLabel: string;
+}
+
+/**
+ * 把一个玩家的几局战绩压成一张成绩单。
+ *
+ * 只算**排位** —— 大乱斗和普通匹配不进分(跟
+ * {@link summarizePlayerScores} 同一个口径)。
+ */
+export function summarizeRosterScore(games: PlayerGame[]): RosterScore {
+  const scored = collectScored(games);
+  const summary = summarizeScored(scored);
+  return {
+    score: summary.score,
+    games: summary.games,
+    // 胜场跟场次出自同一批局 —— 不然会出现「10 场 · 11 胜」。
+    wins: scored.filter((entry) => entry.win).length,
+    positionLabel: summary.byPosition[0]?.label ?? ''
   };
 }
 

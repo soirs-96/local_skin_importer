@@ -48,6 +48,15 @@ const TOKEN_TTL_MS = 5 * 60_000;
 
 let tokenCache: { token: string; fetchedAt: number } | null = null;
 
+/**
+ * 正在取令牌的那个请求。
+ *
+ * 一次查好几个人时会并发发好几条战绩请求,它们都会用到令牌 ——
+ * 没有这个的话会同时向客户端的**回环口**打好几条,那个口只听一个连接,
+ * 并发打过去会把它挤爆。
+ */
+let tokenPending: Promise<string> | null = null;
+
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
@@ -74,11 +83,21 @@ export async function getLedgeToken(client: AxiosInstance): Promise<string> {
   if (tokenCache && Date.now() - tokenCache.fetchedAt < TOKEN_TTL_MS) {
     return tokenCache.token;
   }
-  const { data } = await client.get(SESSION_TOKEN_PATH, { timeout: TOKEN_TIMEOUT_MS });
-  const token = typeof data === 'string' ? data.replace(/^"|"$/g, '') : String(data ?? '');
-  if (!token) throw new Error('游戏客户端没有给出腾讯会话令牌');
-  tokenCache = { token, fetchedAt: Date.now() };
-  return token;
+  if (tokenPending) return tokenPending;
+
+  tokenPending = (async () => {
+    const { data } = await client.get(SESSION_TOKEN_PATH, { timeout: TOKEN_TIMEOUT_MS });
+    const token = typeof data === 'string' ? data.replace(/^"|"$/g, '') : String(data ?? '');
+    if (!token) throw new Error('游戏客户端没有给出腾讯会话令牌');
+    tokenCache = { token, fetchedAt: Date.now() };
+    return token;
+  })();
+
+  try {
+    return await tokenPending;
+  } finally {
+    tokenPending = null;
+  }
 }
 
 /** 只在本地清缓存 —— 401 时用,让下一次重新去 LCU 拿。 */

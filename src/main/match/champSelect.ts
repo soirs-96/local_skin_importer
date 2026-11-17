@@ -132,6 +132,9 @@ async function fillMemberProfiles(client: AxiosInstance, members: ChampSelectMem
     if (!member.puuid && member.summonerId <= 0) continue;
     const profile = await fetchSummonerProfile(client, member.puuid, member.summonerId);
     if (!profile) continue;
+    // 选人会话里有时只给游戏 ID —— 查别人的战绩只认 puuid,
+    // 资料接口里能拿到就补上,补不上这人的战绩就拉不了。
+    if (!member.puuid && profile.puuid) member.puuid = profile.puuid;
     member.displayName = profile.displayName;
     member.tagLine = profile.tagLine;
     member.summonerLevel = profile.summonerLevel;

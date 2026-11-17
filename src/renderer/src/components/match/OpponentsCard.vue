@@ -11,7 +11,7 @@
           size="small"
           text
           :loading="loading"
-          @click="$emit('refresh')"
+          @click="onRefresh"
         >
           刷新
         </el-button>
@@ -61,6 +61,17 @@
               </span>
             </div>
 
+            <!-- 评分:进选人就有 —— 不用再一个个点「查战绩」 -->
+            <div class="player-score" :title="player.scoreTitle">
+              <span v-if="player.scoreState === 'loading'" class="score-pending">算分中…</span>
+              <template v-else-if="player.scoreState === 'value'">
+                <span class="score-value">{{ player.scoreValue }}</span>
+                <span class="score-meta">{{ player.scoreMeta }}</span>
+              </template>
+              <span v-else-if="player.scoreState === 'none'" class="score-none">无排位</span>
+              <span v-else class="score-unknown" title="没拉到这个人最近的对局">—</span>
+            </div>
+
             <el-button
               v-if="player.summonerId > 0"
               class="lookup-btn"
@@ -81,8 +92,9 @@
         <template v-else-if="phaseLabel === '对局结束'">
           这一局已经结束,上面是刚才那局的两队人。
         </template>
-        点「查战绩」会跳到<strong>战绩查询</strong>页,按这个人的游戏 ID 拉他的历史对局 ——
-        那一层走的是<strong>腾讯的对局服务</strong>,客户端自己给不了。
+        分数是<strong>自动算</strong>的 —— 最近 10 场排位的评分。
+        这个分走的是<strong>腾讯的对局服务</strong> —— 客户端给不了别人的战绩。
+        点「查战绩」会跳到<strong>战绩查询</strong>页,看这个人的全部对局。
       </p>
     </template>
   </el-card>
@@ -96,6 +108,11 @@ import { buildRoster, type RosterPlayer } from '../../../../shared/roster';
 import { queueLabel as formatQueueLabel } from '../../../../shared/rankLabels';
 import { lcuPhaseLabel } from '../../../../shared/gameLabels';
 import { useBrokenIcons } from '../../composables/useBrokenIcons';
+import {
+  describeRosterScore,
+  useRosterScores,
+  type RosterScoreState
+} from '../../composables/useRosterScores';
 
 const props = defineProps<{
   snapshot: OpponentsSnapshot | null;
@@ -104,7 +121,7 @@ const props = defineProps<{
   loading?: boolean;
 }>();
 
-defineEmits<{ refresh: [] }>();
+const emit = defineEmits<{ refresh: [] }>();
 
 const router = useRouter();
 const { isBroken, markBroken } = useBrokenIcons();
@@ -128,6 +145,41 @@ const roster = computed<RosterPlayer[]>(() =>
   buildRoster(props.snapshot?.opponents ?? [], props.champSelect ?? null)
 );
 
+/**
+ * 每个人的评分。
+ *
+ * 分数走腾讯的对局服务 —— 客户端那层只给得出自己的战绩,所以每个人都要
+ * 单独拉一次(带缓存和并发限流,见 useRosterScores)。
+ */
+const { scores, loading, refresh: refreshScores } = useRosterScores(() => roster.value);
+
+/** 点「刷新」:名单和分数一起重来 —— 分数挂了三次就放弃,这是唯一的手动出口。 */
+function onRefresh(): void {
+  refreshScores();
+  emit('refresh');
+}
+
+/** 一行玩家 —— 多带一个评分那一列要显示的东西。 */
+interface ScoredPlayer extends RosterPlayer {
+  scoreState: RosterScoreState;
+  scoreValue: string;
+  scoreMeta: string;
+  scoreTitle: string;
+}
+
+const scoredRoster = computed<ScoredPlayer[]>(() =>
+  roster.value.map((player) => {
+    const display = describeRosterScore(player.puuid, scores.value, loading.value);
+    return {
+      ...player,
+      scoreState: display.state,
+      scoreValue: display.value,
+      scoreMeta: display.meta,
+      scoreTitle: display.title
+    };
+  })
+);
+
 /** 对面看得见吗?选人阶段看不见。 */
 const enemyKnown = computed<boolean>(
   () =>
@@ -142,8 +194,8 @@ const cardTitle = computed<string>(() =>
   roster.value.length > 0 && !enemyKnown.value ? '我方队友' : '对局双方'
 );
 
-const sides = computed<{ key: string; title: string; players: RosterPlayer[] }[]>(() => {
-  const players = roster.value;
+const sides = computed<{ key: string; title: string; players: ScoredPlayer[] }[]>(() => {
+  const players = scoredRoster.value;
   return [
     { key: 'ally', title: '我方', players: players.filter((p) => p.side === 'ally') },
     { key: 'enemy', title: '对方', players: players.filter((p) => p.side === 'enemy') }
@@ -263,8 +315,38 @@ function goLookup(player: RosterPlayer): void {
 .player-level {
   color: var(--hx-text-dim);
 }
-.lookup-btn {
+/* 评分 —— 右边一列,跟「查战绩」按钮分开 */
+.player-score {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 2px;
+  min-width: 76px;
   margin-left: auto;
+}
+.score-value {
+  font-size: 15px;
+  line-height: 1.1;
+  color: var(--hx-gold);
+  letter-spacing: 0.04em;
+}
+.score-meta {
+  font-size: 10px;
+  color: var(--hx-text-faint);
+  letter-spacing: 0.06em;
+}
+.score-pending,
+.score-none,
+.score-unknown {
+  font-size: 11px;
+  color: var(--hx-text-faint);
+  letter-spacing: 0.08em;
+}
+/* 拉不到 —— 比「无排位」更淡,那不是「没打排位」,是「没问到」 */
+.score-unknown {
+  opacity: 0.55;
+}
+.lookup-btn {
   color: var(--hx-blue);
 }
 .hint {

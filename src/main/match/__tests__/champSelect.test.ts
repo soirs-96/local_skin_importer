@@ -1,5 +1,10 @@
 import { describe, expect, it } from 'vitest';
-import { parseChampSelectMembers, parseChampSelectSession } from '../champSelect';
+import type { AxiosInstance } from 'axios';
+import {
+  getChampSelectSession,
+  parseChampSelectMembers,
+  parseChampSelectSession
+} from '../champSelect';
 import type { StaticData } from '../staticData';
 
 const staticData: StaticData = {
@@ -103,5 +108,40 @@ describe('parseChampSelectSession', () => {
     const session = parseChampSelectSession(withPuuid, staticData, -1, 'puuid-mine');
     expect(session?.myCellId).toBe(2);
     expect(session?.myChampionId).toBe(1);
+  });
+});
+
+describe('getChampSelectSession', () => {
+  function fakeClient(handlers: Record<string, unknown>): AxiosInstance {
+    return {
+      get: (url: string) => {
+        if (!(url in handlers)) {
+          const error = new Error(`404 ${url}`) as Error & { response?: { status: number } };
+          error.response = { status: 404 };
+          return Promise.reject(error);
+        }
+        return Promise.resolve({ data: handlers[url] });
+      }
+    } as unknown as AxiosInstance;
+  }
+
+  it('选人会话里没有 puuid 时,用资料接口查到的补上', async () => {
+    const client = fakeClient({
+      '/lol-champ-select/v1/session': {
+        localPlayerCellId: -1,
+        myTeam: [{ championId: 1, cellId: 0, summonerId: 17785561676 }],
+        theirTeam: []
+      },
+      '/lol-summoner/v1/summoners/17785561676': {
+        gameName: '甲',
+        summonerLevel: 100,
+        puuid: 'puuid-from-profile'
+      }
+    });
+
+    const session = await getChampSelectSession(client, staticData, -1, '');
+
+    expect(session?.myTeam[0].puuid).toBe('puuid-from-profile');
+    expect(session?.myTeam[0].displayName).toBe('甲');
   });
 });

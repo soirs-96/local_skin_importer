@@ -5,6 +5,7 @@ import {
   ratioToSubScore,
   scoreGame,
   summarizePlayerScores,
+  summarizeRosterScore,
   targetOf
 } from '../scoring';
 import { resolvePosition } from '../gameLabels';
@@ -285,6 +286,38 @@ describe('summarizePlayerScores', () => {
     const mid = summary.byPosition.find((row) => row.position === 'MID');
     expect(mid?.games).toBe(1);
     expect(mid?.label).toBe('中单');
+  });
+});
+
+describe('summarizeRosterScore', () => {
+  it('把几局压成一行分数', () => {
+    const score = summarizeRosterScore([rankedGame('g1')]);
+    expect(score.games).toBe(1);
+    expect(score.wins).toBe(1);
+    expect(score.score).toBeGreaterThan(0);
+    expect(score.positionLabel).toBe('中单');
+  });
+
+  it('没有排位就什么都不给', () => {
+    const score = summarizeRosterScore([game(team(100, 'blue', 5), { queueId: 2400 })]);
+    expect(score.games).toBe(0);
+    expect(score.wins).toBe(0);
+    expect(score.positionLabel).toBe('');
+  });
+
+  it('非排位的胜场不算 —— 大乱斗赢十把也不是排位胜场', () => {
+    const score = summarizeRosterScore([
+      game(team(100, 'blue', 5), { queueId: 2400, win: true }),
+      game(team(200, 'red', 5), { queueId: 450, mapId: 12, win: true })
+    ]);
+    expect(score.wins).toBe(0);
+  });
+
+  it('打不出分的排位局也不算数 —— 场次和胜场得是同一批局', () => {
+    // 排位队列,但人数不够 —— scoreGame 不打分,这一局就不该进任何一项
+    const score = summarizeRosterScore([game(team(100, 'blue', 3), { win: true })]);
+    expect(score.games).toBe(0);
+    expect(score.wins).toBe(0);
   });
 });
 

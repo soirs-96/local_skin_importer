@@ -30,6 +30,13 @@ export interface SummonerProfile {
   summonerLevel: number;
   profileIconId: number;
   rankedDisplay: string;
+  /**
+   * 这个召唤师的 puuid。
+   *
+   * 选人会话里有时只给游戏 ID 不给 puuid —— 查别人的战绩只认 puuid,
+   * 所以这里把它带出来,好让上层补上。
+   */
+  puuid: string;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -72,7 +79,8 @@ export function toSummonerProfile(raw: Record<string, unknown>): SummonerProfile
     tagLine: str(raw.tagLine),
     summonerLevel: num(raw.summonerLevel),
     profileIconId: num(raw.profileIconId),
-    rankedDisplay: badge.display
+    rankedDisplay: badge.display,
+    puuid: str(raw.puuid)
   };
 }
 
@@ -146,7 +154,8 @@ export async function fetchSummonerProfile(
         tagLine: '',
         summonerLevel: 0,
         profileIconId: 0,
-        rankedDisplay: ''
+        rankedDisplay: '',
+        puuid: ''
       },
       fetchedAt: Date.now()
     });
