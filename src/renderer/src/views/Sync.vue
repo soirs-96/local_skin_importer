@@ -287,13 +287,16 @@ async function onSync(options: { auto?: boolean } = {}): Promise<void> {
   }
   syncing.value = true;
   try {
-    const { summoner, ownedSkinIds } = lastFetchedSkins.value;
+    const { summoner, ownedSkinIds, gameZone } = lastFetchedSkins.value;
     const outcome: SyncOutcome = await window.api.sync({
       puuid: summoner.puuid,
       summonerName: summoner.displayName,
       ownedSkinIds,
       topChampions: topChampions.value,
-      mode: isAuto ? 'auto' : 'manual'
+      mode: isAuto ? 'auto' : 'manual',
+      // 昵称 / 召唤师ID / 大区一起上去 —— 后端顺手回填小程序,用户不用手填
+      summonerTag: summoner.tagLine,
+      gameZone
     });
 
     if (outcome.skipped) {

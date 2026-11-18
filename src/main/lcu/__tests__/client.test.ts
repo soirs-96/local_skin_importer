@@ -74,7 +74,8 @@ describe('getCurrentSummoner', () => {
     const client = fakeClient({ displayName: 'Tester', puuid: 'p-1' });
     await expect(getCurrentSummoner(client)).resolves.toEqual({
       displayName: 'Tester',
-      puuid: 'p-1'
+      puuid: 'p-1',
+      tagLine: ''
     });
   });
 
@@ -87,7 +88,22 @@ describe('getCurrentSummoner', () => {
     const client = fakeClient({ displayName: '', gameName: '林俊杰', puuid: 'p-1' });
     await expect(getCurrentSummoner(client)).resolves.toEqual({
       displayName: '林俊杰',
+      puuid: 'p-1',
+      tagLine: ''
+    });
+  });
+
+  it('Riot ID 的标签取 tagLine', async () => {
+    const client = fakeClient({
+      displayName: '',
+      gameName: '林俊杰',
+      tagLine: '18557',
       puuid: 'p-1'
+    });
+    await expect(getCurrentSummoner(client)).resolves.toEqual({
+      displayName: '林俊杰',
+      puuid: 'p-1',
+      tagLine: '18557'
     });
   });
 });

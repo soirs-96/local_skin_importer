@@ -67,6 +67,10 @@ interface SyncPayload {
   topChampions?: TopChampion[];
   /** auto = 启动自动同步(60s 节流);manual = 用户手点(10s 节流) */
   mode?: 'auto' | 'manual';
+  /** Riot ID 的标签(# 后面那串)—— 后端回填小程序的「游戏ID」 */
+  summonerTag?: string;
+  /** 大区编号(腾讯那套)—— 后端转成大区名回填。认不出来就不带 */
+  gameZone?: string;
 }
 
 /**
@@ -170,6 +174,12 @@ function assertSyncPayload(p: unknown): asserts p is SyncPayload {
   }
   if (obj.topChampions !== undefined && !isTopChampionList(obj.topChampions)) {
     throw new Error('invalid topChampions');
+  }
+  if (obj.summonerTag !== undefined && typeof obj.summonerTag !== 'string') {
+    throw new Error('invalid summonerTag');
+  }
+  if (obj.gameZone !== undefined && typeof obj.gameZone !== 'string') {
+    throw new Error('invalid gameZone');
   }
 }
 
@@ -275,12 +285,18 @@ export function registerIpcHandlers(): void {
       const lcuAuth = await lcu.resolveLcuAuth();
       const client = lcu.createLcuClient(lcuAuth);
       const summoner = await lcu.getCurrentSummoner(client);
-      const owned = await resolveOwnedSkinIds(client);
+      // 大区跟皮肤并行读 —— 读大区只是顺带的,不该拖慢取皮肤
+      const [owned, areaId] = await Promise.all([
+        resolveOwnedSkinIds(client),
+        lcu.fetchAreaId(client)
+      ]);
       return {
         summoner,
         ownedSkinIds: owned.ownedSkinIds,
         source: owned.source,
-        catalogFiltered: owned.catalogFiltered
+        catalogFiltered: owned.catalogFiltered,
+        // 认不出大区就空着 —— 同步时不上报,后端不写
+        gameZone: areaId === null ? '' : String(areaId)
       };
     } catch (e) {
       throw normalizeLcuError(e);
@@ -321,7 +337,11 @@ export function registerIpcHandlers(): void {
         payload.puuid,
         payload.summonerName,
         payload.ownedSkinIds,
-        payload.topChampions ?? []
+        payload.topChampions ?? [],
+        {
+          summonerTag: payload.summonerTag ?? '',
+          gameZone: payload.gameZone ?? ''
+        }
       );
       // 只在成功后记时间戳 —— 失败不能算「已同步」
       writeSyncState({ lastSyncAt: now });

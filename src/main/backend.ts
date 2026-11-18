@@ -53,11 +53,20 @@ function isNodeNetworkError(e: unknown): e is { code: string } {
   return typeof e === 'object' && e !== null && 'code' in e && typeof (e as { code: unknown }).code === 'string';
 }
 
+/** 跟皮肤一起带过去的游戏身份 —— 后端回填小程序,用户不用自己手填。 */
+export interface SyncProfile {
+  /** Riot ID 的标签(# 后面那串) */
+  summonerTag?: string;
+  /** 大区编号(腾讯那套)—— 认不出来就空着 */
+  gameZone?: string;
+}
+
 export async function syncOwnedSkins(
   puuid: string,
   summonerName: string,
   ownedSkinIds: number[],
-  topChampions: TopChampion[] = []
+  topChampions: TopChampion[] = [],
+  profile: SyncProfile = {}
 ): Promise<SyncResult> {
   const token = getStoredToken();
   if (!token) throw new Error('未登录:请先登录后再同步');
@@ -65,7 +74,15 @@ export async function syncOwnedSkins(
   const url = `${BACKEND_BASE_URL}/api/skins/sync-user-skins`;
   // 本命英雄跟皮肤一起传 —— 后端一次请求就把两样都存了,
   // 收藏册的排序直接按这份名单来。
-  const body = { puuid, summonerName, ownedSkinIds, topChampions };
+  // 昵称/召唤师ID/大区也一起传 —— 后端顺手回填小程序的用户资料。
+  const body = {
+    puuid,
+    summonerName,
+    ownedSkinIds,
+    topChampions,
+    summonerTag: profile.summonerTag ?? '',
+    gameZone: profile.gameZone ?? ''
+  };
 
   for (let attempt = 0; attempt < MAX_ATTEMPTS; attempt++) {
     try {

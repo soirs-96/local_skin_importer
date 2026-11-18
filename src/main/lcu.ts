@@ -10,6 +10,7 @@
 export * from './lcu/types';
 export * from './lcu/parse';
 export * from './lcu/client';
+export * from './lcu/gameZone';
 export * from './lcu/scan';
 export * from './lcu/channels';
 export * from './lcu/credentials';

@@ -94,6 +94,13 @@ export const FAILURE_SUMMARIES: Record<LcuFailureCode, string> = {
 export interface CurrentSummoner {
   displayName: string;
   puuid: string;
+  /**
+   * Riot ID 的标签(# 后面那串)。
+   *
+   * 国服客户端的 `displayName` 是空的,真名在 `gameName` 里 —— 完整身份是
+   * `gameName#tagLine`。小程序那边的「游戏ID」存的就是这个标签。
+   */
+  tagLine: string;
 }
 
 /** 一条候选的实测记录,诊断面板里逐条展示。 */

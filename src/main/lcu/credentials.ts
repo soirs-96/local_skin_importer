@@ -323,7 +323,7 @@ function safeSummoner(body: unknown): CurrentSummoner {
   try {
     return toSummoner(body);
   } catch {
-    return { displayName: '', puuid: '' };
+    return { displayName: '', puuid: '', tagLine: '' };
   }
 }
 

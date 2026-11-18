@@ -71,6 +71,42 @@ describe('backend.syncOwnedSkins', () => {
     );
   });
 
+  it('sends the summoner tag and the game zone in the same request', async () => {
+    vi.mocked(getStoredToken).mockReturnValue('jwt');
+    vi.mocked(axios.post).mockResolvedValue({
+      data: { code: 200, data: { added: 0, updated: 0, totalOwned: 0 } }
+    });
+
+    await syncOwnedSkins('p', '林俊杰', [1], [], { summonerTag: '18557', gameZone: '1' });
+
+    expect(axios.post).toHaveBeenCalledWith(
+      expect.stringContaining('/api/skins/sync-user-skins'),
+      expect.objectContaining({
+        summonerTag: '18557',
+        gameZone: '1'
+      }),
+      expect.anything()
+    );
+  });
+
+  it('sends empty strings when the profile is unknown', async () => {
+    vi.mocked(getStoredToken).mockReturnValue('jwt');
+    vi.mocked(axios.post).mockResolvedValue({
+      data: { code: 200, data: { added: 0, updated: 0, totalOwned: 0 } }
+    });
+
+    await syncOwnedSkins('p', '林俊杰', [1]);
+
+    expect(axios.post).toHaveBeenCalledWith(
+      expect.stringContaining('/api/skins/sync-user-skins'),
+      expect.objectContaining({
+        summonerTag: '',
+        gameZone: ''
+      }),
+      expect.anything()
+    );
+  });
+
   it('throws when no token is stored', async () => {
     vi.mocked(getStoredToken).mockReturnValue(null);
     await expect(syncOwnedSkins('p', 's', [1])).rejects.toThrow(/未登录/);

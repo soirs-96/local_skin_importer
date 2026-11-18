@@ -35,6 +35,7 @@ const mocks = vi.hoisted(() => {
     detectLcuDeep: vi.fn(),
     createLcuClient: vi.fn(),
     getCurrentSummoner: vi.fn(),
+    fetchAreaId: vi.fn(),
     getInventoryOwnedSkinIds: vi.fn(),
     getStoreOwnedSkinIds: vi.fn(),
     resolveOwnedSkinIds: vi.fn(),
@@ -103,6 +104,7 @@ vi.mock('../lcu', () => ({
   detectLcuDeep: mocks.detectLcuDeep,
   createLcuClient: mocks.createLcuClient,
   getCurrentSummoner: mocks.getCurrentSummoner,
+  fetchAreaId: mocks.fetchAreaId,
   getInventoryOwnedSkinIds: mocks.getInventoryOwnedSkinIds,
   getStoreOwnedSkinIds: mocks.getStoreOwnedSkinIds,
   LcuNotRunningError: mocks.LcuNotRunningError,
@@ -237,6 +239,7 @@ describe('IPC wiring', () => {
     mocks.detectLcuDeep.mockReset();
     mocks.createLcuClient.mockReset();
     mocks.getCurrentSummoner.mockReset();
+    mocks.fetchAreaId.mockReset();
     mocks.getInventoryOwnedSkinIds.mockReset();
     mocks.getStoreOwnedSkinIds.mockReset();
     mocks.resolveOwnedSkinIds.mockReset();
@@ -282,6 +285,7 @@ describe('IPC wiring', () => {
     mocks.getFocusedWindow.mockReset();
     mocks.clipboardWriteText.mockReset();
     mocks.readSyncState.mockReturnValue({ lastSyncAt: null });
+    mocks.fetchAreaId.mockResolvedValue(null);
     mocks.matchPollerSubscribe.mockReturnValue(() => undefined);
     registerIpcHandlers();
   });
@@ -506,12 +510,37 @@ describe('IPC wiring', () => {
       summoner,
       ownedSkinIds: [1001, 2005],
       source: 'inventory',
-      catalogFiltered: true
+      catalogFiltered: true,
+      gameZone: ''
     });
     expect(mocks.resolveOwnedSkinIds).toHaveBeenCalledWith(client);
     expect(mocks.createLcuClient).toHaveBeenCalledWith(
       expect.objectContaining({ port: 1234, token: 'secret' })
     );
+  });
+
+  it('lcu:fetch-skins reports the game zone when the client knows it', async () => {
+    mocks.resolveLcuAuth.mockResolvedValue({
+      port: 1234,
+      token: 'secret',
+      protocol: 'https',
+      host: '127.0.0.1'
+    });
+    mocks.createLcuClient.mockReturnValue({} as AxiosInstance);
+    mocks.getCurrentSummoner.mockResolvedValue({
+      displayName: '林俊杰',
+      puuid: 'puuid-1',
+      tagLine: '18557'
+    });
+    mocks.resolveOwnedSkinIds.mockResolvedValue({
+      ownedSkinIds: [1001],
+      source: 'inventory',
+      catalogFiltered: true
+    });
+    mocks.fetchAreaId.mockResolvedValue(1);
+
+    const result = (await invoke('lcu:fetch-skins')) as { gameZone: string };
+    expect(result.gameZone).toBe('1');
   });
 
   it('lcu:fetch-skins propagates LCU-not-detected error as a real Error', async () => {
@@ -618,9 +647,54 @@ describe('IPC wiring', () => {
       payload.puuid,
       'Alice',
       [1, 2, 3],
-      []
+      [],
+      { summonerTag: '', gameZone: '' }
     );
     expect(mocks.writeSyncState).toHaveBeenCalledOnce();
+  });
+
+  it('backend:sync forwards the summoner tag and the game zone to the backend', async () => {
+    mocks.syncOwnedSkins.mockResolvedValue({ added: 0, updated: 0, totalOwned: 0 });
+
+    await invoke('backend:sync', {}, {
+      puuid: 'p'.padEnd(32, 'x'),
+      summonerName: '林俊杰',
+      ownedSkinIds: [1],
+      summonerTag: '18557',
+      gameZone: '1'
+    });
+
+    expect(mocks.syncOwnedSkins).toHaveBeenCalledWith(
+      'p'.padEnd(32, 'x'),
+      '林俊杰',
+      [1],
+      [],
+      { summonerTag: '18557', gameZone: '1' }
+    );
+  });
+
+  it('backend:sync rejects a non-string summoner tag', async () => {
+    await expect(
+      invoke('backend:sync', {}, {
+        puuid: 'p'.padEnd(32, 'x'),
+        summonerName: 'Alice',
+        ownedSkinIds: [1],
+        summonerTag: 18557
+      })
+    ).rejects.toThrow(/summonerTag/);
+    expect(mocks.syncOwnedSkins).not.toHaveBeenCalled();
+  });
+
+  it('backend:sync rejects a non-string game zone', async () => {
+    await expect(
+      invoke('backend:sync', {}, {
+        puuid: 'p'.padEnd(32, 'x'),
+        summonerName: 'Alice',
+        ownedSkinIds: [1],
+        gameZone: 1
+      })
+    ).rejects.toThrow(/gameZone/);
+    expect(mocks.syncOwnedSkins).not.toHaveBeenCalled();
   });
 
   it('backend:sync forwards the top champions to the backend', async () => {
@@ -640,7 +714,8 @@ describe('IPC wiring', () => {
       'p'.padEnd(32, 'x'),
       'Alice',
       [1],
-      topChampions
+      topChampions,
+      { summonerTag: '', gameZone: '' }
     );
   });
 

@@ -89,11 +89,15 @@ export interface FetchSkinsResult {
   summoner: {
     displayName: string;
     puuid: string;
+    /** Riot ID 的标签(# 后面那串)—— 小程序那边叫「游戏ID」 */
+    tagLine: string;
   };
   ownedSkinIds: number[];
   source: OwnedDataSource;
   /** 是否已跟站内目录取交集(后端没升级 skinId 字段时为 false) */
   catalogFiltered: boolean;
+  /** 大区编号(腾讯那套)—— 认不出来是空串 */
+  gameZone: string;
 }
 
 export interface AuthStatus {
@@ -109,6 +113,10 @@ export interface SyncPayload {
   topChampions?: TopChampion[];
   /** auto = 启动自动同步(60s 节流);manual = 用户手点(10s 节流) */
   mode?: 'auto' | 'manual';
+  /** Riot ID 的标签(# 后面那串)—— 后端回填小程序的「游戏ID」 */
+  summonerTag?: string;
+  /** 大区编号(腾讯那套)—— 后端转成大区名回填 */
+  gameZone?: string;
 }
 
 export interface SyncResult {

@@ -114,10 +114,12 @@ export function toSummoner(data: unknown): CurrentSummoner {
   }
   const gameName = typeof data.gameName === 'string' ? data.gameName : '';
   const displayName = typeof data.displayName === 'string' ? data.displayName : '';
+  const tagLine = typeof data.tagLine === 'string' ? data.tagLine : '';
   return {
     // 国服客户端的 displayName 是空的,真名在 gameName 里。
     displayName: gameName || displayName,
-    puuid: typeof data.puuid === 'string' ? data.puuid : ''
+    puuid: typeof data.puuid === 'string' ? data.puuid : '',
+    tagLine
   };
 }
 
