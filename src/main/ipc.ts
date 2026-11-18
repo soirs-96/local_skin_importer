@@ -399,6 +399,13 @@ export function registerIpcHandlers(): void {
   /** 最近一局的两队人(gameflow)。 */
   ipcMain.handle('match:get-opponents', async () => matchPoller.fetchOpponents());
 
+  /**
+   * 英雄名 → 编号 的对照表。
+   *
+   * AI 推荐只吐名字不吐编号,界面靠这张表把名字配上头像。
+   */
+  ipcMain.handle('match:get-champion-index', () => matchPoller.getChampionIndex());
+
   ipcMain.handle('match:get-recommendation', () => getRecommendationState());
 
   ipcMain.handle('match:recommend', async () => {

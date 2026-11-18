@@ -9,7 +9,7 @@ import { getMatchSummoner } from './summoner';
 import { getOpponents } from './opponents';
 import { failedLookup, lookupPlayer as lookupPlayerByQuery } from './playerLookup';
 import { fetchPlayerGames as fetchPlayerGamesFromLedge } from './tencentLedge';
-import { emptyStaticData, loadStaticData, type StaticData } from './staticData';
+import { championIndexEntries, emptyStaticData, loadStaticData, type StaticData } from './staticData';
 import {
   LcuWsClient,
   extractRankedEntriesFromEvent,
@@ -28,6 +28,7 @@ import type {
   RankedEntry,
   RecentMatchesSummary
 } from '../../shared/match';
+import type { ChampionIndexEntry } from '../../shared/recommendation';
 
 /**
  * 对局助手的轮询器。
@@ -285,6 +286,23 @@ export class MatchPoller {
       return await getOpponents(client, staticData, myPuuid);
     } catch {
       return { phase: '', queueType: '', inGame: false, opponents: [] };
+    }
+  }
+
+  /**
+   * 英雄名 → 编号 的对照表。
+   *
+   * AI 推荐只吐名字不吐编号,界面靠这张表把名字配上头像。
+   * 拉不到就空表 —— 界面退回纯文字,不出错。
+   */
+  async getChampionIndex(): Promise<ChampionIndexEntry[]> {
+    try {
+      const auth = await this.ensureAuth();
+      const client = lcu.createLcuClient(auth);
+      const staticData = await this.ensureStaticData(client);
+      return championIndexEntries(staticData);
+    } catch {
+      return [];
     }
   }
 

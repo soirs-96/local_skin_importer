@@ -151,7 +151,9 @@ const roster = computed<RosterPlayer[]>(() =>
  * 分数走腾讯的对局服务 —— 客户端那层只给得出自己的战绩,所以每个人都要
  * 单独拉一次(带缓存和并发限流,见 useRosterScores)。
  */
-const { scores, loading, refresh: refreshScores } = useRosterScores(() => roster.value);
+// 叫 pending —— 同名的 loading 是这个组件自己的 prop(刷新按钮的转圈),
+// 撞名的话模板里 :loading="loading" 绑的就不是父组件传的那个了。
+const { scores, loading: pending, refresh: refreshScores } = useRosterScores(() => roster.value);
 
 /** 点「刷新」:名单和分数一起重来 —— 分数挂了三次就放弃,这是唯一的手动出口。 */
 function onRefresh(): void {
@@ -169,7 +171,7 @@ interface ScoredPlayer extends RosterPlayer {
 
 const scoredRoster = computed<ScoredPlayer[]>(() =>
   roster.value.map((player) => {
-    const display = describeRosterScore(player.puuid, scores.value, loading.value);
+    const display = describeRosterScore(player.puuid, scores.value, pending.value);
     return {
       ...player,
       scoreState: display.state,

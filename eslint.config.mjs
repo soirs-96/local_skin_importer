@@ -26,12 +26,24 @@ export default tseslint.config(
   },
   {
     // 构建期脚本是纯 Node 的 .mjs,不在 typescript-eslint 的覆盖范围内,
-    // no-undef 会把 console / process 报成未定义。
+    // no-undef 会把 console / process / Buffer 报成未定义。
     files: ['scripts/**'],
     languageOptions: {
       globals: {
         console: 'readonly',
-        process: 'readonly'
+        process: 'readonly',
+        Buffer: 'readonly'
+      }
+    }
+  },
+  {
+    // public/ 下的脚本原样拷进安装包,在浏览器里跑 —— 既不是 Node 也不是 TS。
+    files: ['src/renderer/public/**/*.js'],
+    languageOptions: {
+      globals: {
+        window: 'readonly',
+        document: 'readonly',
+        localStorage: 'readonly'
       }
     }
   },

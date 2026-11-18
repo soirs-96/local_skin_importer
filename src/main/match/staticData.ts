@@ -1,6 +1,7 @@
 import axios, { AxiosInstance } from 'axios';
 import { lcuIconUrl } from '../../shared/icons';
 import { isRoleQuestItem } from '../../shared/gameLabels';
+import type { ChampionIndexEntry } from '../../shared/recommendation';
 import { setChampionFiles, setIconVersion } from './iconMeta';
 import { patchCandidates } from './patchVersion';
 
@@ -40,6 +41,8 @@ const SKIN_ALIAS_PREFIXES = ['Jade_', 'PROJECT_', 'Spirit_', 'StarGuardian_'];
 export interface ChampionInfo {
   name: string;
   iconUrl: string | null;
+  /** 英文名;没有就空 —— AI 有时写英文,认英文名才能配上头像 */
+  nameEn?: string;
 }
 
 export interface ItemInfo {
@@ -304,7 +307,8 @@ export function parseLcuChampions(raw: unknown): Map<number, ChampionInfo> {
   for (const [id, summary] of parseLcuChampionSummaries(raw)) {
     out.set(id, {
       name: summary.name,
-      iconUrl: lcuIconUrl('champion', id)
+      iconUrl: lcuIconUrl('champion', id),
+      nameEn: summary.nameEn
     });
   }
   return out;
@@ -384,7 +388,14 @@ async function loadDdragonVersion(version: string): Promise<StaticData | null> {
   const runes = runesRaw ? parseRunes(runesRaw) : new Map<number, string>();
 
   // 图标代理退到 Data Dragon 时要用的对照表
-  setChampionFiles(parseDdragonChampionFiles(championsRaw));
+  const championFiles = parseDdragonChampionFiles(championsRaw);
+  setChampionFiles(championFiles);
+
+  // 英文名从图片文件名反推(Aatrox.png → Aatrox)—— AI 偶尔写英文名。
+  for (const [id, info] of champions) {
+    const file = championFiles.get(id);
+    if (file && !info.nameEn) info.nameEn = file.replace(/\.png$/i, '');
+  }
 
   return { version, champions, items, runes };
 }
@@ -420,7 +431,12 @@ async function fetchFromClient(client: AxiosInstance, url: string): Promise<unkn
 /** 两份数据取并集,Data Dragon 优先。 */
 function mergeStaticData(primary: StaticData, fallback: StaticData): StaticData {
   const champions = new Map(fallback.champions);
-  for (const [id, info] of primary.champions) champions.set(id, info);
+  for (const [id, info] of primary.champions) {
+    // 中文名听 Data Dragon 的,英文名谁有算谁的 ——
+    // Data Dragon 的 champion.json 里没有英文名,只有图片文件名。
+    const local = fallback.champions.get(id);
+    champions.set(id, { ...info, nameEn: info.nameEn ?? local?.nameEn });
+  }
 
   const items = new Map(fallback.items);
   for (const [id, info] of primary.items) {
@@ -474,6 +490,25 @@ async function loadStaticDataInner(lcuClient?: AxiosInstance): Promise<StaticDat
 
   const lcu = await lcuPromise;
   return ddragon ? mergeStaticData(ddragon, lcu) : lcu;
+}
+
+/* -------------------------------------------------------------------------- */
+/*                                英雄名对照                                    */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * 英雄名 → 编号 的对照表。
+ *
+ * 界面靠它把 AI 给的英雄名配上头像 —— AI 只吐名字,不吐编号。
+ * 只给名字和编号,图标地址由渲染进程自己拼(`lcuicon://`)。
+ */
+export function championIndexEntries(data: StaticData): ChampionIndexEntry[] {
+  const out: ChampionIndexEntry[] = [];
+  for (const [id, info] of data.champions) {
+    if (!info.name) continue;
+    out.push({ id, name: info.name, nameEn: info.nameEn });
+  }
+  return out;
 }
 
 /* -------------------------------------------------------------------------- */

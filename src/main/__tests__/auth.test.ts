@@ -18,6 +18,12 @@ const mockSafeStorage = {
   isEncryptionAvailable: vi.fn(() => true)
 };
 
+// vi.mock 的工厂会被提升到模块最前面,里面引用模块级的 const 会撞 TDZ,
+// 所以把 mock 出来的 safeStorage 挂到 globalThis 上,再从这里取回来。
+interface MockGlobal {
+  __mockSafeStorage?: typeof mockSafeStorage;
+}
+
 vi.mock('electron', () => {
   const storage = {
     encryptString: vi.fn((s: string) => Buffer.from(`enc:${s}`)),
@@ -26,7 +32,7 @@ vi.mock('electron', () => {
   };
   // Expose the storage object on globalThis so the test file can reach it
   // after hoisting completes.
-  (globalThis as any).__mockSafeStorage = storage;
+  (globalThis as unknown as MockGlobal).__mockSafeStorage = storage;
   return {
     app: { getPath: vi.fn() },
     safeStorage: storage
@@ -34,7 +40,8 @@ vi.mock('electron', () => {
 });
 
 const mockGetPath = vi.mocked(app.getPath);
-const safeStorageMock = (globalThis as any).__mockSafeStorage as typeof mockSafeStorage;
+const mockGlobal = globalThis as unknown as MockGlobal;
+const safeStorageMock = mockGlobal.__mockSafeStorage as typeof mockSafeStorage;
 
 let tmpDir: string;
 let tokenPath: string;

@@ -12,6 +12,7 @@ import type {
   TopChampion
 } from '../shared/match';
 import { DEV_LOG_CHANNEL } from '../shared/dev';
+import type { ChampionIndexEntry } from '../shared/recommendation';
 import type { DevLogLine } from '../shared/dev';
 import type { AutoAcceptState } from '../shared/autoAccept';
 import type { LcuDiagnosis, LcuFailureCode } from '../main/lcu/types';
@@ -41,6 +42,8 @@ export type {
 } from '../shared/match';
 
 export type { LcuChannelReport, LcuDiagnosis, LcuFailureCode } from '../main/lcu/types';
+
+export type { ChampionIndexEntry } from '../shared/recommendation';
 
 export interface LcuStatus {
   running: boolean;
@@ -210,6 +213,8 @@ const api = {
   getOpponents: (): Promise<OpponentsSnapshot> => invoke('match:get-opponents'),
   /** 主进程里存着的上一份推荐(切页回来还能看到) */
   getRecommendation: (): Promise<RecommendationState> => invoke('match:get-recommendation'),
+  /** 英雄名 → 编号 的对照表 —— 界面靠它把 AI 给的英雄名配上头像 */
+  getChampionIndex: (): Promise<ChampionIndexEntry[]> => invoke('match:get-champion-index'),
   /** 拿当前选人会话去生成推荐 */
   requestRecommendation: (): Promise<RecommendationState> => invoke('match:recommend'),
   getLlmStatus: (): Promise<LlmStatus> => invoke('llm:get-status'),

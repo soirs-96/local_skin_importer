@@ -1,12 +1,14 @@
 import { describe, expect, it } from 'vitest';
 import {
+  championIndexEntries,
   parseDdragonChampionFiles,
   parseDdragonChampions,
   parseDdragonItems,
   parseLcuChampionSummaries,
   parseLcuChampions,
   parseLcuItems,
-  parseRunes
+  parseRunes,
+  type ChampionInfo
 } from '../staticData';
 
 describe('parseDdragonChampions', () => {
@@ -27,6 +29,21 @@ describe('parseDdragonChampions', () => {
 
   it('非数组输入返回空表', () => {
     expect(parseDdragonChampions({ oops: true }).size).toBe(0);
+  });
+});
+
+describe('championIndexEntries', () => {
+  it('只收有名字的英雄,英文名一并带上', () => {
+    const entries = championIndexEntries({
+      version: null,
+      champions: new Map<number, ChampionInfo>([
+        [1, { name: '安妮', iconUrl: 'lcuicon://champion/1.png', nameEn: 'Annie' }],
+        [2, { name: '', iconUrl: null }]
+      ]),
+      items: new Map(),
+      runes: new Map()
+    });
+    expect(entries).toEqual([{ id: 1, name: '安妮', nameEn: 'Annie' }]);
   });
 });
 

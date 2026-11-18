@@ -57,6 +57,7 @@ const mocks = vi.hoisted(() => {
     matchPollerLookupPlayer: vi.fn(),
     matchPollerFetchPlayerGames: vi.fn(),
     matchPollerFetchOpponents: vi.fn(),
+    matchPollerGetChampionIndex: vi.fn(),
     getRecommendationState: vi.fn(),
     requestRecommendation: vi.fn(),
     getLlmStatus: vi.fn(),
@@ -134,7 +135,8 @@ vi.mock('../match/poller', () => ({
     subscribe: mocks.matchPollerSubscribe,
     lookupPlayer: mocks.matchPollerLookupPlayer,
     fetchPlayerGames: mocks.matchPollerFetchPlayerGames,
-    fetchOpponents: mocks.matchPollerFetchOpponents
+    fetchOpponents: mocks.matchPollerFetchOpponents,
+    getChampionIndex: mocks.matchPollerGetChampionIndex
   }
 }));
 
@@ -230,6 +232,7 @@ describe('IPC wiring', () => {
     mocks.matchPollerLookupPlayer.mockReset();
     mocks.matchPollerFetchPlayerGames.mockReset();
     mocks.matchPollerFetchOpponents.mockReset();
+    mocks.matchPollerGetChampionIndex.mockReset();
     mocks.getRecommendationState.mockReset();
     mocks.requestRecommendation.mockReset();
     mocks.getLlmStatus.mockReset();
@@ -290,7 +293,7 @@ describe('IPC wiring', () => {
     ]);
   });
 
-  it('registers all 26 ipc channels on call to registerIpcHandlers', () => {
+  it('registers all 27 ipc channels on call to registerIpcHandlers', () => {
     expect(mocks.ipcMainHandle.mock.calls.map(([channel]) => channel)).toEqual([
       'lcu:check-status',
       'lcu:fetch-skins',
@@ -310,6 +313,7 @@ describe('IPC wiring', () => {
       'match:lookup-player',
       'match:fetch-player-games',
       'match:get-opponents',
+      'match:get-champion-index',
       'match:get-recommendation',
       'match:recommend',
       'llm:get-status',
@@ -838,6 +842,13 @@ describe('IPC wiring', () => {
     mocks.matchPollerFetchOpponents.mockResolvedValue(snapshot);
 
     expect(await invoke('match:get-opponents')).toEqual(snapshot);
+  });
+
+  it('match:get-champion-index returns the champion name table', async () => {
+    const entries = [{ id: 222, name: '千珏', nameEn: 'Kayn' }];
+    mocks.matchPollerGetChampionIndex.mockResolvedValue(entries);
+
+    expect(await invoke('match:get-champion-index')).toEqual(entries);
   });
 
   it('llm:set-key saves the key and returns the refreshed status', async () => {
