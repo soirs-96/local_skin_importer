@@ -156,7 +156,13 @@ export function scoreGame(game: PlayerGame): GameScore | null {
 
   const details: PlayerScoreDetail[] = participants.map((p) => {
     const team = totals.get(p.teamId) ?? { kills: 0, gold: 0, damage: 0, cs: 0 };
-    const position = resolvePosition(game.mapId, p.lane, p.role, p.roleBoundItemName);
+    const position = resolvePosition(game.mapId, p.lane, p.role, p.roleBoundItemName, {
+      kills: p.kills,
+      assists: p.assists,
+      deaths: p.deaths,
+      minionKills: p.minionKills,
+      gameMaxMinionKills: game.gameMaxMinionKills
+    });
     const base = POSITION_BASELINES[position];
 
     // 队伍 0 击杀时没人能参团 —— 这时候 KP 记成该位置的基准值(不奖不罚)。

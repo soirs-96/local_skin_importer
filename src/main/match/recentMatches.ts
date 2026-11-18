@@ -142,6 +142,22 @@ function roleBoundItemName(
   return staticData.items.get(id)?.name ?? '';
 }
 
+/**
+ * 这一局十个人里最高的补刀。
+ *
+ * 拿来跟「我」的补刀比 —— 辅助不farm、射手要吃线,这是下路那两个人
+ * 唯一分得开的信号(任务道具给的是「下路任务」,分不开)。
+ */
+function gameMaxMinionKills(participants: Record<string, unknown>[]): number {
+  let max = 0;
+  for (const participant of participants) {
+    const stats = isRecord(participant.stats) ? participant.stats : {};
+    const cs = num(stats.totalMinionsKilled);
+    if (cs > max) max = cs;
+  }
+  return max;
+}
+
 export function parseMatchEntry(
   raw: unknown,
   staticData: StaticData,
@@ -156,6 +172,7 @@ export function parseMatchEntry(
   const participant = simplified ? raw : findMyParticipant(raw, puuid);
   const stats = isRecord(participant.stats) ? participant.stats : {};
   const timeline = isRecord(participant.timeline) ? participant.timeline : {};
+  const participants = Array.isArray(raw.participants) ? raw.participants.filter(isRecord) : [];
 
   const championId = num(participant.championId);
   const info = staticData.champions.get(championId);
@@ -189,6 +206,8 @@ export function parseMatchEntry(
     win: bool(stats.win),
     timestampMs: num(raw.gameCreation) || num(raw.gameCreationDate),
     durationS: num(raw.gameDuration),
+    minionKills: num(stats.totalMinionsKilled),
+    gameMaxMinionKills: gameMaxMinionKills(participants),
     items: extractItemIds(stats).map((itemId) => {
       const item = staticData.items.get(itemId);
       return {

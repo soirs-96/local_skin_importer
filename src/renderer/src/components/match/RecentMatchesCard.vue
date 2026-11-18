@@ -78,7 +78,13 @@ const summaryText = computed<string>(() => {
  * 没有任务道具才退回 lane / role(那两个字段实测会写错)。
  */
 function positionText(match: RecentMatch): string {
-  return positionLabel(gameMapId(match), match.lane, match.role, match.roleBoundItemName);
+  return positionLabel(gameMapId(match), match.lane, match.role, match.roleBoundItemName, {
+    kills: match.kills,
+    assists: match.assists,
+    deaths: match.deaths,
+    minionKills: match.minionKills,
+    gameMaxMinionKills: match.gameMaxMinionKills
+  });
 }
 
 /** 模式 · 时间。 */

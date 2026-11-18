@@ -272,6 +272,13 @@ export function parseLedgeGame(
   const me = findParticipant(participants, puuid);
   if (!me) return null;
 
+  // 十个人里最高的补刀 —— 拿来判断「我」是不是不farm(辅助)。
+  let gameMaxMinionKills = 0;
+  for (const participant of participants) {
+    const cs = num(participant.totalMinionsKilled);
+    if (cs > gameMaxMinionKills) gameMaxMinionKills = cs;
+  }
+
   const championId = num(me.championId);
   const championInfo = staticData.champions.get(championId);
   const championName =
@@ -304,6 +311,7 @@ export function parseLedgeGame(
     goldEarned: num(me.goldEarned),
     damageToChampions: num(me.totalDamageDealtToChampions),
     minionKills: num(me.totalMinionsKilled),
+    gameMaxMinionKills,
     items: extractItemIds(me).map((itemId) => {
       const item = staticData.items.get(itemId);
       return {

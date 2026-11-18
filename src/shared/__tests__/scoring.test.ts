@@ -68,6 +68,7 @@ function game(peers: PlayerPeer[], overrides: Partial<PlayerGame> = {}): PlayerG
     goldEarned: 10000,
     damageToChampions: 10000,
     minionKills: 100,
+    gameMaxMinionKills: 100,
     items: [],
     peers,
     ...overrides
@@ -120,6 +121,11 @@ describe('resolvePosition', () => {
     expect(resolvePosition(11, 'JUNGLE', 'NONE', '上路任务奖励')).toBe('TOP');
     expect(resolvePosition(11, 'NONE', 'NONE', '中路任务')).toBe('MID');
     expect(resolvePosition(11, 'NONE', 'NONE', '下路任务')).toBe('ADC');
+  });
+
+  it('「下路任务」说的是分路 —— 遇上辅助型数据要判辅助', () => {
+    const support = { kills: 3, assists: 31, deaths: 4, minionKills: 45, gameMaxMinionKills: 220 };
+    expect(resolvePosition(11, 'BOTTOM', 'NONE', '下路任务', support)).toBe('SUPPORT');
   });
 
   it('不是任务道具就当没有 —— 普通装备名不能当位置判据', () => {

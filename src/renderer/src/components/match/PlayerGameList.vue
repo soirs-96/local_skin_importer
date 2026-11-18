@@ -244,7 +244,13 @@ function modeText(game: PlayerGame): string {
  * 没有任务道具才退回 lane / role(那两个字段实测会写错)。
  */
 function positionText(game: PlayerGame): string {
-  return positionLabel(gameMapId(game), game.lane, game.role, game.roleBoundItemName);
+  return positionLabel(gameMapId(game), game.lane, game.role, game.roleBoundItemName, {
+    kills: game.kills,
+    assists: game.assists,
+    deaths: game.deaths,
+    minionKills: game.minionKills,
+    gameMaxMinionKills: game.gameMaxMinionKills
+  });
 }
 
 function formatGold(gold: number): string {

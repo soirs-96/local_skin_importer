@@ -40,6 +40,8 @@ function recent(
     win: match.win,
     timestampMs: 1794315181000,
     durationS: 1800,
+    minionKills: 100,
+    gameMaxMinionKills: 100,
     items: []
   }));
   const wins = list.filter((m) => m.win).length;

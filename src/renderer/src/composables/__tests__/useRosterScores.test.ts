@@ -63,6 +63,7 @@ function rankedGame(win = true): PlayerGame {
     goldEarned: 10000,
     damageToChampions: 10000,
     minionKills: 100,
+    gameMaxMinionKills: 100,
     items: [],
     peers
   };

@@ -120,6 +120,15 @@ export interface RecentMatch {
   win: boolean;
   timestampMs: number;
   durationS: number;
+  /**
+   * 这一局的补刀数。
+   *
+   * 用来跟全场最高补刀比 —— 辅助基本不farm,射手要吃线,
+   * 这是下路那两个人(射手 / 辅助)唯一分得开的信号。
+   */
+  minionKills: number;
+  /** 这一局十个人里最高的补刀;0 = 数据里没有 */
+  gameMaxMinionKills: number;
   items: RecentMatchItem[];
 }
 
@@ -266,6 +275,13 @@ export interface PlayerGame {
   goldEarned: number;
   damageToChampions: number;
   minionKills: number;
+  /**
+   * 这一局十个人里最高的补刀;0 = 数据里没有。
+   *
+   * 跟自己的补刀比,才知道是不是「不farm」—— 辅助和射手都在下路,
+   * 任务道具和分路都分不开,只有补刀能分(见 gameLabels.looksLikeSupport)。
+   */
+  gameMaxMinionKills: number;
   items: RecentMatchItem[];
   /**
    * 这一局的全部十个人。

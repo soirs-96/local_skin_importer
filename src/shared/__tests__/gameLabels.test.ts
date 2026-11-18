@@ -146,6 +146,57 @@ describe('positionLabel', () => {
   });
 });
 
+describe('下路那两个人(射手 / 辅助)', () => {
+  /** 一局辅助的样子:助攻多、补刀少。 */
+  const support = {
+    kills: 3,
+    assists: 31,
+    deaths: 4,
+    minionKills: 45,
+    gameMaxMinionKills: 220
+  };
+
+  /** 一局射手的样子:吃线、人头多。 */
+  const adc = {
+    kills: 12,
+    assists: 5,
+    deaths: 3,
+    minionKills: 205,
+    gameMaxMinionKills: 220
+  };
+
+  it('「下路任务」说的是分路 —— 辅助那局不能判成射手', () => {
+    expect(positionLabel(11, 'BOTTOM', 'NONE', '下路任务', support)).toBe('辅助');
+  });
+
+  it('定位写着辅助就认辅助 —— 不管任务道具给的是什么', () => {
+    expect(positionLabel(11, 'BOTTOM', 'SUPPORT', '下路任务')).toBe('辅助');
+  });
+
+  it('定位写错了就听数据的 —— 补刀到全场最高的三分之二,那是在吃线,是射手', () => {
+    const farmer = { kills: 10, assists: 6, deaths: 2, minionKills: 200, gameMaxMinionKills: 210 };
+    expect(positionLabel(11, 'BOTTOM', 'SUPPORT', '下路任务', farmer)).toBe('射手');
+  });
+
+  it('真的是射手就还是射手', () => {
+    expect(positionLabel(11, 'BOTTOM', 'CARRY', '下路任务', adc)).toBe('射手');
+  });
+
+  it('没有任务道具、定位写 DUO 时也按数据分一次', () => {
+    expect(positionLabel(11, 'BOTTOM', 'DUO', '', support)).toBe('辅助');
+    expect(positionLabel(11, 'BOTTOM', 'DUO', '', adc)).toBe('射手');
+  });
+
+  it('没有补刀数据就靠助攻硬扛 —— 二十个助攻才肯改判', () => {
+    const noCs = { kills: 3, assists: 31, deaths: 4, minionKills: 0, gameMaxMinionKills: 0 };
+    expect(positionLabel(11, 'BOTTOM', 'NONE', '下路任务', noCs)).toBe('辅助');
+
+    // 助攻不够多 —— 射手崩了也有十来个助攻,不能凭这个改判
+    const notEnough = { kills: 5, assists: 14, deaths: 6, minionKills: 0, gameMaxMinionKills: 0 };
+    expect(positionLabel(11, 'BOTTOM', 'NONE', '下路任务', notEnough)).toBe('射手');
+  });
+});
+
 describe('positionFromRoleQuest', () => {
   it('中文任务道具认得', () => {
     expect(positionFromRoleQuest('打野任务')).toBe('JUNGLE');

@@ -201,6 +201,87 @@ export function positionFromRoleQuest(itemName: string): PositionKey {
 }
 
 /**
+ * 判位置时能用的「这一局的数据」。
+ *
+ * **只用来在射手和辅助之间分** —— 上中下野四个位置各占一条路,只有下路站着
+ * 两个人(射手 + 辅助)。而任务道具给的「下路任务」说的是**分路**不是位置,
+ * lane 给的也是 BOTTOM —— 这两个都分不出谁是辅助。只剩数据能分:
+ * 辅助助攻多、补刀少。
+ */
+export interface PositionEvidence {
+  kills: number;
+  assists: number;
+  deaths: number;
+  /** 补刀数;0 = 数据里没有这一项 */
+  minionKills: number;
+  /** 这一局十个人里最多的补刀;0 = 数据里没有这一项 */
+  gameMaxMinionKills: number;
+}
+
+/** 助攻到这个数才谈得上「辅助型」。 */
+const SUPPORT_ASSIST_FLOOR = 8;
+
+/** 补刀不到全场最高这个比例,才算「不farm」—— 辅助不补刀,射手要补。 */
+const SUPPORT_CS_RATIO = 0.35;
+
+/** 没有补刀数据时的门槛 —— 只看 KDA 就得挑严得多。 */
+const SUPPORT_ASSIST_FLOOR_NO_CS = 20;
+
+/** 补刀到全场最高这个比例以上,就算「明显在吃线」—— 辅助吃不了这么多线。 */
+const FARMING_CS_RATIO = 0.65;
+
+/**
+ * 这局的数据像不像辅助。
+ *
+ * 两条都成立才算:
+ *
+ *   - **助攻压过击杀** —— 辅助的活儿是给队友创造击杀,自己拿人头是少数;
+ *   - **补刀少** —— 辅助基本不farm,射手要吃线。
+ *
+ * 没有补刀数据时只能拿 KDA 硬扛,门槛抬高到「助攻 20+」——
+ * 射手崩了也能有二十个助攻,但那种局补刀不会少,两边一起看才稳。
+ */
+export function looksLikeSupport(evidence: PositionEvidence): boolean {
+  const { kills, assists, deaths, minionKills, gameMaxMinionKills } = evidence;
+  if (assists < SUPPORT_ASSIST_FLOOR) return false;
+  if (assists < kills * 2) return false;
+
+  if (gameMaxMinionKills > 0 && minionKills > 0) {
+    return minionKills <= gameMaxMinionKills * SUPPORT_CS_RATIO;
+  }
+
+  // 没有补刀数据:要求助攻同时压过击杀和死亡。
+  return assists >= SUPPORT_ASSIST_FLOOR_NO_CS && assists >= kills * 3 && assists >= deaths * 2;
+}
+
+/**
+ * 这局的数据像不像在吃线(也就是射手)。
+ *
+ * 补刀到全场最高的 65% 以上 —— 辅助吃不了这么多线。
+ */
+export function looksLikeFarming(evidence: PositionEvidence): boolean {
+  const { minionKills, gameMaxMinionKills } = evidence;
+  if (gameMaxMinionKills <= 0 || minionKills <= 0) return false;
+  return minionKills >= gameMaxMinionKills * FARMING_CS_RATIO;
+}
+
+/**
+ * 下路那两个人 —— 这个是辅助还是射手。
+ *
+ * **数据比定位准**:定位字段实测会写错(打野那局就写成了 SUPPORT),
+ * 而补刀骗不了人 —— 辅助不farm,射手要吃线。
+ * 两者都没有就听定位,再没有就当射手(任务道具说的是「下路」)。
+ */
+function resolveBottomRole(role: string, evidence?: PositionEvidence): 'ADC' | 'SUPPORT' {
+  if (evidence) {
+    if (looksLikeSupport(evidence)) return 'SUPPORT';
+    if (looksLikeFarming(evidence)) return 'ADC';
+  }
+  if (role === 'SUPPORT') return 'SUPPORT';
+  return 'ADC';
+}
+
+/**
  * 定这个人在打什么位置。
  *
  * 三个来源,按可靠程度排:
@@ -212,27 +293,37 @@ export function positionFromRoleQuest(itemName: string): PositionKey {
  * 4. 都认不出来 —— `UNKNOWN`。**不猜。**
  *
  * 大乱斗一律 `UNKNOWN` —— 那边的 `lane` 和 `role` 都是乱的。
+ *
+ * **唯一的例外是下路**:「下路任务」说的是分路,下路站着射手和辅助两个人,
+ * 所以它给出 ADC 之后还要再分一次 —— 先看数据(补刀少、助攻多的是辅助),
+ * 再看定位(实测踩到过:辅助那局被判成了射手)。
  */
 export function resolvePosition(
   mapId: number,
   lane: string,
   role: string,
-  roleBoundItemName = ''
+  roleBoundItemName = '',
+  evidence?: PositionEvidence
 ): PositionKey {
   if (mapId !== SUMMONERS_RIFT_MAP_ID) return 'UNKNOWN';
 
   const quest = positionFromRoleQuest(roleBoundItemName);
-  if (quest !== 'UNKNOWN') return quest;
-
   const r = role.toUpperCase();
+
+  if (quest !== 'UNKNOWN') {
+    // 下路任务 = 分路,不是位置 —— 射手和辅助都在下路,得再分一次。
+    if (quest !== 'ADC') return quest;
+    return resolveBottomRole(r, evidence);
+  }
+
   if (r === 'SUPPORT') return 'SUPPORT';
-  if (r === 'CARRY' || r === 'DUO') return 'ADC';
+  if (r === 'CARRY' || r === 'DUO') return resolveBottomRole(r, evidence);
 
   const l = lane.toUpperCase();
   if (l === 'JUNGLE') return 'JUNGLE';
   if (l === 'MIDDLE' || l === 'MID') return 'MID';
   if (l === 'TOP') return 'TOP';
-  if (l === 'BOTTOM' || l === 'BOT') return 'ADC';
+  if (l === 'BOTTOM' || l === 'BOT') return resolveBottomRole(r, evidence);
   if (r === 'SOLO') return 'MID';
   return 'UNKNOWN';
 }
@@ -250,10 +341,11 @@ export function positionLabel(
   mapId: number,
   lane: string,
   role: string,
-  roleBoundItemName = ''
+  roleBoundItemName = '',
+  evidence?: PositionEvidence
 ): string {
   if (mapId !== SUMMONERS_RIFT_MAP_ID) return '';
-  const position = resolvePosition(mapId, lane, role, roleBoundItemName);
+  const position = resolvePosition(mapId, lane, role, roleBoundItemName, evidence);
   if (position === 'UNKNOWN') return '';
   return POSITION_LABELS[position];
 }

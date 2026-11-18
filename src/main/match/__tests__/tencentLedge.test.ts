@@ -140,6 +140,16 @@ describe('parseLedgeGame', () => {
     expect(parsed?.roleBoundItemName).toBe('');
   });
 
+  it('全场最高补刀带出来 —— 射手和辅助就靠它分', () => {
+    const parsed = parseLedgeGame(
+      game([participant(), participant({ puuid: OTHER, totalMinionsKilled: 220 })]),
+      ME,
+      staticData
+    );
+    expect(parsed?.minionKills).toBe(45);
+    expect(parsed?.gameMaxMinionKills).toBe(220);
+  });
+
   it('这一局里没有目标玩家就当没有', () => {
     const parsed = parseLedgeGame(game([participant({ puuid: OTHER })]), ME, staticData);
     expect(parsed).toBeNull();

@@ -208,6 +208,46 @@ describe('parseMatchEntry', () => {
     expect(match?.roleBoundItemName).toBe('');
   });
 
+  it('补刀和全场最高补刀带出来 —— 判射手还是辅助要用', () => {
+    const match = parseMatchEntry(
+      {
+        gameId: 32,
+        championId: 1,
+        mapId: 11,
+        participants: [
+          {
+            participantId: 1,
+            championId: 1,
+            timeline: { lane: 'BOTTOM', role: 'CARRY' },
+            stats: { kills: 3, deaths: 4, assists: 31, win: true, totalMinionsKilled: 45 }
+          },
+          {
+            participantId: 2,
+            championId: 2,
+            stats: { kills: 12, deaths: 3, assists: 5, win: true, totalMinionsKilled: 220 }
+          }
+        ]
+      },
+      staticData
+    );
+    expect(match?.minionKills).toBe(45);
+    expect(match?.gameMaxMinionKills).toBe(220);
+  });
+
+  it('简化版没有十个人 —— 全场最高补刀就是 0,位置退回 lane / role 判', () => {
+    const match = parseMatchEntry(
+      {
+        gameId: 33,
+        championId: 1,
+        mapId: 11,
+        stats: { kills: 3, deaths: 4, assists: 31, win: true, totalMinionsKilled: 45 }
+      },
+      staticData
+    );
+    expect(match?.minionKills).toBe(45);
+    expect(match?.gameMaxMinionKills).toBe(0);
+  });
+
   it('非对象返回 null', () => {
     expect(parseMatchEntry('nope', staticData)).toBeNull();
   });
