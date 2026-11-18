@@ -43,6 +43,12 @@ export interface ChampSelectMember extends ChampionRef {
   /** LCU 给的位置:TOP / MIDDLE / BOTTOM / JUNGLE / SUPPORT,可能是空串 */
   assignedPosition: string;
   cellId: number;
+  /**
+   * 游戏内皮肤 id(= LCU itemId);0 = 客户端没给。
+   *
+   * ⚠️ 客户端给不给这个字段**还没实测** —— 探测 1 的结论决定它是不是真的有用。
+   */
+  skinId: number;
   summonerId: number;
   /** 召唤师的 puuid;空串 = 客户端没给 */
   puuid: string;
@@ -64,6 +70,13 @@ export interface ChampSelectSession {
   /** 我方这一行被分配到的位置;空串 = 还没选位置 */
   myRole: string;
   myChampionId: number;
+  /**
+   * 我这一局用的游戏内皮肤 id;0 = 客户端没给。
+   *
+   * ⚠️ 选人会话只在选人阶段存在 —— **必须在选人阶段就把它记下来**,
+   * 局末再问这个端点已经 404 了。
+   */
+  mySkinId: number;
   /** 我在 myTeam 里的格位;渲染进程靠它把「我」标出来 */
   myCellId: number;
   bannedChampions: ChampionRef[];
@@ -233,6 +246,15 @@ export interface LiveGameInfo {
   currentGold: number;
   gameTime: number;
   gameMode: string;
+  /** 英雄名字;空串 = 客户端没给 */
+  championName?: string;
+  /**
+   * 我这局用的皮肤的**资源名**(如 game_character_displayname_Ahri_Snow_Dawn);
+   * 空串 = 客户端没给。
+   *
+   * ⚠️ 这是资源名不是皮肤 id —— 对不上站内的中文名,只能当提示用。
+   */
+  skinName?: string;
 }
 
 /**

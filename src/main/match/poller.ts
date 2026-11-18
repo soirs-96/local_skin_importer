@@ -1,12 +1,13 @@
 import type { AxiosInstance } from 'axios';
 import * as lcu from '../lcu';
-import { getAllGameData } from './liveClient';
+import { getAllGameData, getPlayerStats } from './liveClient';
 import { getChampSelectSession } from './champSelect';
 import { getRankedEntries } from './ranked';
-import { getRecentMatches } from './recentMatches';
+import { findJustFinishedMatch, getRecentMatches, toMatchScore } from './recentMatches';
 import { getChampionMastery } from './mastery';
 import { getMatchSummoner } from './summoner';
-import { getOpponents } from './opponents';
+import { getGameflowPhase, getOpponents } from './opponents';
+import { resolveUsedSkin } from './usedSkin';
 import { failedLookup, lookupPlayer as lookupPlayerByQuery } from './playerLookup';
 import { fetchPlayerGames as fetchPlayerGamesFromLedge } from './tencentLedge';
 import { championIndexEntries, emptyStaticData, loadStaticData, type StaticData } from './staticData';
@@ -19,7 +20,9 @@ import {
 } from './lcuWs';
 import type {
   ChampionMastery,
+  ChampSelectSession,
   LcuWsStatus,
+  LiveGameInfo,
   MatchSnapshot,
   MatchState,
   OpponentsSnapshot,
@@ -29,6 +32,8 @@ import type {
   RecentMatchesSummary
 } from '../../shared/match';
 import type { ChampionIndexEntry } from '../../shared/recommendation';
+import { lcuPhaseLabel } from '../../shared/gameLabels';
+import type { LiveScore, LocalSettlement, UsedSkin } from '../../shared/settlement';
 
 /**
  * 对局助手的轮询器。
@@ -72,6 +77,14 @@ const WS_RANKED_TTL_MS = 5 * 60_000;
  * 失败一次就歇 10 秒,反正客户端开起来后 10 秒内一定会被探测到。
  */
 const AUTH_RETRY_MS = 10_000;
+/**
+ * 结算补齐段:局末之后过多久才开始查 match history(毫秒)。
+ *
+ * 客户端的 match history 有落库延迟 —— 局末那一刻往往还查不到刚打完的那局。
+ */
+const SETTLEMENT_ENRICH_DELAY_MS = 15_000;
+/** 结算补齐段:两次查询之间的间隔(毫秒)。 */
+const SETTLEMENT_ENRICH_RETRY_MS = 20_000;
 
 export function emptySnapshot(): MatchSnapshot {
   return {
@@ -101,6 +114,62 @@ function describeError(e: unknown): string {
   return String(e);
 }
 
+/**
+ * gameflow 是不是已经进了「对局结束」段。
+ *
+ * 直接用共享的阶段标签表判断 —— `PreEndOfGame` / `EndOfGame` / `PostGame`
+ * 三个阶段在 `gameLabels.ts` 里都映射成「对局结束」。不新造枚举。
+ */
+export function isGameEndPhase(phase: string): boolean {
+  return lcuPhaseLabel(phase) === '对局结束';
+}
+
+/** 从 gameflow 事件载荷里取 phase。 */
+export function phaseFromEvent(data: unknown): string {
+  if (typeof data !== 'object' || data === null) return '';
+  const phase = (data as Record<string, unknown>).phase;
+  return typeof phase === 'string' ? phase : '';
+}
+
+/**
+ * 从 gameflow 事件载荷里取「我」这条的英雄编号和皮肤编号。
+ *
+ * gameflow 用 `teamOwner: true` 标本地玩家那条 —— 这是最准的认法。
+ * 认不到就退到「第一个带 championId 的条目」—— 那是本地玩家还是队友分不清,
+ * 但**英雄编号对结算卡有用**,拿错了也只是界面上写错个名字,比空着强。
+ *
+ * ⚠️ 顺带读 `skinId`:gameflow 的队伍条目里是有皮肤编号的,
+ * 这是选人会话之外的**第二条皮肤来源**,而且它一直活到局末。
+ *
+ * ⚠️ `teamOne` / `teamTwo` 的具体载荷形状没实测过(见探测 1),
+ * 所以这里对字段名保持宽容。
+ */
+export function selfPlayerFromEvent(data: unknown): { championId: number; skinId: number } {
+  const empty = { championId: 0, skinId: 0 };
+  if (typeof data !== 'object' || data === null) return empty;
+  const gameData = (data as Record<string, unknown>).gameData;
+  if (typeof gameData !== 'object' || gameData === null) return empty;
+  const gd = gameData as Record<string, unknown>;
+
+  let fallback: { championId: number; skinId: number } = empty;
+  for (const key of ['teamOne', 'teamTwo']) {
+    const team = gd[key];
+    if (!Array.isArray(team)) continue;
+    for (const entry of team) {
+      if (typeof entry !== 'object' || entry === null) continue;
+      const e = entry as Record<string, unknown>;
+      const championId = typeof e.championId === 'number' ? e.championId : 0;
+      const skinId = typeof e.skinId === 'number' ? e.skinId : 0;
+      if (championId <= 0 && skinId <= 0) continue;
+      if (e.teamOwner === true) return { championId, skinId };
+      if (fallback.championId <= 0 && championId > 0) {
+        fallback = { championId, skinId };
+      }
+    }
+  }
+  return fallback;
+}
+
 /** 请求失败说明凭据过期了(客户端换过端口/token),丢掉缓存让下一轮重新解析。 */
 function isAuthStale(e: unknown): boolean {
   if (e instanceof lcu.LcuUnreachableError || e instanceof lcu.LcuNotRunningError) return true;
@@ -111,6 +180,7 @@ function isAuthStale(e: unknown): boolean {
 }
 
 export type MatchSnapshotListener = (snapshot: MatchSnapshot) => void;
+export type SettlementListener = (settlement: LocalSettlement) => void;
 
 export class MatchPoller {
   private timer: NodeJS.Timeout | null = null;
@@ -124,6 +194,32 @@ export class MatchPoller {
   private masteryCache: { entries: ChampionMastery[]; fetchedAt: number } | null = null;
   private polling = false;
   private listeners = new Set<MatchSnapshotListener>();
+
+  /** 最近的 gameflow 阶段(事件流或轮询兜底) */
+  private phase = '';
+  /** 局内最后一帧的实时数据(2999) */
+  private lastLive: LiveGameInfo | null = null;
+  /** 局内最后一帧的即时战绩(2999) */
+  private lastPlayerStats: LiveScore | null = null;
+  /**
+   * 本局皮肤的**三条候选来源**,各自独立记着。
+   *
+   * 谁先到不重要 —— 结算时由 `resolveUsedSkin` 按可靠度合成一个结论。
+   * 拆成三条是因为它们的采集时机横跨整局:选人阶段、局中、局后各有各的坑。
+   *
+   * ⚠️ match history 那条**不是字段** —— 它要等局末才查得到,而且只属于
+   * 那一局。存成字段就会把上一局的皮肤 id 带进下一局。
+   */
+  private champSelectSkinId = 0;
+  private gameflowSkinId = 0;
+  private liveClientSkinName: string | null = null;
+  /** 本局英雄编号(选人阶段 / gameflow 事件里记下) */
+  private currentChampionId = 0;
+  /** 局末结算 */
+  private settlement: LocalSettlement | null = null;
+  /** 上次尝试补 match history 的时刻 */
+  private settlementEnrichedAt = 0;
+  private settlementListeners = new Set<SettlementListener>();
 
   private wsClient: LcuWsClient | null = null;
   private wsStatus: LcuWsStatus = 'disconnected';
@@ -144,6 +240,23 @@ export class MatchPoller {
     return () => {
       this.listeners.delete(listener);
     };
+  }
+
+  /**
+   * 订阅「局末结算」。
+   *
+   * 跟快照订阅分开 —— 结算不是快照的一部分,是局末那一刻单独产生的一条消息。
+   */
+  subscribeSettlement(listener: SettlementListener): () => void {
+    this.settlementListeners.add(listener);
+    return () => {
+      this.settlementListeners.delete(listener);
+    };
+  }
+
+  /** 主进程手上这一份结算;null = 还没打过一局 */
+  getSettlement(): LocalSettlement | null {
+    return this.settlement;
   }
 
   start(): void {
@@ -191,6 +304,19 @@ export class MatchPoller {
       if (entries.length > 0) {
         this.wsRanked = { entries, fetchedAt: Date.now() };
       }
+    }
+    // gameflow:局末判定的主通路 —— 事件流比 2 秒轮询快得多,
+    // 而且不用去问 LCU(对局中轮询器是直接 return 的)。
+    if (event.uri.startsWith('/lol-gameflow/v1/session')) {
+      const phase = phaseFromEvent(event.data);
+      const self = selfPlayerFromEvent(event.data);
+      // 「空闲 / 大厅」阶段的 gameData 还是上一局的残留 —— 不收,
+      // 不然下一局没读到皮肤时会拿上一局的编号顶上。
+      const stale = phase === 'None' || phase === 'Lobby';
+      if (!stale && self.championId > 0) this.currentChampionId = self.championId;
+      // gameflow 里的皮肤编号 —— 选人会话之外的第二条来源
+      if (!stale && self.skinId > 0) this.gameflowSkinId = self.skinId;
+      if (phase) this.onPhaseChange(phase);
     }
     if (isAcceleratedEvent(event)) {
       this.wake();
@@ -313,6 +439,130 @@ export class MatchPoller {
       } catch {
         // 订阅者自己的问题不能带崩轮询
       }
+    }
+  }
+
+  /**
+   * gameflow 阶段变了。
+   *
+   * 边沿检测:从「不是结束」进入「结束」的那一次才触发 —— 同一局只触发一次。
+   */
+  private onPhaseChange(phase: string): void {
+    if (!phase || phase === this.phase) return;
+    const wasEnd = isGameEndPhase(this.phase);
+    const isEnd = isGameEndPhase(phase);
+    this.phase = phase;
+    if (!isEnd || wasEnd) return;
+    this.createSettlement();
+  }
+
+  /** 三条候选合成一个结论 —— 优先级在 `usedSkin.ts` 里定死。 */
+  private resolveSettlementSkin(): UsedSkin {
+    return resolveUsedSkin({
+      champSelectSkinId: this.champSelectSkinId,
+      gameflowSkinId: this.gameflowSkinId,
+      liveClientSkinName: this.liveClientSkinName
+    });
+  }
+
+  /**
+   * 局末:生成结算快照。
+   *
+   * 只有真的打过这一局才生成 —— 应用刚启动时客户端可能正停在结算画面上,
+   * 那时候读到的 phase 也是「对局结束」,但我们根本没打过这一局。
+   */
+  private createSettlement(): void {
+    if (!this.currentChampionId && !this.lastLive) {
+      this.resetSkinCandidates();
+      return;
+    }
+
+    const endedAt = Date.now();
+    const live = this.lastLive;
+    const usedSkin = this.resolveSettlementSkin();
+
+    const settlement: LocalSettlement = {
+      key: `${this.currentChampionId}-${usedSkin.riotSkinId}-${endedAt}`,
+      championId: this.currentChampionId,
+      championName: live?.championName ?? '',
+      usedSkin,
+      live: this.lastPlayerStats,
+      match: null,
+      endedAt
+    };
+    this.settlement = settlement;
+    this.settlementEnrichedAt = 0;
+    this.emitSettlement(settlement);
+    // 结算快照已经带走了这一局的皮肤 —— 候选作废,免得带进下一局。
+    this.resetSkinCandidates();
+  }
+
+  /** 清掉本局的皮肤候选 —— 下一局重新攒。 */
+  private resetSkinCandidates(): void {
+    this.champSelectSkinId = 0;
+    this.gameflowSkinId = 0;
+    this.liveClientSkinName = null;
+  }
+
+  private emitSettlement(settlement: LocalSettlement): void {
+    for (const listener of this.settlementListeners) {
+      try {
+        listener(settlement);
+      } catch {
+        // 订阅者自己的问题不能带崩轮询
+      }
+    }
+  }
+
+  /**
+   * 记下本局的英雄和皮肤(选人阶段每轮都调)。
+   *
+   * 选人会话只在选人阶段存在 —— 局末再问已经 404,所以必须提前记。
+   */
+  private recordChampSelect(champSelect: ChampSelectSession | null): void {
+    if (!champSelect) return;
+    if (champSelect.myChampionId > 0) this.currentChampionId = champSelect.myChampionId;
+    if (champSelect.mySkinId > 0) this.champSelectSkinId = champSelect.mySkinId;
+  }
+
+  /**
+   * 补齐结算里的胜负 / 时长 / 位置。
+   *
+   * 客户端的 match history 有落库延迟 —— 局末那一刻往往还查不到刚打完的那局。
+   * 所以弹窗先开起来(靠 2999 的即时战绩),过一会儿再补。
+   */
+  private async enrichSettlement(
+    client: AxiosInstance,
+    staticData: StaticData,
+    puuid: string,
+    now: number
+  ): Promise<void> {
+    const settlement = this.settlement;
+    if (!settlement || settlement.match) return;
+    // 不知道英雄 —— 不猜是哪一局
+    if (!settlement.championId) return;
+    if (now - settlement.endedAt < SETTLEMENT_ENRICH_DELAY_MS) return;
+    if (now - this.settlementEnrichedAt < SETTLEMENT_ENRICH_RETRY_MS) return;
+
+    this.settlementEnrichedAt = now;
+    try {
+      // 用**结算自己的**英雄编号,不用当前的 —— 玩家可能已经排上下一局了。
+      const found = await findJustFinishedMatch(client, staticData, puuid, settlement.championId, {
+        now
+      });
+      if (!found) return;
+      const enriched: LocalSettlement = { ...settlement, match: toMatchScore(found.match) };
+      // 结算时没认出皮肤的话,match history 里的 participant 可能给
+      if (enriched.usedSkin.riotSkinId === 0 && found.skinId && found.skinId > 0) {
+        enriched.usedSkin = resolveUsedSkin({
+          matchHistorySkinId: found.skinId,
+          liveClientSkinName: enriched.usedSkin.displayName
+        });
+      }
+      this.settlement = enriched;
+      this.emitSettlement(enriched);
+    } catch {
+      // 查不到就还是缺 —— 不编
     }
   }
 
@@ -470,6 +720,13 @@ export class MatchPoller {
     // 1. 在对局里?Live Client Data 是最直接的判据
     const live = await getAllGameData();
     if (live) {
+      // 2999 在局末会关 —— 最后一帧得留住
+      this.lastLive = live;
+      // Live Client 只给英文资源名 —— 拿不到数字 id,只能当「认出了名字」用
+      if (live.skinName) this.liveClientSkinName = live.skinName;
+      // 即时战绩也缓存一份(等下结算要用)
+      const stats = await getPlayerStats();
+      if (stats) this.lastPlayerStats = stats;
       return {
         ...previous,
         state: 'in_game',
@@ -498,6 +755,13 @@ export class MatchPoller {
     }
 
     const client = lcu.createLcuClient(auth);
+
+    // gameflow 阶段 —— **只在事件流没连上的时候**才走这一路兜底。
+    // 事件流连着的时候每 2 秒再问一次 HTTP 是白花钱(LCU 那边也算请求)。
+    if (this.wsStatus !== 'connected') {
+      const phase = await getGameflowPhase(client);
+      if (phase) this.onPhaseChange(phase);
+    }
 
     let summoner;
     try {
@@ -537,6 +801,7 @@ export class MatchPoller {
       summoner.summonerId,
       summoner.puuid
     );
+    this.recordChampSelect(champSelect);
     const state: MatchState = champSelect ? 'champ_select' : 'lobby';
 
     // 熟练度跟当前在不在选人无关 —— 大厅和选人阶段都要显示。
@@ -548,6 +813,12 @@ export class MatchPoller {
       ranked = await this.fetchRanked(client, summoner.puuid);
       recent = await this.fetchRecent(client, staticData, summoner.puuid);
     }
+
+    // 结算的补齐段:局末之后 match history 才落库,过一会儿再查一次。
+    //
+    // ⚠️ **放在大厅分支外面** —— 打完之后玩家可能直接排下一把,那时
+    // state 是 'champ_select',放在分支里就永远补不上了。
+    await this.enrichSettlement(client, staticData, summoner.puuid, now);
 
     return {
       state,

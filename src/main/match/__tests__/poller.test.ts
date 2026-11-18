@@ -1,6 +1,6 @@
 import { describe, expect, it, vi, beforeEach } from 'vitest';
 import { MatchPoller } from '../poller';
-import { getAllGameData } from '../liveClient';
+import { getAllGameData, getPlayerStats } from '../liveClient';
 import { getMatchSummoner } from '../summoner';
 import { getChampSelectSession } from '../champSelect';
 import { getRankedEntries } from '../ranked';
@@ -8,6 +8,7 @@ import { getRecentMatches } from '../recentMatches';
 import { resolveLcuAuthAsync } from '../../lcu';
 import type { LcuWsEvent } from '../lcuWs';
 import type { LcuWsStatus } from '../../../shared/match';
+import type { LocalSettlement } from '../../../shared/settlement';
 
 vi.mock('../../lcu', () => {
   // 错误类要带上裁决层给的 code / summary —— 轮询器优先显示 summary。
@@ -31,7 +32,7 @@ vi.mock('../../lcu', () => {
   };
 });
 
-vi.mock('../liveClient', () => ({ getAllGameData: vi.fn() }));
+vi.mock('../liveClient', () => ({ getAllGameData: vi.fn(), getPlayerStats: vi.fn() }));
 vi.mock('../summoner', () => ({ getMatchSummoner: vi.fn() }));
 vi.mock('../champSelect', () => ({ getChampSelectSession: vi.fn() }));
 // ranked 的解析函数要留真的 —— lcuWs 靠它从事件载荷里刨段位
@@ -39,7 +40,12 @@ vi.mock('../ranked', async (importOriginal) => {
   const actual = await importOriginal<typeof import('../ranked')>();
   return { ...actual, getRankedEntries: vi.fn() };
 });
-vi.mock('../recentMatches', () => ({ getRecentMatches: vi.fn() }));
+// recentMatches 只拦「最近对局」那个入口 —— 局末补齐用的 findJustFinishedMatch
+// 留真的,不然 poller 里的 import 会拿到 undefined。
+vi.mock('../recentMatches', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../recentMatches')>();
+  return { ...actual, getRecentMatches: vi.fn() };
+});
 vi.mock('../staticData', () => ({
   loadStaticData: vi.fn(async () => ({
     version: '14.1.1',
@@ -121,6 +127,7 @@ beforeEach(() => {
   vi.clearAllMocks();
   wsClients.length = 0;
   liveMock.mockResolvedValue(null);
+  vi.mocked(getPlayerStats).mockResolvedValue(null);
   authMock.mockResolvedValue({ port: 1234, token: 'tok', protocol: 'https', host: '127.0.0.1' });
   summonerMock.mockResolvedValue(summoner);
   champSelectMock.mockResolvedValue(null);
@@ -150,6 +157,7 @@ describe('MatchPoller', () => {
       theirTeam: [],
       myRole: 'MIDDLE',
       myChampionId: 1,
+      mySkinId: 0,
       myCellId: -1,
       bannedChampions: []
     });
@@ -287,6 +295,100 @@ describe('MatchPoller 的 WebSocket 通道', () => {
     poller.start();
     await flush();
     expect(poller.getSnapshot().wsStatus).toBe('connected');
+    poller.stop();
+  });
+});
+
+describe('MatchPoller 的局末检测', () => {
+  const myChampSelect = {
+    myTeam: [],
+    theirTeam: [],
+    myRole: 'MIDDLE',
+    myChampionId: 64,
+    mySkinId: 161013,
+    myCellId: -1,
+    bannedChampions: []
+  };
+
+  it('phase 进入 PreEndOfGame 时产生一次结算', async () => {
+    champSelectMock.mockResolvedValue(myChampSelect);
+    const poller = new MatchPoller();
+    const settlements: LocalSettlement[] = [];
+    poller.subscribeSettlement((s) => settlements.push(s));
+
+    poller.start();
+    await flush();
+    settlements.length = 0;
+
+    wsFire({
+      uri: '/lol-gameflow/v1/session',
+      eventType: 'Update',
+      data: { phase: 'PreEndOfGame' }
+    });
+    await flush();
+
+    expect(settlements).toHaveLength(1);
+    expect(settlements[0].championId).toBe(64);
+    expect(settlements[0].usedSkin.riotSkinId).toBe(161013);
+    expect(settlements[0].usedSkin.source).toBe('champ-select');
+    poller.stop();
+  });
+
+  it('同一局只触发一次 —— 后面再来两个结束阶段也不重复', async () => {
+    champSelectMock.mockResolvedValue(myChampSelect);
+    const poller = new MatchPoller();
+    const settlements: LocalSettlement[] = [];
+    poller.subscribeSettlement((s) => settlements.push(s));
+
+    poller.start();
+    await flush();
+
+    for (const phase of ['PreEndOfGame', 'EndOfGame', 'PostGame']) {
+      wsFire({
+        uri: '/lol-gameflow/v1/session',
+        eventType: 'Update',
+        data: { phase }
+      });
+      await flush();
+    }
+
+    expect(settlements).toHaveLength(1);
+    poller.stop();
+  });
+
+  it('打完一局、进下一局后会再触发一次', async () => {
+    champSelectMock.mockResolvedValue(myChampSelect);
+    const poller = new MatchPoller();
+    const settlements: LocalSettlement[] = [];
+    poller.subscribeSettlement((s) => settlements.push(s));
+
+    poller.start();
+    await flush();
+
+    wsFire({ uri: '/lol-gameflow/v1/session', eventType: 'Update', data: { phase: 'PreEndOfGame' } });
+    await flush();
+    wsFire({ uri: '/lol-gameflow/v1/session', eventType: 'Update', data: { phase: 'None' } });
+    await flush();
+    wsFire({ uri: '/lol-gameflow/v1/session', eventType: 'Update', data: { phase: 'PreEndOfGame' } });
+    await flush();
+
+    expect(settlements).toHaveLength(2);
+    poller.stop();
+  });
+
+  it('应用刚启动、客户端停在结算画面上 → 不产生结算(没打过这一局)', async () => {
+    // champSelectMock 默认就是 null,currentChampionId 拿不到,lastLive 也是 null
+    const poller = new MatchPoller();
+    const settlements: LocalSettlement[] = [];
+    poller.subscribeSettlement((s) => settlements.push(s));
+
+    poller.start();
+    await flush();
+
+    wsFire({ uri: '/lol-gameflow/v1/session', eventType: 'Update', data: { phase: 'PostGame' } });
+    await flush();
+
+    expect(settlements).toHaveLength(0);
     poller.stop();
   });
 });

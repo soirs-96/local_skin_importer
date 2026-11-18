@@ -142,6 +142,30 @@ export async function fetchCatalogSkinIds(): Promise<Set<number> | null> {
 }
 
 /**
+ * 按**游戏内皮肤 id**(Riot itemId)查站内目录里的一条。
+ *
+ * ⚠️ **这个请求必须匿名 —— 不附 Authorization 头。**
+ * 桌面端没有全局 axios 拦截器,是每个调用点自己决定带不带头。
+ * `SkinController.listSkins` 没有 `@AllowsDesktopToken`,
+ * 带了桌面端 token 反而会被 DesktopScopeInterceptor 拦成 403。
+ * (目录是公开数据,匿名查就行。)
+ *
+ * ⚠️ **不要去复用渲染进程那份 1.2 万条目录缓存** ——
+ * `useSkinCatalog.ts` 里的 catalogCache 只有调过 load() 的页面才有,
+ * 局末那一刻多半还没拉过。窄查询才是对的。
+ */
+export async function fetchCatalogSkinBySkinId(riotSkinId: number): Promise<CatalogSkin | null> {
+  if (!Number.isFinite(riotSkinId) || riotSkinId <= 0) return null;
+  const url = `${BACKEND_BASE_URL}/api/skins/list?current=1&size=1&skinId=${riotSkinId}`;
+  const { data } = await axios.get<BackendEnvelope<CatalogPage>>(url, {
+    timeout: CATALOG_TIMEOUT_MS
+  });
+  if (data.code !== 200 || !data.data) return null;
+  const record = data.data.records[0];
+  return record ? toCatalogSkin(record) : null;
+}
+
+/**
  * 拉 /skins/my-owned。token 过期时(401)清掉本地 token 并给出可执行的提示 ——
  * 留着过期 token 只会让「已登录」的假象一直挂着,数据却永远同步不上。
  */

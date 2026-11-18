@@ -3,7 +3,15 @@ import axios from 'axios';
 import { mkdtempSync, rmSync, writeFileSync, existsSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { redeemSyncCode, saveToken, getStoredToken, clearStoredToken, getAuthStatus } from '../auth';
+import {
+  redeemSyncCode,
+  saveToken,
+  getStoredToken,
+  clearStoredToken,
+  getAuthStatus,
+  readTokenUserId,
+  getStoredUserId
+} from '../auth';
 import { app } from 'electron';
 
 vi.mock('axios');
@@ -125,5 +133,33 @@ describe('auth', () => {
     const token = `h.${payload}.s`;
     writeFileSync(tokenPath, Buffer.from(`enc:${token}`));
     expect(getAuthStatus()).toEqual({ loggedIn: true, tokenPreview: `${token.substring(0, 12)}...` });
+  });
+
+  it('readTokenUserId 解出 payload 里的 userId', () => {
+    const payload = Buffer.from(JSON.stringify({ userId: 42, tokenType: 'DESKTOP' })).toString(
+      'base64url'
+    );
+    expect(readTokenUserId(`h.${payload}.s`)).toBe(42);
+  });
+
+  it('readTokenUserId 把字符串形态的 userId 也认出来', () => {
+    const payload = Buffer.from(JSON.stringify({ userId: '42' })).toString('base64url');
+    expect(readTokenUserId(`h.${payload}.s`)).toBe(42);
+  });
+
+  it('readTokenUserId 在 token 坏了 / 没有 userId 时返回 null', () => {
+    expect(readTokenUserId('not-a-jwt')).toBeNull();
+    const payload = Buffer.from(JSON.stringify({ openid: 'x' })).toString('base64url');
+    expect(readTokenUserId(`h.${payload}.s`)).toBeNull();
+  });
+
+  it('getStoredUserId 从本地存的 token 里取 userId', () => {
+    const payload = Buffer.from(JSON.stringify({ userId: 7 })).toString('base64url');
+    writeFileSync(tokenPath, Buffer.from(`enc:h.${payload}.s`));
+    expect(getStoredUserId()).toBe(7);
+  });
+
+  it('getStoredUserId 在没登录时返回 null', () => {
+    expect(getStoredUserId()).toBeNull();
   });
 });

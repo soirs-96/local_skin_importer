@@ -1,7 +1,9 @@
 import type { AxiosInstance } from 'axios';
 import { lcuIconUrl } from '../../shared/icons';
 import type { RecentMatch, RecentMatchesSummary } from '../../shared/match';
+import type { MatchScore } from '../../shared/settlement';
 import type { StaticData } from './staticData';
+import { parseMatchHistorySkinId } from './usedSkin';
 
 /**
  * 最近对局(/lol-match-history/v1/products/lol/current-summoner/matches)。
@@ -105,7 +107,7 @@ function extractItemIds(stats: Record<string, unknown>): number[] {
  * 没有 puuid 就真的认不出来(这个端点每局都有十个玩家,没有任何字段标记
  * 「哪个是我」),只能退到第一条 —— 总比整局丢掉强。
  */
-function findMyParticipant(raw: Record<string, unknown>, puuid: string): Record<string, unknown> {
+export function findMyParticipant(raw: Record<string, unknown>, puuid: string): Record<string, unknown> {
   const participants = Array.isArray(raw.participants) ? raw.participants.filter(isRecord) : [];
   if (participants.length === 0) return {};
   if (!puuid) return participants[0];
@@ -249,4 +251,63 @@ export async function getRecentMatches(
     timeout: 10_000
   });
   return parseRecentMatches(data, staticData, puuid);
+}
+
+/** 「刚打完的那一局」的查找窗口:30 分钟。 */
+export const JUST_FINISHED_WINDOW_MS = 30 * 60_000;
+
+/**
+ * 定位「刚打完的那一局」。
+ *
+ * 客户端的 match history 有**落库延迟** —— 局末那一刻往往还查不到刚打完的这局,
+ * 稍后再查就有了。定位规则:**gameCreation 距今 windowMs 内 + 英雄跟本局一致**,
+ * 取最新的那个。
+ *
+ * 认不出来就返回 null —— **不拿最近的那一局冒充**。
+ */
+export async function findJustFinishedMatch(
+  client: AxiosInstance,
+  staticData: StaticData,
+  puuid: string,
+  championId: number,
+  opts: { now?: number; windowMs?: number } = {}
+): Promise<{ match: RecentMatch; skinId: number | null } | null> {
+  const now = opts.now ?? Date.now();
+  const windowMs = opts.windowMs ?? JUST_FINISHED_WINDOW_MS;
+  const { data } = await client.get(MATCHES_PATH, {
+    params: { begIndex: MATCHES_BEG, endIndex: MATCHES_END },
+    timeout: 10_000
+  });
+  const games = extractGames(data);
+  let best: { match: RecentMatch; skinId: number | null } | null = null;
+  for (const game of games) {
+    if (!isRecord(game)) continue;
+    const match = parseMatchEntry(game, staticData, puuid);
+    if (!match) continue;
+    if (match.timestampMs <= 0) continue;
+    const age = now - match.timestampMs;
+    if (age < 0 || age > windowMs) continue;
+    if (championId > 0 && match.championId !== championId) continue;
+    if (!best || match.timestampMs > best.match.timestampMs) {
+      best = { match, skinId: parseMatchHistorySkinId(findMyParticipant(game, puuid)) };
+    }
+  }
+  return best;
+}
+
+/** 把 RecentMatch 缩成结算卡要的那几个字段。 */
+export function toMatchScore(match: RecentMatch): MatchScore {
+  return {
+    win: match.win,
+    kills: match.kills,
+    deaths: match.deaths,
+    assists: match.assists,
+    minionKills: match.minionKills,
+    durationS: match.durationS,
+    lane: match.lane,
+    roleBoundItemName: match.roleBoundItemName ?? '',
+    gameMode: match.gameMode,
+    queueType: match.queueType,
+    championId: match.championId
+  };
 }

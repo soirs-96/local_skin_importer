@@ -12,6 +12,12 @@ import type {
   TopChampion
 } from '../shared/match';
 import { DEV_LOG_CHANNEL } from '../shared/dev';
+import { SETTLEMENT_CHANNEL } from '../shared/settlement';
+import type {
+  LocalSettlement,
+  SettlementView,
+  SkinRatingStats
+} from '../shared/settlement';
 import type { ChampionIndexEntry } from '../shared/recommendation';
 import type { DevLogLine } from '../shared/dev';
 import type { AutoAcceptState } from '../shared/autoAccept';
@@ -44,6 +50,17 @@ export type {
 export type { LcuChannelReport, LcuDiagnosis, LcuFailureCode } from '../main/lcu/types';
 
 export type { ChampionIndexEntry } from '../shared/recommendation';
+
+export type {
+  LocalSettlement,
+  LiveScore,
+  MatchScore,
+  MyRating,
+  SettlementSkin,
+  SettlementView,
+  SkinRatingStats,
+  UsedSkin
+} from '../shared/settlement';
 
 export interface LcuStatus {
   running: boolean;
@@ -230,6 +247,28 @@ const api = {
   /** 设置接受前要等多久(秒) */
   setAutoAcceptDelay: (delaySeconds: number): Promise<AutoAcceptState> =>
     invoke('tools:set-auto-accept-delay', { delaySeconds }),
+
+  // ---- 局末结算 ------------------------------------------------------------
+  /** 取完整的那份结算;null = 还没打过一局 */
+  getSettlement: (): Promise<SettlementView | null> => invoke('match:get-settlement'),
+  /** 提交皮肤评分 */
+  submitRating: (payload: {
+    skinId: number;
+    handFeel: number;
+    artwork: number;
+    model: number;
+    mockery: number;
+  }): Promise<{ ok: true; stats: SkinRatingStats | null }> => invoke('rating:submit', payload),
+  /** 订阅主进程推来的局末结算,返回取消订阅的函数 */
+  onSettlement: (cb: (settlement: LocalSettlement) => void): (() => void) => {
+    const listener = (_e: Electron.IpcRendererEvent, settlement: LocalSettlement): void => {
+      cb(settlement);
+    };
+    ipcRenderer.on(SETTLEMENT_CHANNEL, listener);
+    return () => {
+      ipcRenderer.removeListener(SETTLEMENT_CHANNEL, listener);
+    };
+  },
 
   /** 订阅主进程推来的对局快照,返回取消订阅的函数 */
   onMatchState: (cb: (snapshot: MatchSnapshot) => void): (() => void) => {

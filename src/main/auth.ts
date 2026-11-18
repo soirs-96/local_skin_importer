@@ -71,6 +71,42 @@ function readTokenExpiry(jwt: string): number | null {
   }
 }
 
+/**
+ * 读 JWT 里的 userId。
+ *
+ * 后端 JwtService 签的 claim 里有 userId / openid / tokenType。
+ * 桌面端只存了 token 本身,没存 userId —— 从 payload 里解出来就够,
+ * 不用改存储格式,老 token 也立刻能用。
+ */
+export function readTokenUserId(jwt: string): number | null {
+  const parts = jwt.split('.');
+  if (parts.length !== 3) return null;
+  try {
+    const b64 = parts[1].replace(/-/g, '+').replace(/_/g, '/');
+    const payload = JSON.parse(Buffer.from(b64, 'base64').toString('utf8')) as {
+      userId?: unknown;
+    };
+    if (typeof payload.userId === 'number' && Number.isFinite(payload.userId)) {
+      return payload.userId;
+    }
+    // 有的实现把 id 给成字符串
+    if (typeof payload.userId === 'string' && payload.userId.trim() !== '') {
+      const parsed = Number(payload.userId);
+      if (Number.isFinite(parsed)) return parsed;
+    }
+    return null;
+  } catch {
+    return null;
+  }
+}
+
+/** 本地存的 token 里的 userId;没登录 / token 坏了 = null。 */
+export function getStoredUserId(): number | null {
+  const token = getStoredToken();
+  if (!token) return null;
+  return readTokenUserId(token);
+}
+
 export function getAuthStatus(): { loggedIn: boolean; tokenPreview: string | null } {
   const t = getStoredToken();
   if (!t) return { loggedIn: false, tokenPreview: null };

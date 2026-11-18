@@ -1,6 +1,12 @@
-import { describe, expect, it } from 'vitest';
-import { extractGames, parseMatchEntry, parseRecentMatches } from '../recentMatches';
-import type { StaticData } from '../staticData';
+import { describe, expect, it, vi } from 'vitest';
+import type { AxiosInstance } from 'axios';
+import {
+  extractGames,
+  findJustFinishedMatch,
+  parseMatchEntry,
+  parseRecentMatches
+} from '../recentMatches';
+import { emptyStaticData, type StaticData } from '../staticData';
 
 const staticData: StaticData = {
   version: '14.1.1',
@@ -287,5 +293,77 @@ describe('parseRecentMatches', () => {
     const summary = parseRecentMatches({ games: [] }, staticData);
     expect(summary.total).toBe(0);
     expect(summary.winrate).toBe(0);
+  });
+});
+
+describe('findJustFinishedMatch', () => {
+  it('命中窗口内 + 英雄一致的那一局', async () => {
+    const now = 1_700_000_000_000;
+    const client = {
+      get: vi.fn().mockResolvedValue({
+        data: {
+          games: [
+            {
+              gameId: 2,
+              gameCreation: now - 60_000,
+              participants: [
+                {
+                  participantId: 1,
+                  championId: 64,
+                  stats: { kills: 8, deaths: 2, assists: 5, win: true, totalMinionsKilled: 186 },
+                  timeline: { lane: 'MIDDLE' }
+                }
+              ],
+              participantIdentities: [{ participantId: 1, player: { puuid: 'p-1' } }]
+            }
+          ]
+        }
+      })
+    } as unknown as AxiosInstance;
+
+    const found = await findJustFinishedMatch(client, emptyStaticData(), 'p-1', 64, { now });
+
+    expect(found?.match.gameId).toBe(2);
+    expect(found?.match.win).toBe(true);
+  });
+
+  it('多局都匹配时取 gameCreation 最新的那个', async () => {
+    const now = 1_700_000_000_000;
+    const client = {
+      get: vi.fn().mockResolvedValue({
+        data: {
+          games: [
+            { gameId: 1, gameCreation: now - 120_000, participants: [{ championId: 64, stats: {} }] },
+            { gameId: 2, gameCreation: now - 30_000, participants: [{ championId: 64, stats: {} }] }
+          ]
+        }
+      })
+    } as unknown as AxiosInstance;
+
+    const found = await findJustFinishedMatch(client, emptyStaticData(), '', 64, { now });
+
+    expect(found?.match.gameId).toBe(2);
+  });
+
+  it('窗口外 / 英雄对不上 / 一局都没有 → null(不拿最近的那局冒充)', async () => {
+    const now = 1_700_000_000_000;
+    const client = {
+      get: vi.fn().mockResolvedValue({
+        data: {
+          games: [
+            {
+              gameId: 1,
+              gameCreation: now - 60 * 60_000,
+              participants: [{ championId: 64, stats: {} }]
+            },
+            { gameId: 2, gameCreation: now - 60_000, participants: [{ championId: 103, stats: {} }] }
+          ]
+        }
+      })
+    } as unknown as AxiosInstance;
+
+    await expect(
+      findJustFinishedMatch(client, emptyStaticData(), '', 64, { now })
+    ).resolves.toBeNull();
   });
 });

@@ -5,6 +5,7 @@ import { installMainConsoleBridge } from './devLogger';
 import { installConsoleEncoding } from './consoleEncoding';
 import { registerIconProtocol, registerIconScheme } from './match/iconAssets';
 import { autoAcceptService } from './match/autoAccept';
+import { matchPoller } from './match/poller';
 import { readAutoAcceptPrefs } from './autoAcceptState';
 
 // 自定义协议要先登记成特权协议,这一步必须发生在 app ready 之前
@@ -92,6 +93,9 @@ app.whenReady().then(() => {
   );
   registerIconProtocol();
   registerIpcHandlers();
+  // 局末结算要在**任何页面**都能弹出来 —— 轮询器不能等用户打开对局页才启动。
+  // (代价:游戏客户端没开时,凭据解析会每 10 秒重试一次 —— 那是既有行为。)
+  matchPoller.start();
   // 上次开着就接着开 —— 自动接受这种事,重启一次就得重设一遍太烦人。
   const autoAcceptPrefs = readAutoAcceptPrefs();
   autoAcceptService.setDelay(autoAcceptPrefs.delaySeconds);

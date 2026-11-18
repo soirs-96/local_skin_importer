@@ -58,6 +58,12 @@ const mocks = vi.hoisted(() => {
     matchPollerFetchPlayerGames: vi.fn(),
     matchPollerFetchOpponents: vi.fn(),
     matchPollerGetChampionIndex: vi.fn(),
+    matchPollerSubscribeSettlement: vi.fn(),
+    matchPollerGetSettlement: vi.fn(),
+    getStoredUserId: vi.fn(),
+    submitSkinRating: vi.fn(),
+    buildSettlementView: vi.fn(),
+    fetchCatalogSkinBySkinId: vi.fn(),
     getRecommendationState: vi.fn(),
     requestRecommendation: vi.fn(),
     getLlmStatus: vi.fn(),
@@ -75,13 +81,20 @@ const mocks = vi.hoisted(() => {
 
 vi.mock('electron', () => ({
   ipcMain: { handle: mocks.ipcMainHandle },
-  ipcRenderer: { invoke: mocks.ipcRendererInvoke },
+  // preload 的 onSettlement / onDevLog 要用 on / removeListener
+  ipcRenderer: {
+    invoke: mocks.ipcRendererInvoke,
+    on: vi.fn(),
+    removeListener: vi.fn()
+  },
   contextBridge: { exposeInMainWorld: mocks.exposeInMainWorld },
   BrowserWindow: {
     getFocusedWindow: mocks.getFocusedWindow,
     getAllWindows: mocks.getAllWindows
   },
-  clipboard: { writeText: mocks.clipboardWriteText }
+  clipboard: { writeText: mocks.clipboardWriteText },
+  // 系统通知 —— isSupported 返回 false,测试里不发通知
+  Notification: { isSupported: vi.fn(() => false) }
 }));
 
 vi.mock('../lcu', () => ({
@@ -105,7 +118,8 @@ vi.mock('../auth', () => ({
   saveToken: mocks.saveToken,
   getAuthStatus: mocks.getAuthStatus,
   clearStoredToken: mocks.clearStoredToken,
-  getStoredToken: mocks.getStoredToken
+  getStoredToken: mocks.getStoredToken,
+  getStoredUserId: mocks.getStoredUserId
 }));
 
 // 只替换真正打网络的 syncOwnedSkins；shouldSkipSync / minIntervalFor 是纯函数，
@@ -117,7 +131,16 @@ vi.mock('../backend', async (importOriginal) => {
 
 vi.mock('../catalog', () => ({
   fetchCatalog: mocks.fetchCatalog,
-  fetchMyOwned: mocks.fetchMyOwned
+  fetchMyOwned: mocks.fetchMyOwned,
+  fetchCatalogSkinBySkinId: mocks.fetchCatalogSkinBySkinId
+}));
+
+vi.mock('../rating', () => ({
+  submitSkinRating: mocks.submitSkinRating
+}));
+
+vi.mock('../match/settlement', () => ({
+  buildSettlementView: mocks.buildSettlementView
 }));
 
 vi.mock('../syncState', () => ({
@@ -136,7 +159,9 @@ vi.mock('../match/poller', () => ({
     lookupPlayer: mocks.matchPollerLookupPlayer,
     fetchPlayerGames: mocks.matchPollerFetchPlayerGames,
     fetchOpponents: mocks.matchPollerFetchOpponents,
-    getChampionIndex: mocks.matchPollerGetChampionIndex
+    getChampionIndex: mocks.matchPollerGetChampionIndex,
+    subscribeSettlement: mocks.matchPollerSubscribeSettlement,
+    getSettlement: mocks.matchPollerGetSettlement
   }
 }));
 
@@ -233,6 +258,14 @@ describe('IPC wiring', () => {
     mocks.matchPollerFetchPlayerGames.mockReset();
     mocks.matchPollerFetchOpponents.mockReset();
     mocks.matchPollerGetChampionIndex.mockReset();
+    mocks.matchPollerSubscribeSettlement.mockReset();
+    mocks.matchPollerGetSettlement.mockReset();
+    mocks.getStoredUserId.mockReset();
+    mocks.submitSkinRating.mockReset();
+    mocks.buildSettlementView.mockReset();
+    mocks.fetchCatalogSkinBySkinId.mockReset();
+    mocks.matchPollerSubscribeSettlement.mockReturnValue(() => undefined);
+    mocks.matchPollerGetSettlement.mockReturnValue(null);
     mocks.getRecommendationState.mockReset();
     mocks.requestRecommendation.mockReset();
     mocks.getLlmStatus.mockReset();
@@ -293,7 +326,7 @@ describe('IPC wiring', () => {
     ]);
   });
 
-  it('registers all 27 ipc channels on call to registerIpcHandlers', () => {
+  it('registers all 29 ipc channels on call to registerIpcHandlers', () => {
     expect(mocks.ipcMainHandle.mock.calls.map(([channel]) => channel)).toEqual([
       'lcu:check-status',
       'lcu:fetch-skins',
@@ -316,6 +349,8 @@ describe('IPC wiring', () => {
       'match:get-champion-index',
       'match:get-recommendation',
       'match:recommend',
+      'match:get-settlement',
+      'rating:submit',
       'llm:get-status',
       'llm:set-key',
       'llm:clear-key',
@@ -323,6 +358,14 @@ describe('IPC wiring', () => {
       'tools:set-auto-accept',
       'tools:set-auto-accept-delay'
     ]);
+  });
+
+  it('match:get-settlement 没有结算时返回 null', async () => {
+    await expect(invoke('match:get-settlement')).resolves.toBeNull();
+  });
+
+  it('rating:submit 缺参数时抛错', async () => {
+    await expect(invoke('rating:submit', { skinId: 42 })).rejects.toThrow();
   });
 
   it('lcu:check-status returns running true with the current summoner', async () => {
@@ -782,7 +825,7 @@ describe('IPC wiring', () => {
   });
 
   it('match:recommend asks the service for the current session', async () => {
-    const session = { myTeam: [], theirTeam: [], myRole: 'MIDDLE', myChampionId: 1, myCellId: 3, bannedChampions: [] };
+    const session = { myTeam: [], theirTeam: [], myRole: 'MIDDLE', myChampionId: 1, mySkinId: 0, myCellId: 3, bannedChampions: [] };
     const state = { markdown: 'x', usedFallback: false, error: null, inflight: false, generatedAt: 1 };
     mocks.matchPollerGetSnapshot.mockReturnValue({ champSelect: session });
     mocks.requestRecommendation.mockResolvedValue(state);

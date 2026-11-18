@@ -202,3 +202,21 @@ export async function getOpponents(
     return { phase: '', queueType: '', inGame: false, opponents: [] };
   }
 }
+
+/**
+ * gameflow 的阶段。
+ *
+ * 只取 phase,不取队伍信息 —— 那一套要给十个人补名字,轮询器每 2 秒问一次
+ * 太浪费。局末判定要的只是这个阶段串。
+ *
+ * 连不上就返回空串 —— 不抛。
+ */
+export async function getGameflowPhase(client: AxiosInstance): Promise<string> {
+  try {
+    const { data } = await client.get(GAMEFLOW_PATH, { timeout: GAMEFLOW_TIMEOUT_MS });
+    if (!isRecord(data)) return '';
+    return str(data.phase);
+  } catch {
+    return '';
+  }
+}

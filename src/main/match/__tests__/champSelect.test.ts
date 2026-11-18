@@ -30,6 +30,7 @@ describe('parseChampSelectMembers', () => {
         championIconUrl: 'lcuicon://champion/1.png',
         assignedPosition: 'MIDDLE',
         cellId: 3,
+        skinId: 0,
         summonerId: 111,
         puuid: '',
         displayName: '',

@@ -51,6 +51,8 @@ export function parseChampSelectMembers(raw: unknown, staticData: StaticData): C
       championIconUrl: championId > 0 ? lcuIconUrl('champion', championId) : null,
       assignedPosition: str(entry.assignedPosition),
       cellId: num(entry.cellId),
+      // 游戏内皮肤 id;客户端没给就是 0
+      skinId: num(entry.skinId),
       // 选人会话里通常给的是 summonerId;老客户端给 playerId(同一个值)。
       summonerId: pickSummonerId(entry),
       puuid: str(entry.puuid),
@@ -104,6 +106,7 @@ export function parseChampSelectSession(
     theirTeam,
     myRole: myMember?.assignedPosition ?? '',
     myChampionId: myMember?.championId ?? 0,
+    mySkinId: myMember?.skinId ?? 0,
     myCellId: myMember?.cellId ?? -1,
     bannedChampions: bannedChampionIds.map((id) => {
       const info = staticData.champions.get(id);

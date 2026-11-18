@@ -1,9 +1,11 @@
 import axios from 'axios';
-import { BrowserWindow, clipboard, ipcMain } from 'electron';
+import { BrowserWindow, Notification, clipboard, ipcMain } from 'electron';
 import * as lcu from './lcu';
 import * as auth from './auth';
 import { syncOwnedSkins, shouldSkipSync, minIntervalFor } from './backend';
 import { fetchCatalog, fetchMyOwned } from './catalog';
+import { buildSettlementView } from './match/settlement';
+import { submitSkinRating } from './rating';
 import { resolveOwnedSkinIds } from './owned';
 import { readSyncState, writeSyncState } from './syncState';
 import { matchPoller } from './match/poller';
@@ -18,6 +20,16 @@ import { writeAutoAcceptPrefs } from './autoAcceptState';
 import * as devLogger from './devLogger';
 import { MATCH_STATE_CHANNEL } from '../shared/match';
 import type { TopChampion } from '../shared/match';
+import { SETTLEMENT_CHANNEL } from '../shared/settlement';
+import type { LocalSettlement } from '../shared/settlement';
+
+interface SubmitRatingPayload {
+  skinId: number;
+  handFeel: number;
+  artwork: number;
+  model: number;
+  mockery: number;
+}
 
 interface RedeemPayload {
   code: string;
@@ -199,6 +211,31 @@ function assertPlayerGamesPayload(p: unknown): asserts p is PlayerGamesPayload {
   if (obj.count !== undefined && typeof obj.count !== 'number') {
     throw new Error('invalid count');
   }
+}
+
+/**
+ * 窗口不在眼前时发一条系统通知。
+ *
+ * 窗口可见且有焦点时不发 —— 应用内的弹窗已经出来了,再弹一条系统通知是打扰。
+ */
+function notifySettlement(local: LocalSettlement): void {
+  if (!Notification.isSupported()) return;
+  const win = BrowserWindow.getAllWindows()[0];
+  if (win && !win.isDestroyed() && win.isVisible() && win.isFocused()) return;
+  const notification = new Notification({
+    title: '本局结算',
+    body: local.championName
+      ? `${local.championName} 这一局结束了,皮肤评分已就绪`
+      : '这一局结束了,皮肤评分已就绪'
+  });
+  notification.on('click', () => {
+    if (win && !win.isDestroyed()) {
+      if (win.isMinimized()) win.restore();
+      win.show();
+      win.focus();
+    }
+  });
+  notification.show();
 }
 
 export function registerIpcHandlers(): void {
@@ -414,6 +451,47 @@ export function registerIpcHandlers(): void {
       throw new Error('当前不在英雄选择阶段,无法生成推荐');
     }
     return requestRecommendation(snapshot.champSelect, snapshot.champSelect.myRole);
+  });
+
+  // ---- 局末结算 ------------------------------------------------------------
+
+  /**
+   * 局末结算:主进程检测到「这一局结束了」就推一条。
+   *
+   * 推的是**本地事实**(不含站内 id / 现有评分)—— 渲染进程收到后自己再去
+   * `match:get-settlement` 拿完整的那份(那边要发三个后端请求,不能阻塞推送)。
+   */
+  matchPoller.subscribeSettlement((local) => {
+    for (const win of BrowserWindow.getAllWindows()) {
+      if (win.isDestroyed()) continue;
+      win.webContents.send(SETTLEMENT_CHANNEL, local);
+    }
+    notifySettlement(local);
+  });
+
+  /** 取完整的那份结算(本地事实 + 站内皮肤 + 现有评分 + 我打过的分)。 */
+  ipcMain.handle('match:get-settlement', async () => {
+    const local = matchPoller.getSettlement();
+    if (!local) return null;
+    return await buildSettlementView(local);
+  });
+
+  /** 提交评分。 */
+  ipcMain.handle('rating:submit', async (_event, payload: SubmitRatingPayload) => {
+    if (typeof payload !== 'object' || payload === null) throw new Error('invalid payload');
+    if (!Number.isFinite(payload.skinId)) throw new Error('invalid skinId');
+    for (const key of ['handFeel', 'artwork', 'model', 'mockery'] as const) {
+      const value = payload[key];
+      if (!Number.isFinite(value) || value < 1 || value > 5) throw new Error(`invalid ${key}`);
+    }
+    const stats = await submitSkinRating({
+      skinId: payload.skinId,
+      handFeel: payload.handFeel,
+      artwork: payload.artwork,
+      model: payload.model,
+      mockery: payload.mockery
+    });
+    return { ok: true as const, stats };
   });
 
   ipcMain.handle('llm:get-status', () => getLlmStatus());

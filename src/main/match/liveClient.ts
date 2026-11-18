@@ -1,6 +1,7 @@
 import axios from 'axios';
 import * as https from 'node:https';
 import type { LiveGameInfo } from '../../shared/match';
+import type { LiveScore } from '../../shared/settlement';
 
 /**
  * Live Client Data API(2999 端口)。
@@ -50,13 +51,94 @@ export async function getAllGameData(
 
     const activePlayer = isRecord(data.activePlayer) ? data.activePlayer : {};
     const gameData = isRecord(data.gameData) ? data.gameData : {};
+    const allPlayers = Array.isArray(data.allPlayers) ? data.allPlayers.filter(isRecord) : [];
+    const myName = str(activePlayer.summonerName);
+    const me = myName ? allPlayers.find((p) => str(p.summonerName) === myName) : undefined;
 
     return {
       summonerName: str(activePlayer.summonerName),
       currentGold: num(activePlayer.currentGold),
       gameTime: num(gameData.gameTime),
-      gameMode: str(gameData.gameMode)
+      gameMode: str(gameData.gameMode),
+      championName: str(activePlayer.championName) || (me ? str(me.championName) : ''),
+      skinName: me ? str(me.skin) : ''
     };
+  } catch {
+    return null;
+  }
+}
+
+/** 从一条记录里按候选字段名取第一个能用的数。 */
+function pickNum(raw: Record<string, unknown>, keys: string[]): number {
+  for (const key of keys) {
+    const value = num(raw[key]);
+    if (value !== 0) return value;
+  }
+  return 0;
+}
+
+/**
+ * 从一条玩家记录里读出即时战绩。
+ *
+ * 认不出来(一个数都没有)返回 null —— 那说明这份载荷不是我们认得的形状,
+ * 别把一堆 0 当成「这一局啥也没干」。
+ */
+function toLiveScore(raw: Record<string, unknown>): LiveScore | null {
+  const score: LiveScore = {
+    kills: pickNum(raw, ['championsKilled', 'kills']),
+    deaths: pickNum(raw, ['deaths']),
+    assists: pickNum(raw, ['assists']),
+    minionKills: pickNum(raw, ['minionsKilled', 'totalMinionsKilled', 'minionKills']),
+    goldEarned: pickNum(raw, ['goldEarned', 'totalGoldEarned', 'currentGold']),
+    damageToChampions: pickNum(raw, [
+      'damageDealtToChampions',
+      'damageToChampions',
+      'totalDamageDealtToChampions'
+    ]),
+    level: pickNum(raw, ['level', 'championLevel'])
+  };
+  const allZero =
+    score.kills === 0 &&
+    score.deaths === 0 &&
+    score.assists === 0 &&
+    score.minionKills === 0 &&
+    score.goldEarned === 0;
+  return allZero ? null : score;
+}
+
+/**
+ * 局内即时战绩(/liveclientdata/playerstats)。
+ *
+ * 载荷形状各版本不一样:统计可能在 `activePlayer` 里,也可能只在
+ * `allPlayers[]` 里(按召唤师名找「我」那条)。两种都试。
+ *
+ * **不抛异常** —— 2999 连不上是常态(局末它就关了)。
+ */
+export async function getPlayerStats(
+  timeoutMs = LIVE_CLIENT_TIMEOUT_MS
+): Promise<LiveScore | null> {
+  try {
+    const response = await axios.get(`${LIVE_CLIENT_BASE}/liveclientdata/playerstats`, {
+      httpsAgent: LIVE_CLIENT_AGENT,
+      timeout: timeoutMs,
+      validateStatus: () => true,
+      proxy: false
+    });
+    if (response.status !== 200) return null;
+    const data = response.data;
+    if (!isRecord(data)) return null;
+
+    const active = isRecord(data.activePlayer) ? data.activePlayer : {};
+    const players = Array.isArray(data.allPlayers) ? data.allPlayers.filter(isRecord) : [];
+    const myName = str(active.summonerName);
+    const inAllPlayers = myName ? players.find((p) => str(p.summonerName) === myName) : undefined;
+
+    for (const source of [active, inAllPlayers]) {
+      if (!isRecord(source)) continue;
+      const score = toLiveScore(source);
+      if (score) return score;
+    }
+    return null;
   } catch {
     return null;
   }

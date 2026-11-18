@@ -66,22 +66,26 @@
       <router-view />
     </main>
 
+    <SkinRatingDialog v-model="settlementOpen" :view="settlementView" />
+
     <DevConsole />
     <DevPanel />
   </div>
 </template>
 
 <script setup lang="ts">
-import { computed, onMounted, ref, watch } from 'vue';
+import { computed, onBeforeUnmount, onMounted, ref, shallowRef, watch } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
 import { storeToRefs } from 'pinia';
 import DevConsole from './components/DevConsole.vue';
 import DevPanel from './components/DevPanel.vue';
+import SkinRatingDialog from './components/match/SkinRatingDialog.vue';
 import { useAuthStore } from './stores/auth';
 import { useConsoleEntry } from './composables/useConsoleEntry';
 import { useTheme } from './composables/useTheme';
 import { APP_VERSION } from './config/dev';
 import type { LcuStatus } from '../../preload/index';
+import type { SettlementView } from '../../shared/settlement';
 
 const router = useRouter();
 const route = useRoute();
@@ -140,9 +144,48 @@ async function onLogout(): Promise<void> {
   }
 }
 
+/** 局末结算。shallowRef —— 换一次就是换一次,不需要深层响应式。 */
+const settlementView = shallowRef<SettlementView | null>(null);
+const settlementOpen = ref(false);
+/** 已经处理过的结算键 —— 同一局不重复弹 */
+let handledSettlementKey = '';
+
+/**
+ * 主进程推来一条结算。
+ *
+ * 同一局的补齐段会再推一次(带上了胜负/位置)—— 那时候弹窗已经开着,
+ * 就地更新,不再弹一次。
+ */
+async function onSettlement(local: { key: string }): Promise<void> {
+  if (local.key === handledSettlementKey && settlementOpen.value) {
+    await refreshSettlement();
+    return;
+  }
+  handledSettlementKey = local.key;
+  await refreshSettlement();
+  settlementOpen.value = settlementView.value !== null;
+}
+
+async function refreshSettlement(): Promise<void> {
+  try {
+    settlementView.value = await window.api.getSettlement();
+  } catch (e: unknown) {
+    console.warn('get settlement failed', e);
+  }
+}
+
+let unsubscribeSettlement: (() => void) | null = null;
+
 onMounted(async () => {
   await auth.refresh();
   await refreshLcu();
+  unsubscribeSettlement = window.api.onSettlement((local) => {
+    void onSettlement(local);
+  });
+});
+
+onBeforeUnmount(() => {
+  unsubscribeSettlement?.();
 });
 
 // 换页面就顺手刷新一次客户端状态 —— 玩家常常是打完游戏才切过来的。

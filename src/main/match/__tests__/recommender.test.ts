@@ -36,6 +36,7 @@ const session: ChampSelectSession = {
       championIconUrl: null,
       assignedPosition: 'JUNGLE',
       cellId: 4,
+      skinId: 0,
       summonerId: 222,
       puuid: '',
       displayName: '',
@@ -48,6 +49,7 @@ const session: ChampSelectSession = {
   theirTeam: [],
   myRole: 'JUNGLE',
   myChampionId: 64,
+  mySkinId: 0,
   myCellId: 4,
   bannedChampions: [{ championId: 1, championName: '安妮', championIconUrl: null }]
 };

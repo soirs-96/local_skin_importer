@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import axios from 'axios';
 import { getStoredToken } from '../auth';
-import { fetchCatalog, fetchMyOwned } from '../catalog';
+import { fetchCatalog, fetchCatalogSkinBySkinId, fetchMyOwned } from '../catalog';
 
 vi.mock('axios');
 vi.mock('../auth');
@@ -166,5 +166,66 @@ describe('catalog.fetchMyOwned', () => {
     const result = await fetchMyOwned();
 
     expect(result.lastSyncAt).toBeNull();
+  });
+});
+
+describe('catalog.fetchCatalogSkinBySkinId', () => {
+  beforeEach(() => {
+    vi.mocked(axios.get).mockReset();
+  });
+
+  it('fetchCatalogSkinBySkinId 命中时返回站内那条', async () => {
+    vi.mocked(axios.get).mockResolvedValue({
+      data: {
+        code: 200,
+        data: {
+          current: 1,
+          size: 1,
+          total: 1,
+          pages: 1,
+          records: [
+            {
+              id: 42,
+              skinId: 161013,
+              heroId: 7,
+              heroName: '暗裔剑魔',
+              name: '黑暗之女',
+              nameEn: 'Dark Crystal',
+              rarity: '传说',
+              priceRp: 1350,
+              splashUrl: 'https://x/splash.jpg',
+              iconUrl: 'https://x/icon.jpg'
+            }
+          ]
+        }
+      }
+    });
+
+    const skin = await fetchCatalogSkinBySkinId(161013);
+
+    expect(skin?.id).toBe(42);
+    expect(skin?.name).toBe('黑暗之女');
+    expect(vi.mocked(axios.get).mock.calls[0][0]).toContain('skinId=161013');
+  });
+
+  it('fetchCatalogSkinBySkinId 不带 Authorization —— 带了 DESKTOP token 会被拦成 403', async () => {
+    vi.mocked(axios.get).mockResolvedValue({
+      data: { code: 200, data: { current: 1, size: 1, total: 0, pages: 0, records: [] } }
+    });
+
+    await fetchCatalogSkinBySkinId(161013);
+
+    const options = vi.mocked(axios.get).mock.calls[0][1] as
+      | { headers?: Record<string, string> }
+      | undefined;
+    expect(options?.headers?.Authorization).toBeUndefined();
+  });
+
+  it('fetchCatalogSkinBySkinId 查不到时返回 null(不抛)', async () => {
+    vi.mocked(axios.get).mockResolvedValue({
+      data: { code: 200, data: { current: 1, size: 1, total: 0, pages: 0, records: [] } }
+    });
+
+    await expect(fetchCatalogSkinBySkinId(161013)).resolves.toBeNull();
   });
 });
