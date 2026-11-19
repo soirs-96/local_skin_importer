@@ -28,6 +28,33 @@ describe('getAllGameData', () => {
     expect(live?.skinName).toBe('game_character_displayname_Ahri_Snow_Dawn');
   });
 
+  it('国服走 Riot ID 时也能认出「我」那条', async () => {
+    vi.mocked(axios.get).mockResolvedValue(
+      ok({
+        activePlayer: { riotIdGameName: '林俊杰', riotIdTagLine: 'CN1', championName: '墨拉斯特' },
+        gameData: { gameTime: 1200 },
+        allPlayers: [
+          {
+            riotIdGameName: '别人',
+            riotIdTagLine: 'CN2',
+            skin: 'game_character_displayname_Ashe_Default'
+          },
+          {
+            riotIdGameName: '林俊杰',
+            riotIdTagLine: 'CN1',
+            championName: '墨拉斯特',
+            skin: 'game_character_displayname_Malzahar_NorthernSky'
+          }
+        ]
+      })
+    );
+
+    const live = await getAllGameData();
+
+    expect(live?.championName).toBe('墨拉斯特');
+    expect(live?.skinName).toBe('game_character_displayname_Malzahar_NorthernSky');
+  });
+
   it('端口不通时返回 null(不抛)', async () => {
     vi.mocked(axios.get).mockRejectedValue(new Error('ECONNREFUSED'));
     await expect(getAllGameData()).resolves.toBeNull();

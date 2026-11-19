@@ -29,6 +29,36 @@ function num(v: unknown): number {
 }
 
 /**
+ * 一个玩家在载荷里可能用哪几个名字出现。
+ *
+ * 国服客户端走 Riot ID(`riotIdGameName` + `riotIdTagLine`),`summonerName`
+ * 常常是空的 —— 只认 `summonerName` 会把「我」整个漏掉,
+ * 皮肤名(只挂在「我」那条上)也就跟着丢了。
+ */
+function nameKeys(raw: Record<string, unknown>): string[] {
+  const keys: string[] = [];
+  const summonerName = str(raw.summonerName);
+  if (summonerName) keys.push(summonerName.toLowerCase());
+  const game = str(raw.riotIdGameName);
+  const tag = str(raw.riotIdTagLine);
+  if (game) {
+    keys.push(game.toLowerCase());
+    if (tag) keys.push(`${game}#${tag}`.toLowerCase());
+  }
+  return keys;
+}
+
+/** allPlayers 里哪一条是「我」。 */
+function findSelf(
+  activePlayer: Record<string, unknown>,
+  allPlayers: Record<string, unknown>[]
+): Record<string, unknown> | undefined {
+  const mine = nameKeys(activePlayer);
+  if (mine.length === 0) return undefined;
+  return allPlayers.find((p) => nameKeys(p).some((key) => mine.includes(key)));
+}
+
+/**
  * 读当前对局的实时数据。不在对局中(或者客户端没开)返回 null。
  *
  * 这里**不抛异常**:这个接口「连不上」是常态,不是错误 —— 调用方靠 null 判断
@@ -52,16 +82,16 @@ export async function getAllGameData(
     const activePlayer = isRecord(data.activePlayer) ? data.activePlayer : {};
     const gameData = isRecord(data.gameData) ? data.gameData : {};
     const allPlayers = Array.isArray(data.allPlayers) ? data.allPlayers.filter(isRecord) : [];
-    const myName = str(activePlayer.summonerName);
-    const me = myName ? allPlayers.find((p) => str(p.summonerName) === myName) : undefined;
+    const me = findSelf(activePlayer, allPlayers);
 
     return {
       summonerName: str(activePlayer.summonerName),
       currentGold: num(activePlayer.currentGold),
       gameTime: num(gameData.gameTime),
       gameMode: str(gameData.gameMode),
-      championName: str(activePlayer.championName) || (me ? str(me.championName) : ''),
-      skinName: me ? str(me.skin) : ''
+      // allPlayers 里那条的更可信 —— 局末 activePlayer 会被换成占位数据
+      championName: (me ? str(me.championName) : '') || str(activePlayer.championName),
+      skinName: me ? str(me.skin) || str(me.skinName) : ''
     };
   } catch {
     return null;
@@ -110,7 +140,7 @@ function toLiveScore(raw: Record<string, unknown>): LiveScore | null {
  * 局内即时战绩(/liveclientdata/playerstats)。
  *
  * 载荷形状各版本不一样:统计可能在 `activePlayer` 里,也可能只在
- * `allPlayers[]` 里(按召唤师名找「我」那条)。两种都试。
+ * `allPlayers[]` 里(按名字找「我」那条 —— 国服走 Riot ID,见 `findSelf`)。两种都试。
  *
  * **不抛异常** —— 2999 连不上是常态(局末它就关了)。
  */
@@ -130,8 +160,7 @@ export async function getPlayerStats(
 
     const active = isRecord(data.activePlayer) ? data.activePlayer : {};
     const players = Array.isArray(data.allPlayers) ? data.allPlayers.filter(isRecord) : [];
-    const myName = str(active.summonerName);
-    const inAllPlayers = myName ? players.find((p) => str(p.summonerName) === myName) : undefined;
+    const inAllPlayers = findSelf(active, players);
 
     for (const source of [active, inAllPlayers]) {
       if (!isRecord(source)) continue;

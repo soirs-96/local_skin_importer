@@ -49,7 +49,9 @@ vi.mock('../recentMatches', async (importOriginal) => {
 vi.mock('../staticData', () => ({
   loadStaticData: vi.fn(async () => ({
     version: '14.1.1',
-    champions: new Map(),
+    // 英雄 64 = 盲僧。局末的 Live Client 英雄名是占位符,
+    // 结算卡上的名字要靠这张表。
+    champions: new Map([[64, { name: '盲僧', iconUrl: null }]]),
     items: new Map(),
     runes: new Map()
   })),
@@ -373,6 +375,47 @@ describe('MatchPoller 的局末检测', () => {
     await flush();
 
     expect(settlements).toHaveLength(2);
+    poller.stop();
+  });
+
+  it('国服 gameflow 只给皮肤序号时,按「英雄编号 × 1000 + 序号」换算', async () => {
+    const poller = new MatchPoller();
+    const settlements: LocalSettlement[] = [];
+    poller.subscribeSettlement((s) => settlements.push(s));
+
+    poller.start();
+    await flush();
+    settlements.length = 0;
+
+    // 局中:gameflow 事件带上队伍条目(国服给的是 lastSelectedSkinIndex)
+    wsFire({
+      uri: '/lol-gameflow/v1/session',
+      eventType: 'Update',
+      data: {
+        phase: 'InProgress',
+        gameData: {
+          teamOne: [
+            { championId: 64, puuid: 'ally-puuid', lastSelectedSkinIndex: 3 },
+            { championId: 64, puuid: 'my-puuid', teamOwner: true, lastSelectedSkinIndex: 7 }
+          ]
+        }
+      }
+    });
+    await flush();
+
+    wsFire({
+      uri: '/lol-gameflow/v1/session',
+      eventType: 'Update',
+      data: { phase: 'PreEndOfGame' }
+    });
+    await flush();
+
+    expect(settlements).toHaveLength(1);
+    expect(settlements[0].championId).toBe(64);
+    expect(settlements[0].usedSkin.riotSkinId).toBe(64007);
+    expect(settlements[0].usedSkin.source).toBe('gameflow-index');
+    // 英雄名按英雄编号从静态数据里取(局末 Live Client 给的是占位符)
+    expect(settlements[0].championName).toBe('盲僧');
     poller.stop();
   });
 

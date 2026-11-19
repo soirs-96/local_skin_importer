@@ -153,10 +153,27 @@ watch(
   { immediate: true }
 );
 
+/**
+ * 客户端给的皮肤名是英文资源名(`game_character_displayname_Ahri_Snow_Dawn`)
+ * —— 去掉前缀、 underscores 换空格,至少人能读。
+ */
+function prettySkinName(raw: string): string {
+  const short = raw
+    .replace(/^game_character_displayname_/i, '')
+    .replace(/^gamecharacterdisplayname_/i, '')
+    .replace(/_/g, ' ')
+    .trim();
+  return short || raw;
+}
+
 const skinName = computed<string>(() => {
-  const skin = props.view?.skin;
+  const view = props.view;
+  const skin = view?.skin;
   if (skin?.name) return skin.name;
   if (skin?.nameEn) return skin.nameEn;
+  // 站内目录里没有这条皮肤,但本地读到了皮肤名 —— 总比一句「未知皮肤」强
+  const displayName = view?.usedSkin.displayName;
+  if (displayName) return prettySkinName(displayName);
   return '未知皮肤';
 });
 

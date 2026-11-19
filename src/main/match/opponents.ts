@@ -220,3 +220,21 @@ export async function getGameflowPhase(client: AxiosInstance): Promise<string> {
     return '';
   }
 }
+
+/**
+ * gameflow 的完整会话。
+ *
+ * 队伍条目里带着**本地玩家的皮肤线索**(国服给的是皮肤序号)——
+ * 局末事件流漏了的时候,结算那边靠这个补一次(见 poller 的
+ * `resolveSkinFromGameflow`)。
+ *
+ * 拉不到就 null —— 不抛。
+ */
+export async function getGameflowSession(client: AxiosInstance): Promise<unknown | null> {
+  try {
+    const { data } = await client.get(GAMEFLOW_PATH, { timeout: GAMEFLOW_TIMEOUT_MS });
+    return data;
+  } catch {
+    return null;
+  }
+}

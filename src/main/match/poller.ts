@@ -6,8 +6,8 @@ import { getRankedEntries } from './ranked';
 import { findJustFinishedMatch, getRecentMatches, toMatchScore } from './recentMatches';
 import { getChampionMastery } from './mastery';
 import { getMatchSummoner } from './summoner';
-import { getGameflowPhase, getOpponents } from './opponents';
-import { resolveUsedSkin } from './usedSkin';
+import { getGameflowPhase, getGameflowSession, getOpponents } from './opponents';
+import { parseGameflowSelf, resolveUsedSkin } from './usedSkin';
 import { failedLookup, lookupPlayer as lookupPlayerByQuery } from './playerLookup';
 import { fetchPlayerGames as fetchPlayerGamesFromLedge } from './tencentLedge';
 import { championIndexEntries, emptyStaticData, loadStaticData, type StaticData } from './staticData';
@@ -85,6 +85,13 @@ const AUTH_RETRY_MS = 10_000;
 const SETTLEMENT_ENRICH_DELAY_MS = 15_000;
 /** 结算补齐段:两次查询之间的间隔(毫秒)。 */
 const SETTLEMENT_ENRICH_RETRY_MS = 20_000;
+/**
+ * 结算补齐段:两次「问 gameflow 补皮肤」之间的间隔(毫秒)。
+ *
+ * 客户端只在局末那几秒还留着上一局的队伍信息 —— 所以这个重试间隔不能太长,
+ * 但也别每 2 秒打一次端点。
+ */
+const SETTLEMENT_SKIN_RETRY_MS = 20_000;
 
 export function emptySnapshot(): MatchSnapshot {
   return {
@@ -132,42 +139,41 @@ export function phaseFromEvent(data: unknown): string {
 }
 
 /**
- * 从 gameflow 事件载荷里取「我」这条的英雄编号和皮肤编号。
+ * 从 gameflow 事件载荷里取「我」这条的英雄编号和皮肤线索。
  *
- * gameflow 用 `teamOwner: true` 标本地玩家那条 —— 这是最准的认法。
- * 认不到就退到「第一个带 championId 的条目」—— 那是本地玩家还是队友分不清,
- * 但**英雄编号对结算卡有用**,拿错了也只是界面上写错个名字,比空着强。
+ * gameflow 用 `teamOwner: true` 标本地玩家那条 —— 这是最准的认法;
+ * 认不到就退到 puuid 对上。
  *
- * ⚠️ 顺带读 `skinId`:gameflow 的队伍条目里是有皮肤编号的,
- * 这是选人会话之外的**第二条皮肤来源**,而且它一直活到局末。
+ * 认不到「我」是谁的时候,英雄编号可以宽松地拿队伍里第一个带英雄编号的
+ * —— 那可能是队友,但**只是界面上写错个名字**,比空着强。
  *
- * ⚠️ `teamOne` / `teamTwo` 的具体载荷形状没实测过(见探测 1),
- * 所以这里对字段名保持宽容。
+ * ⚠️ 皮肤**不宽松**:认错人就会把队友的皮肤当成自己的(见 `usedSkin.ts`)。
+ *
+ * ⚠️ 国服客户端的队伍条目**没有** `skinId`,给的是 `lastSelectedSkinIndex`
+ * (皮肤序号)—— 换算成数字 id 的规则见 `usedSkin.ts` 的 `skinIdFromIndex`。
  */
-export function selfPlayerFromEvent(data: unknown): { championId: number; skinId: number } {
-  const empty = { championId: 0, skinId: 0 };
-  if (typeof data !== 'object' || data === null) return empty;
-  const gameData = (data as Record<string, unknown>).gameData;
-  if (typeof gameData !== 'object' || gameData === null) return empty;
-  const gd = gameData as Record<string, unknown>;
+export function selfPlayerFromEvent(
+  data: unknown,
+  myPuuid = ''
+): { championId: number; skinId: number; skinIndex: number } {
+  const self = parseGameflowSelf(data, myPuuid);
+  return {
+    championId: self.championId,
+    skinId: self.skinId,
+    skinIndex: self.skinIndex
+  };
+}
 
-  let fallback: { championId: number; skinId: number } = empty;
-  for (const key of ['teamOne', 'teamTwo']) {
-    const team = gd[key];
-    if (!Array.isArray(team)) continue;
-    for (const entry of team) {
-      if (typeof entry !== 'object' || entry === null) continue;
-      const e = entry as Record<string, unknown>;
-      const championId = typeof e.championId === 'number' ? e.championId : 0;
-      const skinId = typeof e.skinId === 'number' ? e.skinId : 0;
-      if (championId <= 0 && skinId <= 0) continue;
-      if (e.teamOwner === true) return { championId, skinId };
-      if (fallback.championId <= 0 && championId > 0) {
-        fallback = { championId, skinId };
-      }
-    }
-  }
-  return fallback;
+/**
+ * 这个阶段里 gameData 是不是**当前这一局**的队伍信息。
+ *
+ * 大厅 / 空闲 / 选人这几个阶段,gameData 里留着的是**上一局**的残留 ——
+ * 收了就会把上一局的皮肤算到这一局头上。只有「对局中」「等待结算」「对局结束」
+ * 这几个阶段算数。
+ */
+function hasCurrentGameTeams(phase: string): boolean {
+  const label = lcuPhaseLabel(phase);
+  return label === '对局中' || label === '等待结算' || label === '对局结束';
 }
 
 /** 请求失败说明凭据过期了(客户端换过端口/token),丢掉缓存让下一轮重新解析。 */
@@ -212,6 +218,16 @@ export class MatchPoller {
    */
   private champSelectSkinId = 0;
   private gameflowSkinId = 0;
+  /**
+   * 国服 gameflow 给的皮肤**序号**(不是皮肤 id);-1 = 没读到。
+   *
+   * 序号必须跟 {@link gameflowSkinChampionId} 成对记着 —— 换算皮肤 id 要用
+   * 「英雄编号 × 1000 + 序号」,拿上一局的序号配上这一局的英雄编号会算出一个
+   * 根本不存在的皮肤。
+   */
+  private gameflowSkinIndex = -1;
+  /** 上面那个序号所属的英雄编号 */
+  private gameflowSkinChampionId = 0;
   private liveClientSkinName: string | null = null;
   /** 本局英雄编号(选人阶段 / gameflow 事件里记下) */
   private currentChampionId = 0;
@@ -219,6 +235,8 @@ export class MatchPoller {
   private settlement: LocalSettlement | null = null;
   /** 上次尝试补 match history 的时刻 */
   private settlementEnrichedAt = 0;
+  /** 上次尝试从 gameflow 补皮肤的时刻(事件流漏了的时候兜底) */
+  private settlementSkinTriedAt = 0;
   private settlementListeners = new Set<SettlementListener>();
 
   private wsClient: LcuWsClient | null = null;
@@ -309,13 +327,21 @@ export class MatchPoller {
     // 而且不用去问 LCU(对局中轮询器是直接 return 的)。
     if (event.uri.startsWith('/lol-gameflow/v1/session')) {
       const phase = phaseFromEvent(event.data);
-      const self = selfPlayerFromEvent(event.data);
+      const self = selfPlayerFromEvent(event.data, this.myPuuid());
       // 「空闲 / 大厅」阶段的 gameData 还是上一局的残留 —— 不收,
       // 不然下一局没读到皮肤时会拿上一局的编号顶上。
       const stale = phase === 'None' || phase === 'Lobby';
+      // 队伍信息是不是当前这一局的 —— 大厅/选人阶段 gameData 里还是上一局的人。
+      const inGame = hasCurrentGameTeams(phase);
       if (!stale && self.championId > 0) this.currentChampionId = self.championId;
       // gameflow 里的皮肤编号 —— 选人会话之外的第二条来源
-      if (!stale && self.skinId > 0) this.gameflowSkinId = self.skinId;
+      if (inGame && self.skinId > 0) this.gameflowSkinId = self.skinId;
+      // 国服客户端给的是「皮肤序号」,不是皮肤 id —— 序号跟英雄编号**成对**记着,
+      // 免得下一局换了英雄却拿上一局的序号去换算出一个不存在的皮肤。
+      if (inGame && self.skinIndex >= 0 && self.championId > 0) {
+        this.gameflowSkinIndex = self.skinIndex;
+        this.gameflowSkinChampionId = self.championId;
+      }
       if (phase) this.onPhaseChange(phase);
     }
     if (isAcceleratedEvent(event)) {
@@ -353,6 +379,15 @@ export class MatchPoller {
     } catch {
       return '';
     }
+  }
+
+  /**
+   * 我的 puuid(同步版)。
+   *
+   * 队伍条目里认「我」那条用 —— `teamOwner` 认不到时靠 puuid 对上。
+   */
+  private myPuuid(): string {
+    return this.snapshot.summoner?.puuid ?? '';
   }
 
   /**
@@ -456,13 +491,26 @@ export class MatchPoller {
     this.createSettlement();
   }
 
-  /** 三条候选合成一个结论 —— 优先级在 `usedSkin.ts` 里定死。 */
+  /** 四条候选合成一个结论 —— 优先级在 `usedSkin.ts` 里定死。 */
   private resolveSettlementSkin(): UsedSkin {
     return resolveUsedSkin({
       champSelectSkinId: this.champSelectSkinId,
       gameflowSkinId: this.gameflowSkinId,
+      gameflowSkinIndex: this.gameflowSkinIndex,
+      gameflowChampionId: this.gameflowSkinChampionId,
       liveClientSkinName: this.liveClientSkinName
     });
+  }
+
+  /**
+   * 英雄名。
+   *
+   * **按英雄编号从静态数据里取**,不信 Live Client —— 国服客户端在局末会把
+   * `activePlayer` 换成占位数据,那儿的英雄名是「解锁者」这种鬼话。
+   */
+  private championName(championId: number): string {
+    if (championId <= 0) return '';
+    return this.staticData?.champions.get(championId)?.name ?? '';
   }
 
   /**
@@ -484,7 +532,9 @@ export class MatchPoller {
     const settlement: LocalSettlement = {
       key: `${this.currentChampionId}-${usedSkin.riotSkinId}-${endedAt}`,
       championId: this.currentChampionId,
-      championName: live?.championName ?? '',
+      // 静态数据里的英雄名最准;它还没加载出来时才退到 Live Client 的名字
+      // (局末那会儿 Live Client 给的可能是占位符,补齐段里会换成真名)。
+      championName: this.championName(this.currentChampionId) || live?.championName || '',
       usedSkin,
       live: this.lastPlayerStats,
       match: null,
@@ -492,6 +542,7 @@ export class MatchPoller {
     };
     this.settlement = settlement;
     this.settlementEnrichedAt = 0;
+    this.settlementSkinTriedAt = 0;
     this.emitSettlement(settlement);
     // 结算快照已经带走了这一局的皮肤 —— 候选作废,免得带进下一局。
     this.resetSkinCandidates();
@@ -501,7 +552,18 @@ export class MatchPoller {
   private resetSkinCandidates(): void {
     this.champSelectSkinId = 0;
     this.gameflowSkinId = 0;
+    this.gameflowSkinIndex = -1;
+    this.gameflowSkinChampionId = 0;
     this.liveClientSkinName = null;
+  }
+
+  /** 改结算的某几项并发出去 —— 弹窗开着的时候让它刷新。 */
+  private updateSettlement(patch: Partial<LocalSettlement>): void {
+    const current = this.settlement;
+    if (!current) return;
+    const next: LocalSettlement = { ...current, ...patch };
+    this.settlement = next;
+    this.emitSettlement(next);
   }
 
   private emitSettlement(settlement: LocalSettlement): void {
@@ -526,10 +588,13 @@ export class MatchPoller {
   }
 
   /**
-   * 补齐结算里的胜负 / 时长 / 位置。
+   * 结算的补齐段。
    *
-   * 客户端的 match history 有落库延迟 —— 局末那一刻往往还查不到刚打完的那局。
-   * 所以弹窗先开起来(靠 2999 的即时战绩),过一会儿再补。
+   * 三件事,各自独立、缺了都不影响别的:
+   *   1. **英雄名** —— 国服 Live Client 在局末给的英雄名是占位符(「解锁者」),
+   *      按英雄编号从静态数据里取真名。
+   *   2. **皮肤** —— 事件流漏掉 gameflow 那一次更新时,再问一次客户端补上。
+   *   3. **胜负 / 时长 / 位置** —— match history 有落库延迟,过一会儿再查。
    */
   private async enrichSettlement(
     client: AxiosInstance,
@@ -538,20 +603,38 @@ export class MatchPoller {
     now: number
   ): Promise<void> {
     const settlement = this.settlement;
-    if (!settlement || settlement.match) return;
+    if (!settlement) return;
+
+    // 1. 英雄名 —— 静态数据里的真名
+    if (!settlement.championName && settlement.championId > 0) {
+      const name = staticData.champions.get(settlement.championId)?.name ?? '';
+      if (name) this.updateSettlement({ championName: name });
+    }
+
+    // 2. 皮肤 —— 事件流没读到的话,直接问一次客户端的 gameflow
+    if (settlement.usedSkin.riotSkinId === 0) {
+      await this.resolveSkinFromGameflow(client, puuid, now);
+    }
+
+    // 3. match history 的战绩
+    const current = this.settlement;
+    if (!current || current.match) return;
     // 不知道英雄 —— 不猜是哪一局
-    if (!settlement.championId) return;
-    if (now - settlement.endedAt < SETTLEMENT_ENRICH_DELAY_MS) return;
+    if (!current.championId) return;
+    if (now - current.endedAt < SETTLEMENT_ENRICH_DELAY_MS) return;
     if (now - this.settlementEnrichedAt < SETTLEMENT_ENRICH_RETRY_MS) return;
 
     this.settlementEnrichedAt = now;
     try {
       // 用**结算自己的**英雄编号,不用当前的 —— 玩家可能已经排上下一局了。
-      const found = await findJustFinishedMatch(client, staticData, puuid, settlement.championId, {
+      const found = await findJustFinishedMatch(client, staticData, puuid, current.championId, {
         now
       });
       if (!found) return;
-      const enriched: LocalSettlement = { ...settlement, match: toMatchScore(found.match) };
+      // 查的过程中结算可能被更新过(皮肤补上了)—— 以最新的那份为底
+      const base = this.settlement;
+      if (!base) return;
+      const enriched: LocalSettlement = { ...base, match: toMatchScore(found.match) };
       // 结算时没认出皮肤的话,match history 里的 participant 可能给
       if (enriched.usedSkin.riotSkinId === 0 && found.skinId && found.skinId > 0) {
         enriched.usedSkin = resolveUsedSkin({
@@ -564,6 +647,42 @@ export class MatchPoller {
     } catch {
       // 查不到就还是缺 —— 不编
     }
+  }
+
+  /**
+   * 皮肤还没认出来时,直接问一次客户端的 gameflow。
+   *
+   * 事件流(WS)漏掉那一次更新的场合走这里 —— 队伍条目里的皮肤线索就在
+   * `gameData.teamOne/teamTwo` 里,客户端只在局末那几秒还留着。
+   *
+   * 严认「我」那条(见 `parseGameflowSelf`)—— 认错了就是给队友的皮肤打分。
+   */
+  private async resolveSkinFromGameflow(
+    client: AxiosInstance,
+    puuid: string,
+    now: number
+  ): Promise<void> {
+    if (now - this.settlementSkinTriedAt < SETTLEMENT_SKIN_RETRY_MS) return;
+    this.settlementSkinTriedAt = now;
+    const raw = await getGameflowSession(client);
+    if (!raw) return;
+    const self = parseGameflowSelf(raw, puuid);
+    if (!self.isSelf) return;
+    const settlement = this.settlement;
+    if (!settlement) return;
+    const resolved = resolveUsedSkin({
+      gameflowSkinId: self.skinId,
+      gameflowSkinIndex: self.skinIndex,
+      gameflowChampionId: self.championId,
+      liveClientSkinName: settlement.usedSkin.displayName
+    });
+    if (resolved.riotSkinId === 0) return;
+    this.updateSettlement({
+      usedSkin: {
+        ...resolved,
+        displayName: resolved.displayName ?? settlement.usedSkin.displayName
+      }
+    });
   }
 
   private async poll(): Promise<void> {
