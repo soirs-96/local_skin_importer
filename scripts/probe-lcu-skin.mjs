@@ -158,6 +158,118 @@ async function main() {
     }
   }
 
+  // ---------------------------------------------- 0. skins.json(皮肤总目录)
+  // 先拉它 —— 后面 gameflow / champ-select 拿到「皮肤线索」时,
+  // 立刻能拿这个目录算出它到底指哪款皮肤。
+  console.log('\n===== 0. skins.json (皮肤总目录 —— 判定皮肤线索的标尺) =====');
+  const skinsByChamp = new Map();
+  const skinById = new Map();
+  const sk0 = await call('/lol-game-data/assets/v1/skins.json');
+  console.log(`status=${sk0.status} ${sk0.error || ''} bytes=${sk0.bytes}`);
+  if (sk0.status === 200) {
+    await dump('skins.json', sk0.text);
+    try {
+      const j = JSON.parse(sk0.text);
+      const list = toEntries(j);
+      console.log(`shape: ${Array.isArray(j) ? 'array' : 'dict'} entries=${list.length}`);
+      for (const e of list.slice(0, 2)) {
+        console.log(`  sample fields: ${fieldNames(e)}`);
+        console.log(`  sample: ${JSON.stringify(e).slice(0, 500)}`);
+      }
+      let noClass = 0;
+      let classOther = 0;
+      let droppedClass = 0;
+      let droppedSuffix = 0;
+      for (const e of list) {
+        const id = Number(e.id) || 0;
+        if (!id) continue;
+        const cls = String(e.skinClassification || '');
+        if (!cls) noClass += 1;
+        else if (cls !== 'kChampion') {
+          classOther += 1;
+          droppedClass += 1;
+          continue; // 不是英雄皮肤 → 不进对照表(跟 app 的 parseLcuSkins 一致)
+        }
+        const champ = Math.floor(id / 1000);
+        const idx = id % 1000;
+        // splash 文件名末尾的 _N 应当就是序号 —— 对不上就整条不收
+        const suffix = String(e.splashPath || '');
+        const sm = /_(\d+)\.jpg$/i.exec(suffix);
+        if (sm && Number(sm[1]) !== idx) {
+          droppedSuffix += 1;
+          continue;
+        }
+        if (!skinsByChamp.has(champ)) skinsByChamp.set(champ, []);
+        skinsByChamp.get(champ).push({ id, idx, e });
+        skinById.set(id, e);
+      }
+      console.log(`对照表剔除: 非 kChampion ${droppedClass} 条, splash 后缀对不上 ${droppedSuffix} 条`);
+      for (const arr of skinsByChamp.values()) arr.sort((a, b) => a.id - b.id);
+      console.log(
+        `heroes: ${skinsByChamp.size}, 无 skinClassification 的 ${noClass} 条, 非 kChampion 的 ${classOther} 条`
+      );
+
+      // splash 文件名末尾的 _N 是不是就是序号(全量原始条目,不是过滤后的)
+      let mismatch = 0;
+      let noSuffix = 0;
+      for (const e of list) {
+        const id = Number(e.id) || 0;
+        if (!id) continue;
+        const m = /_(\d+)\.jpg$/i.exec(String(e.splashPath || ''));
+        if (!m) {
+          noSuffix += 1;
+          continue;
+        }
+        if (Number(m[1]) !== id % 1000) {
+          mismatch += 1;
+          if (mismatch <= 10) console.log(`  ! id=${id} 序号=${id % 1000} 但 splash 文件名是 ${m[1]}`);
+        }
+      }
+      console.log(`splash 文件名后缀核对: 不一致 ${mismatch} 条, 认不出后缀 ${noSuffix} 条`);
+
+      // 每个英雄的皮肤 id 是不是连续的 champ*1000, champ*1000+1, ...
+      let gapChampions = 0;
+      for (const [champ, arr] of skinsByChamp) {
+        const ids = arr.map((x) => x.id);
+        if (!ids.every((sid, i) => sid === champ * 1000 + i)) {
+          gapChampions += 1;
+          if (gapChampions <= 6) {
+            console.log(
+              `  ! champion ${champ} 的 id 不连续: ${ids.slice(0, 12).join(', ')}${ids.length > 12 ? ' ...' : ''}`
+            );
+          }
+        }
+      }
+      console.log(`id 不连续的英雄: ${gapChampions} / ${skinsByChamp.size}`);
+    } catch (e) {
+      console.log(`not JSON: ${e.message}`);
+    }
+  }
+
+  /**
+   * 把一条「皮肤线索」直接换算成皮肤,并把该英雄的皮肤清单打出来。
+   *
+   * 这样探测跑一次就能得出结论,不用人工对照。
+   */
+  const explainSkin = (champId, label, value) => {
+    if (!champId || !Number.isFinite(value)) return;
+    const arr = skinsByChamp.get(champId) || [];
+    console.log(`        -- ${label}=${value} (英雄 ${champId} 共 ${arr.length} 款皮肤) --`);
+    const shown = arr.slice(0, 40);
+    for (const it of shown) {
+      const marks = [];
+      if (it.id === value) marks.push('« 皮肤 id 就是它');
+      if (it.idx === value) marks.push('« 序号就是它');
+      if (champId * 1000 + value === it.id) marks.push('« 编号差就是它');
+      const pos = arr.indexOf(it);
+      if (pos === value) marks.push('« 清单位置就是它');
+      console.log(
+        `           id=${it.id} 序号=${it.idx} 位置=${pos} 「${it.e.name}」${marks.length ? ' ' + marks.join(' ') : ''}`
+      );
+    }
+    if (arr.length > shown.length) console.log(`           ... 还有 ${arr.length - shown.length} 款`);
+  };
+
   // ---------------------------------------------------------------- 1. gameflow
   console.log('\n===== 1. gameflow (/lol-gameflow/v1/session) =====');
   const gf = await call('/lol-gameflow/v1/session');
@@ -188,8 +300,16 @@ async function main() {
               `teamOwner=${e.teamOwner} ` +
               `puuid=${String(e.puuid || '').slice(0, 12)} name=${e.summonerName || e.riotIdGameName || ''}`
           );
-          if (e.teamOwner === true) {
-            console.log(`        >>> SELF ENTRY RAW: ${JSON.stringify(e)}`);
+          const isSelf = e.teamOwner === true || (puuid && String(e.puuid || '') === puuid);
+          if (isSelf) {
+            console.log(
+              `        >>> SELF ENTRY RAW (teamOwner=${e.teamOwner} puuidMatch=${!!(puuid && String(e.puuid || '') === puuid)}): ${JSON.stringify(e)}`
+            );
+            const champId = Number(e.championId) || 0;
+            for (const key of ['selectedSkinId', 'lastSelectedSkinIndex', 'selectedSkinIndex', 'skinIndex', 'skinId']) {
+              const v = e[key];
+              if (typeof v === 'number' && Number.isFinite(v)) explainSkin(champId, key, v);
+            }
           }
         });
       }
@@ -225,6 +345,11 @@ async function main() {
           );
           if (e.cellId === j.localPlayerCellId) {
             console.log(`        >>> LOCAL PLAYER RAW: ${JSON.stringify(e)}`);
+            const champId = Number(e.championId) || 0;
+            for (const key of ['selectedSkinId', 'skinId', 'lastSelectedSkinIndex', 'selectedSkinIndex', 'skinIndex']) {
+              const v = e[key];
+              if (typeof v === 'number' && Number.isFinite(v)) explainSkin(champId, key, v);
+            }
           }
         });
       }
@@ -279,93 +404,7 @@ async function main() {
     }
   }
 
-  // ------------------------------------------------------------- 4. skins.json
-  console.log('\n===== 4. client skins.json (皮肤目录 —— 权威对照表) =====');
-  const sk = await call('/lol-game-data/assets/v1/skins.json');
-  console.log(`status=${sk.status} ${sk.error || ''} bytes=${sk.bytes}`);
-  const skinCatalog = new Map();
-  if (sk.status === 200) {
-    await dump('skins.json', sk.text);
-    try {
-      const j = JSON.parse(sk.text);
-      const list = toEntries(j);
-      console.log(`shape: ${Array.isArray(j) ? 'array' : 'dict'} entries=${list.length}`);
-      for (const e of list.slice(0, 2)) {
-        console.log(`  sample fields: ${fieldNames(e)}`);
-        console.log(`  sample: ${JSON.stringify(e).slice(0, 500)}`);
-      }
-
-      // 逐条核对:皮肤 id 是不是「英雄编号 × 1000 + 序号」,
-      // 序号是不是就是 splash 文件名末尾那个 _N。
-      const byChamp = new Map();
-      let noClass = 0;
-      let classOther = 0;
-      for (const e of list) {
-        const id = Number(e.id) || 0;
-        if (!id) continue;
-        const cls = String(e.skinClassification || '');
-        if (!cls) noClass += 1;
-        else if (cls !== 'kChampion') classOther += 1;
-        const champ = Math.floor(id / 1000);
-        const idx = id % 1000;
-        if (!byChamp.has(champ)) byChamp.set(champ, []);
-        byChamp.get(champ).push({ id, idx, e });
-        skinCatalog.set(id, e);
-      }
-      console.log(`heroes: ${byChamp.size}, 无 skinClassification 的 ${noClass} 条, 非 kChampion 的 ${classOther} 条`);
-
-      // splash 文件名末尾的 _N 是不是就是序号
-      let mismatch = 0;
-      let noSuffix = 0;
-      for (const [, arr] of byChamp) {
-        for (const it of arr) {
-          const p = String(it.e.splashPath || '');
-          const m = /_(\d+)\.jpg$/i.exec(p);
-          if (!m) {
-            noSuffix += 1;
-            continue;
-          }
-          if (Number(m[1]) !== it.idx) {
-            mismatch += 1;
-            if (mismatch <= 10) {
-              console.log(`  ! id=${it.id} 序号=${it.idx} 但 splash 文件名是 ${m[1]}`);
-            }
-          }
-        }
-      }
-      console.log(`splash 文件名后缀核对: 不一致 ${mismatch} 条, 认不出后缀 ${noSuffix} 条`);
-
-      // 每个英雄的皮肤 id 是不是连续的 champ*1000, champ*1000+1, ...
-      // 不连续的话「序号 ↔ id」就不能靠算术,得靠清单里的位置。
-      let gapChampions = 0;
-      for (const [champ, arr] of byChamp) {
-        arr.sort((a, b) => a.id - b.id);
-        const ids = arr.map((x) => x.id);
-        const contiguous = ids.every((sid, i) => sid === champ * 1000 + i);
-        if (!contiguous) {
-          gapChampions += 1;
-          if (gapChampions <= 6) {
-            console.log(`  ! champion ${champ} 的 id 不连续: ${ids.slice(0, 12).join(', ')}${ids.length > 12 ? ' ...' : ''}`);
-          }
-        }
-      }
-      console.log(`id 不连续的英雄: ${gapChampions} / ${byChamp.size}`);
-
-      // 打印几个英雄的完整清单 —— 手工核对「序号 ↔ id ↔ 中文名」
-      let shown = 0;
-      for (const [champ, arr] of byChamp) {
-        if (shown >= 5) break;
-        arr.sort((a, b) => a.id - b.id);
-        console.log(`  champion ${champ}:`);
-        for (const it of arr.slice(0, 6)) {
-          console.log(`      id=${it.id} 序号=${it.idx} 「${it.e.name}」 isBase=${it.e.isBase}`);
-        }
-        shown += 1;
-      }
-    } catch (e) {
-      console.log(`not JSON: ${e.message}`);
-    }
-  }
+  // skins.json 在第 0 段已经拉过并核对过了,这里不再重复。
 
   // ------------------------------------ 4b. champion-summary:英雄清单(不含皮肤)
   // 用途:把 skins.json splash 路径里的角色目录名(Characters/Annie)对上英雄编号。
@@ -396,11 +435,11 @@ async function main() {
       console.log(`  alias 映射条数: ${aliasToId.size}`);
 
       // 用 alias 交叉核对 skins.json:皮肤 id 除以 1000 是不是就是它自己的英雄
-      if (skinCatalog.size > 0) {
+      if (skinById.size > 0) {
         let checked = 0;
         let wrong = 0;
         const examples = [];
-        for (const [id, e] of skinCatalog) {
+        for (const [id, e] of skinById) {
           const p = String(e.splashPath || '');
           const m = /\/Characters\/([^/]+)\//i.exec(p);
           if (!m) continue;
