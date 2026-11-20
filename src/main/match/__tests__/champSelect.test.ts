@@ -15,7 +15,8 @@ const staticData: StaticData = {
   ]),
   items: new Map(),
   runes: new Map(),
-  skinsByChampion: new Map()
+  skinsByChampion: new Map(),
+  skins: new Map()
 };
 
 describe('parseChampSelectMembers', () => {

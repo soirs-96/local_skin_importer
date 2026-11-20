@@ -17,7 +17,8 @@ const staticData: StaticData = {
     [1204, { name: '打野任务', iconUrl: 'https://cdn/1204.png' }]
   ]),
   runes: new Map(),
-  skinsByChampion: new Map()
+  skinsByChampion: new Map(),
+  skins: new Map()
 };
 
 describe('extractGames', () => {

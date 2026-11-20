@@ -57,14 +57,33 @@ export interface StaticData {
   items: Map<number, ItemInfo>;
   runes: Map<number, string>;
   /**
-   * 英雄编号 → 该英雄的皮肤 id 清单(含默认皮肤 `英雄编号 × 1000`)。
+   * 英雄编号 → 该英雄的皮肤 id 清单(升序)。
    *
-   * 腾讯客户端的 champion-summary.json 里**皮肤条目跟英雄本体混在一起**,
-   * 皮肤条目带 `skinId` 字段(安妮「玉剑传说」= 1001、剑魔 = 266001)。
-   * 这份清单是「皮肤序号 ↔ 皮肤 id」的**权威对照表** —— 换算出来的 id
-   * 拿它一校验就知道对不对,不用靠猜。
+   * 来源是客户端的 `skins.json`(皮肤总目录,2000 多条)—— 这份清单是
+   * 「皮肤序号 ↔ 皮肤 id」的**权威对照表**:换算出来的 id 拿它一校验
+   * 就知道对不对,不用靠猜。
    */
   skinsByChampion: Map<number, number[]>;
+  /** 皮肤 id → 那款皮肤(目录条目:中文名 + 美术资源路径)。 */
+  skins: Map<number, SkinInfo>;
+}
+
+/** 客户端 `skins.json` 里的一条皮肤。 */
+export interface SkinInfo {
+  /** 皮肤 id(1001 = 安妮的第二款皮肤) */
+  id: number;
+  /** 皮肤序号(= id % 1000) */
+  index: number;
+  /** 英雄编号(= id ÷ 1000) */
+  championId: number;
+  /** 客户端给的中文名(「哥特萝莉 安妮」;默认皮肤给的是英雄称号) */
+  name: string;
+  /** splash 图在客户端资源里的路径 —— 本机回环就能取到 */
+  splashPath: string | null;
+  /** 未居中的 splash(结算页那种构图更接近它) */
+  uncenteredSplashPath: string | null;
+  /** 载入画面 */
+  loadScreenPath: string | null;
 }
 
 export function isRecord(value: unknown): value is Record<string, unknown> {
@@ -354,112 +373,87 @@ export function emptyStaticData(): StaticData {
     champions: new Map(),
     items: new Map(),
     runes: new Map(),
-    skinsByChampion: new Map()
+    skinsByChampion: new Map(),
+    skins: new Map()
   };
 }
 
 /**
- * 从 champion-summary.json 里挑出「皮肤 id 清单」。
+ * 从 skins.json 里挑出「皮肤目录」。
  *
- * 腾讯客户端这份数据的形状有两种(数组 / 字典),皮肤条目的位置也有两种:
+ * 客户端的 `skins.json` 是**皮肤的总目录**:一条一个皮肤,2000 多条。
+ * 每条长这样(国服实测):
  *
- *   - **平铺**:皮肤条目跟英雄本体混在同一个数组里,皮肤条目带 `skinId`
- *     (`{ id: 英雄编号, skinId: 皮肤编号 }` —— 安妮「玉剑传说」= 1001、
- *     剑魔 = 266001);同一个英雄编号会出现多次,每次一款皮肤。
- *   - **挂在英雄下面**:英雄条目带 `skins: [{ id: 皮肤编号 }]`。
+ * ```json
+ * { "id": 1000, "name": "黑暗之女", "isBase": true,
+ *   "splashPath": ".../Characters/Annie/Skins/Base/Images/annie_splash_centered_0.jpg" }
+ * { "id": 1001, "name": "哥特萝莉 安妮", "isBase": false,
+ *   "splashPath": ".../Characters/Annie/Skins/Skin01/Images/annie_splash_centered_1.jpg" }
+ * ```
  *
- * 两种都认。平铺形状里条目的 `id` 是英雄编号还是皮肤编号取决于版本,
- * 所以**英雄编号一律由皮肤 id 反推**(`皮肤 id ÷ 1000`),再用条目自带的
- * `id` 交叉核对 —— 这样不管哪种形状,某个英雄的皮肤都不会记到别的英雄头上。
+ * 三件事靠它:
  *
- * **默认皮肤没有独立条目**(它是英雄本体那条),所以要自己把
- * `英雄编号 × 1000` 补进去。
+ *   - **英雄编号** = `id ÷ 1000`(1001 → 1,266001 → 266);
+ *   - **皮肤序号** = `id % 1000`,而且 splash 文件名末尾的 `_N` 正好等于它
+ *     —— 客户端自己的数据,不用推;
+ *   - **美术资源路径** —— splash / 未居中 splash / 载入画面,本机回环就能取到。
  *
- * 这份清单只认「同一个英雄编号下的皮肤」—— 拿它校验换算出来的皮肤 id,
- * 认错了就是给别人的皮肤打分(见 usedSkin.ts)。
+ * ⚠️ `champion-summary.json` 里**没有**皮肤信息(国服实测 262 条,
+ * 每条只有 id/name/alias/roles)—— 别拿它当皮肤对照表。
  */
-export function parseLcuSkinIds(raw: unknown): Map<number, number[]> {
-  const out = new Map<number, number[]>();
-  const add = (championId: number, skinId: number): void => {
-    if (!championId || !skinId) return;
-    const list = out.get(championId) ?? [];
-    if (!list.includes(skinId)) list.push(skinId);
-    out.set(championId, list);
-  };
+export function parseLcuSkins(raw: unknown): {
+  byChampion: Map<number, number[]>;
+  infos: Map<number, SkinInfo>;
+} {
+  const byChampion = new Map<number, number[]>();
+  const infos = new Map<number, SkinInfo>();
 
-  const entries: { key: string; entry: Record<string, unknown> }[] = [];
+  const entries: Record<string, unknown>[] = [];
   if (Array.isArray(raw)) {
     raw.forEach((entry) => {
-      if (isRecord(entry)) entries.push({ key: '', entry });
+      if (isRecord(entry)) entries.push(entry);
     });
   } else if (isRecord(raw)) {
-    for (const [key, entry] of Object.entries(raw)) {
-      if (isRecord(entry)) entries.push({ key, entry });
+    for (const entry of Object.values(raw)) {
+      if (isRecord(entry)) entries.push(entry);
     }
   }
 
-  // 第一遍:先认清楚哪些编号是**英雄编号**。
-  //
-  // 判据:条目自带 `skinId`(平铺形状的皮肤条目)或者自带 `skins` 数组
-  // (挂在英雄下面的形状)—— 这两种条目的 `id` 都是英雄编号。
-  //
-  // 先收齐这张表,是为了不把某个英雄的皮肤记到别的英雄头上:
-  // 平铺形状里皮肤条目的 `id` 也是英雄编号,光看单条分不出来。
-  const championIds = new Set<number>();
-  for (const { key, entry } of entries) {
-    const entryId = num(entry.id);
-    if (num(entry.skinId) > 0) {
-      // 平铺的皮肤条目:`id` 是英雄编号,皮肤 id 自己带英雄前缀
-      championIds.add(entryId);
-    }
-    if (Array.isArray(entry.skins) && entry.skins.length > 0) {
-      championIds.add(num(entry.championId) || entryId || num(key));
-    }
+  for (const entry of entries) {
+    const id = num(entry.id);
+    if (id <= 0) continue;
+    // 只有英雄皮肤才收 —— 客户端数据里还混着别的分类
+    const classification = str(entry.skinClassification);
+    if (classification && classification !== 'kChampion') continue;
+
+    const championId = Math.floor(id / 1000);
+    const index = id % 1000;
+    if (championId <= 0) continue;
+
+    const splashPath = str(entry.splashPath) || null;
+    // splash 文件名末尾的 `_N` 应当就是序号 —— 对不上说明这份数据不守
+    // 「皮肤 id = 英雄编号 × 1000 + 序号」,这条皮肤干脆别收
+    // (收了会让换算把皮肤认到别的英雄头上)。
+    const suffix = splashPath ? /_(\d+)\.jpg$/i.exec(splashPath) : null;
+    if (suffix && Number(suffix[1]) !== index) continue;
+
+    infos.set(id, {
+      id,
+      index,
+      championId,
+      name: str(entry.name),
+      splashPath,
+      uncenteredSplashPath: str(entry.uncenteredSplashPath) || null,
+      loadScreenPath: str(entry.loadScreenPath) || null
+    });
+
+    const list = byChampion.get(championId) ?? [];
+    list.push(id);
+    byChampion.set(championId, list);
   }
 
-  for (const { key, entry } of entries) {
-    const entryId = num(entry.id);
-    const skinIdField = num(entry.skinId);
-
-    // 形状一:皮肤条目平铺 —— 条目自带 `skinId`。
-    if (skinIdField) {
-      // 皮肤 id = 英雄编号 × 1000 + 序号 → 英雄编号由它直接算出来。
-      // 算出来的跟条目自带的 `id` 对不上(极少数不守这条规则的皮肤)时,
-      // 以条目自带的 `id` 为准 —— 平铺形状里那就是英雄编号。
-      const derived = Math.floor(skinIdField / 1000);
-      const championId = entryId && entryId < 1000 && entryId !== derived ? entryId : derived;
-      add(championId, skinIdField);
-      continue;
-    }
-
-    // 形状二:英雄条目下面挂着皮肤数组
-    const skins = Array.isArray(entry.skins) ? entry.skins : [];
-    if (skins.length > 0) {
-      const championId = num(entry.championId) || entryId || num(key);
-      for (const skin of skins) {
-        if (!isRecord(skin)) continue;
-        add(championId, num(skin.id) || num(skin.skinId));
-      }
-      continue;
-    }
-
-    // 剩下的是「英雄本体」那一条(默认皮肤),但也可能是「id 就是皮肤 id」的
-    // 那种形状 —— 靠第一遍收出来的英雄编号表分辨:
-    // 这个编号在表里 → 它是英雄本体;不在 → 它是皮肤,英雄编号由它反推。
-    if (entryId < 1000 || championIds.has(entryId)) {
-      const championId = entryId || num(key);
-      if (championId) add(championId, championId * 1000);
-    } else {
-      add(Math.floor(entryId / 1000), entryId);
-    }
-  }
-
-  for (const [championId, list] of out) {
-    const base = championId * 1000;
-    if (!list.includes(base)) list.push(base);
-    list.sort((a, b) => a - b);
-  }
-  return out;
+  for (const list of byChampion.values()) list.sort((a, b) => a - b);
+  return { byChampion, infos };
 }
 
 /**
@@ -511,11 +505,11 @@ async function loadDdragonVersion(version: string): Promise<StaticData | null> {
     if (file && !info.nameEn) info.nameEn = file.replace(/\.png$/i, '');
   }
 
-  // Data Dragon 不给皮肤 id 清单 —— 皮肤对照表只有 LCU 那份有。
-  return { version, champions, items, runes, skinsByChampion: new Map() };
+  // Data Dragon 不给皮肤目录 —— 皮肤对照表只有 LCU 那份有。
+  return { version, champions, items, runes, skinsByChampion: new Map(), skins: new Map() };
 }
 
-/** LCU 一路:本机回环,三个文件也是各自独立。 */
+/** LCU 一路:本机回环,每个文件各自独立。 */
 async function loadFromLcu(client: AxiosInstance): Promise<StaticData> {
   const out = emptyStaticData();
 
@@ -531,15 +525,32 @@ async function loadFromLcu(client: AxiosInstance): Promise<StaticData> {
   const runesRaw = await fetchFromClient(client, '/lol-game-data/assets/v1/runesReforged.json');
   if (runesRaw) out.runes = parseRunes(runesRaw);
 
-  // 皮肤 id 清单跟英雄名用**同一份** champion-summary —— 一起拉,别多跑一趟。
-  if (championsRaw) out.skinsByChampion = parseLcuSkinIds(championsRaw);
+  // 皮肤目录:客户端的皮肤总目录(6MB 上下,本机回环,拉得到)。
+  // 这是「皮肤序号 ↔ 皮肤 id」唯一的权威对照表 —— 没有它,换算出来的 id
+  // 只能靠猜,认错皮肤等于给别人的皮肤打分。
+  const skinsRaw = await fetchFromClient(client, '/lol-game-data/assets/v1/skins.json', {
+    timeout: 30_000,
+    maxContentLength: 32_000_000
+  });
+  if (skinsRaw) {
+    const parsed = parseLcuSkins(skinsRaw);
+    out.skinsByChampion = parsed.byChampion;
+    out.skins = parsed.infos;
+  }
 
   return out;
 }
 
-async function fetchFromClient(client: AxiosInstance, url: string): Promise<unknown | null> {
+async function fetchFromClient(
+  client: AxiosInstance,
+  url: string,
+  options?: { timeout?: number; maxContentLength?: number }
+): Promise<unknown | null> {
   try {
-    const { data } = await client.get(url, { timeout: HTTP_TIMEOUT_MS });
+    const { data } = await client.get(url, {
+      timeout: options?.timeout ?? HTTP_TIMEOUT_MS,
+      maxContentLength: options?.maxContentLength
+    });
     return data;
   } catch {
     return null;
@@ -567,10 +578,11 @@ function mergeStaticData(primary: StaticData, fallback: StaticData): StaticData 
   const runes = new Map(fallback.runes);
   for (const [id, name] of primary.runes) runes.set(id, name);
 
-  // 皮肤 id 清单只有 LCU 那份有(Data Dragon 不给)—— 直接用兜底那份。
+  // 皮肤目录只有 LCU 那份有(Data Dragon 不给)—— 直接用兜底那份。
   const skinsByChampion = new Map(fallback.skinsByChampion);
+  const skins = new Map(fallback.skins);
 
-  return { version: primary.version, champions, items, runes, skinsByChampion };
+  return { version: primary.version, champions, items, runes, skinsByChampion, skins };
 }
 
 /**

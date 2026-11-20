@@ -11,7 +11,8 @@ const staticData: StaticData = {
   ]),
   items: new Map(),
   runes: new Map(),
-  skinsByChampion: new Map()
+  skinsByChampion: new Map(),
+  skins: new Map()
 };
 
 /** 国服 gameflow 实测形状:teamOne 5 人、teamTwo 4 人,本地玩家带 teamOwner。 */

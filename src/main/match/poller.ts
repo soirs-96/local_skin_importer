@@ -529,7 +529,7 @@ export class MatchPoller {
   }
 
   /**
-   * 某个英雄的皮肤 id 清单(客户端的 champion-summary)。
+   * 某个英雄的皮肤 id 清单(客户端的 skins.json 皮肤总目录)。
    *
    * 换算出来的皮肤 id 拿它一校验就知道对不对 —— 清单里没有就是认不出来。
    */

@@ -99,17 +99,6 @@ function toEntries(payload) {
   return [];
 }
 
-/** 同上,但保留字典的键(键就是英雄编号,条目里可能没有 id 字段)。 */
-function toKeyedEntries(payload) {
-  if (Array.isArray(payload)) return payload.filter(isRecord).map((e) => ({ key: '', entry: e }));
-  if (isRecord(payload)) {
-    return Object.entries(payload)
-      .filter(([, e]) => isRecord(e))
-      .map(([key, e]) => ({ key, entry: e }));
-  }
-  return [];
-}
-
 async function dump(name, text) {
   if (!text) return;
   try {
@@ -291,9 +280,10 @@ async function main() {
   }
 
   // ------------------------------------------------------------- 4. skins.json
-  console.log('\n===== 4. client skins.json (reverse-lookup table) =====');
+  console.log('\n===== 4. client skins.json (皮肤目录 —— 权威对照表) =====');
   const sk = await call('/lol-game-data/assets/v1/skins.json');
   console.log(`status=${sk.status} ${sk.error || ''} bytes=${sk.bytes}`);
+  const skinCatalog = new Map();
   if (sk.status === 200) {
     await dump('skins.json', sk.text);
     try {
@@ -304,85 +294,128 @@ async function main() {
         console.log(`  sample fields: ${fieldNames(e)}`);
         console.log(`  sample: ${JSON.stringify(e).slice(0, 500)}`);
       }
+
+      // 逐条核对:皮肤 id 是不是「英雄编号 × 1000 + 序号」,
+      // 序号是不是就是 splash 文件名末尾那个 _N。
+      const byChamp = new Map();
+      let noClass = 0;
+      let classOther = 0;
+      for (const e of list) {
+        const id = Number(e.id) || 0;
+        if (!id) continue;
+        const cls = String(e.skinClassification || '');
+        if (!cls) noClass += 1;
+        else if (cls !== 'kChampion') classOther += 1;
+        const champ = Math.floor(id / 1000);
+        const idx = id % 1000;
+        if (!byChamp.has(champ)) byChamp.set(champ, []);
+        byChamp.get(champ).push({ id, idx, e });
+        skinCatalog.set(id, e);
+      }
+      console.log(`heroes: ${byChamp.size}, 无 skinClassification 的 ${noClass} 条, 非 kChampion 的 ${classOther} 条`);
+
+      // splash 文件名末尾的 _N 是不是就是序号
+      let mismatch = 0;
+      let noSuffix = 0;
+      for (const [, arr] of byChamp) {
+        for (const it of arr) {
+          const p = String(it.e.splashPath || '');
+          const m = /_(\d+)\.jpg$/i.exec(p);
+          if (!m) {
+            noSuffix += 1;
+            continue;
+          }
+          if (Number(m[1]) !== it.idx) {
+            mismatch += 1;
+            if (mismatch <= 10) {
+              console.log(`  ! id=${it.id} 序号=${it.idx} 但 splash 文件名是 ${m[1]}`);
+            }
+          }
+        }
+      }
+      console.log(`splash 文件名后缀核对: 不一致 ${mismatch} 条, 认不出后缀 ${noSuffix} 条`);
+
+      // 每个英雄的皮肤 id 是不是连续的 champ*1000, champ*1000+1, ...
+      // 不连续的话「序号 ↔ id」就不能靠算术,得靠清单里的位置。
+      let gapChampions = 0;
+      for (const [champ, arr] of byChamp) {
+        arr.sort((a, b) => a.id - b.id);
+        const ids = arr.map((x) => x.id);
+        const contiguous = ids.every((sid, i) => sid === champ * 1000 + i);
+        if (!contiguous) {
+          gapChampions += 1;
+          if (gapChampions <= 6) {
+            console.log(`  ! champion ${champ} 的 id 不连续: ${ids.slice(0, 12).join(', ')}${ids.length > 12 ? ' ...' : ''}`);
+          }
+        }
+      }
+      console.log(`id 不连续的英雄: ${gapChampions} / ${byChamp.size}`);
+
+      // 打印几个英雄的完整清单 —— 手工核对「序号 ↔ id ↔ 中文名」
+      let shown = 0;
+      for (const [champ, arr] of byChamp) {
+        if (shown >= 5) break;
+        arr.sort((a, b) => a.id - b.id);
+        console.log(`  champion ${champ}:`);
+        for (const it of arr.slice(0, 6)) {
+          console.log(`      id=${it.id} 序号=${it.idx} 「${it.e.name}」 isBase=${it.e.isBase}`);
+        }
+        shown += 1;
+      }
     } catch (e) {
       console.log(`not JSON: ${e.message}`);
     }
   }
 
-  // ------------------------------------ 4b. champion-summary 的皮肤编号清单
-  // 用来核对「皮肤序号 -> 皮肤 id」这条换算规则。
-  console.log('\n===== 4b. champion-summary.json (每个英雄的皮肤编号) =====');
+  // ------------------------------------ 4b. champion-summary:英雄清单(不含皮肤)
+  // 用途:把 skins.json splash 路径里的角色目录名(Characters/Annie)对上英雄编号。
+  console.log('\n===== 4b. champion-summary.json (英雄清单) =====');
   const csum = await call('/lol-game-data/assets/v1/champion-summary.json');
   console.log(`status=${csum.status} ${csum.error || ''} bytes=${csum.bytes}`);
+  const aliasToId = new Map();
   if (csum.status === 200) {
     await dump('champion-summary.json', csum.text);
     try {
       const j = JSON.parse(csum.text);
       const list = toEntries(j);
-      const keyed = toKeyedEntries(j);
       console.log(`shape: ${Array.isArray(j) ? 'array' : 'dict'} entries=${list.length}`);
       if (list.length > 0) {
         console.log(`  sample fields: ${fieldNames(list[0])}`);
         console.log(`  sample: ${JSON.stringify(list[0]).slice(0, 600)}`);
       }
-      // 每个英雄的皮肤编号清单 —— 跟 staticData.ts 的 parseLcuSkinIds 同一套逻辑,
-      // 两种形状都认(平铺 skinId / 挂在英雄下面的 skins 数组)。
-      const byChamp = new Map();
-      const addSkin = (cid, sid) => {
-        if (!cid || !sid) return;
-        if (!byChamp.has(cid)) byChamp.set(cid, []);
-        const arr = byChamp.get(cid);
-        if (!arr.includes(sid)) arr.push(sid);
-      };
-      // 先认清楚哪些编号是英雄编号(跟 staticData.ts 的 parseLcuSkinIds 同一套判据)
-      const championIds = new Set();
-      for (const { key, entry: e } of keyed) {
-        const entryId = Number(e.id) || 0;
-        if (Number(e.skinId) > 0) championIds.add(entryId);
-        if (Array.isArray(e.skins) && e.skins.length) {
-          championIds.add(Number(e.championId) || entryId || Number(key) || 0);
-        }
+      // 到底有没有皮肤字段?—— 这次探测就是来回答这个的
+      let withSkin = 0;
+      for (const e of list) {
+        const keys = Object.keys(e);
+        if (keys.includes('skinId') || keys.includes('skins')) withSkin += 1;
+        const cid = Number(e.id) || 0;
+        const alias = String(e.alias || '');
+        if (cid > 0 && alias) aliasToId.set(alias, cid);
       }
-      for (const { key, entry: e } of keyed) {
-        const entryId = Number(e.id) || 0;
-        const skinIdField = Number(e.skinId) || 0;
-        if (skinIdField) {
-          // 皮肤 id = 英雄编号 × 1000 + 序号 -> 英雄编号由皮肤 id 反推
-          const derived = Math.floor(skinIdField / 1000);
-          const cid = entryId && entryId < 1000 && entryId !== derived ? entryId : derived;
-          addSkin(cid, skinIdField);
-          continue;
+      console.log(`  带皮肤字段(skinId/skins)的条目: ${withSkin} / ${list.length}`);
+      console.log(`  alias 映射条数: ${aliasToId.size}`);
+
+      // 用 alias 交叉核对 skins.json:皮肤 id 除以 1000 是不是就是它自己的英雄
+      if (skinCatalog.size > 0) {
+        let checked = 0;
+        let wrong = 0;
+        const examples = [];
+        for (const [id, e] of skinCatalog) {
+          const p = String(e.splashPath || '');
+          const m = /\/Characters\/([^/]+)\//i.exec(p);
+          if (!m) continue;
+          const champId = Math.floor(id / 1000);
+          const realId = aliasToId.get(m[1]);
+          checked += 1;
+          if (realId !== undefined && realId !== champId) {
+            wrong += 1;
+            if (examples.length < 8) {
+              examples.push(`id=${id} 目录=${m[1]}(英雄${realId}) 但 id/1000=${champId}`);
+            }
+          }
         }
-        const skins = Array.isArray(e.skins) ? e.skins.filter(isRecord) : [];
-        if (skins.length) {
-          const cid = Number(e.championId) || entryId || Number(key) || 0;
-          for (const s of skins) addSkin(cid, Number(s.id) || Number(s.skinId) || 0);
-          continue;
-        }
-        if (entryId < 1000 || championIds.has(entryId)) {
-          const cid = entryId || Number(key) || 0;
-          if (cid) addSkin(cid, cid * 1000);
-        } else {
-          addSkin(Math.floor(entryId / 1000), entryId);
-        }
-      }
-      const totalSkins = [...byChamp.values()].reduce((n, arr) => n + arr.length, 0);
-      console.log(`heroes with skins: ${byChamp.size}, skin ids total: ${totalSkins}`);
-      const flatCount = keyed.filter(({ entry: e }) => Number(e.skinId) > 0).length;
-      const nestedCount = keyed.filter(({ entry: e }) => Array.isArray(e.skins) && e.skins.length).length;
-      console.log(`  条目形状: 平铺 skinId 的 ${flatCount} 条 / 带 skins 数组的 ${nestedCount} 条`);
-      let shown = 0;
-      for (const [cid, ids] of byChamp) {
-        if (shown >= 8) break;
-        ids.sort((a, b) => a - b);
-        console.log(`  champion ${cid}: ${ids.join(', ')}`);
-        shown += 1;
-      }
-      // 重点抽查:皮肤 id 是不是「英雄编号 × 1000 + 序号」
-      console.log('  -- 抽查「皮肤 id % 1000 == 序号」这条规则 --');
-      for (const [cid, ids] of [...byChamp].slice(0, 200)) {
-        const bad = ids.filter((sid) => Math.floor(sid / 1000) !== cid);
-        if (bad.length) console.log(`    champion ${cid}: 不符规则的 id -> ${bad.join(', ')}`);
+        console.log(`  splash 目录名交叉核对: 查了 ${checked} 条, 对不上 ${wrong} 条`);
+        for (const s of examples) console.log(`    ! ${s}`);
       }
     } catch (e) {
       console.log(`not JSON: ${e.message}`);

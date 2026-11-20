@@ -61,9 +61,9 @@ describe('resolveSkinIndex', () => {
     expect(resolveSkinIndex(103, 9, [103000, 103005])).toBe(0);
   });
 
-  it('0-based / 1-based 没实测 —— 两种都试,只认清单里真有的那个', () => {
-    expect(resolveSkinIndex(103, 1, [103000, 103001])).toBe(103001);
-    expect(resolveSkinIndex(103, 0, [103000, 103001])).toBe(103000);
+  it('编号差对不上 → 按清单里的位置算(皮肤 id 不连续时位置 ≠ 编号差)', () => {
+    // 清单是 [103000, 103005, 103006] —— 序号 1 指的是「第二个」那款
+    expect(resolveSkinIndex(103, 1, [103000, 103005, 103006])).toBe(103005);
   });
 });
 
@@ -244,6 +244,17 @@ describe('resolveUsedSkin', () => {
         matchHistorySkinId: 222
       })
     ).toEqual({ riotSkinId: 222, displayName: null, source: 'match-history' });
+  });
+
+  it('gameflow 的 selectedSkinId 排前面(它是「id」,比序号可信)', () => {
+    expect(
+      resolveUsedSkin({
+        gameflowSkinValue: 103005,
+        gameflowSkinIndex: 9,
+        gameflowChampionId: 103,
+        knownSkinIds: () => [103000, 103005]
+      })
+    ).toEqual({ riotSkinId: 103005, displayName: null, source: 'gameflow-value' });
   });
 
   it('只剩 Live Client 的名字 → 只给名字,不编 id', () => {

@@ -7,46 +7,80 @@ import {
   parseLcuChampionSummaries,
   parseLcuChampions,
   parseLcuItems,
-  parseLcuSkinIds,
+  parseLcuSkins,
   parseRunes,
   type ChampionInfo
 } from '../staticData';
 
-describe('parseLcuSkinIds', () => {
-  it('从 champion-summary 里挑出每个英雄的皮肤 id 清单', () => {
-    const map = parseLcuSkinIds([
-      { id: 1, alias: 'Annie', name: '安妮', roles: ['mage'] },
-      { id: 1, alias: 'Jade_Annie', name: '玉剑传说 安妮', skinId: 1001 },
-      { id: 266, alias: 'AshenKnight', name: '异画师', skinId: 266001 }
+describe('parseLcuSkins', () => {
+  // 客户端 skins.json 的真实形状(国服实测)
+  const skinsJson = {
+    '1000': {
+      id: 1000,
+      name: '黑暗之女',
+      isBase: true,
+      skinClassification: 'kChampion',
+      splashPath: '/lol-game-data/assets/ASSETS/Characters/Annie/Skins/Base/Images/annie_splash_centered_0.jpg'
+    },
+    '1001': {
+      id: 1001,
+      name: '哥特萝莉 安妮',
+      isBase: false,
+      skinClassification: 'kChampion',
+      splashPath:
+        '/lol-game-data/assets/ASSETS/Characters/Annie/Skins/Skin01/Images/annie_splash_centered_1.jpg'
+    },
+    '266001': {
+      id: 266001,
+      name: '异画师 剑魔',
+      skinClassification: 'kChampion',
+      splashPath:
+        '/lol-game-data/assets/ASSETS/Characters/Aatrox/Skins/Skin01/Images/aatrox_splash_centered_1.jpg'
+    }
+  };
+
+  it('按「皮肤 id = 英雄编号 × 1000 + 序号」把皮肤归到英雄名下', () => {
+    const { byChampion } = parseLcuSkins(skinsJson);
+    expect(byChampion.get(1)).toEqual([1000, 1001]);
+    expect(byChampion.get(266)).toEqual([266001]);
+  });
+
+  it('皮肤目录条目:中文名 + 序号 + 美术资源路径', () => {
+    const { infos } = parseLcuSkins(skinsJson);
+    expect(infos.get(1001)).toEqual({
+      id: 1001,
+      index: 1,
+      championId: 1,
+      name: '哥特萝莉 安妮',
+      splashPath:
+        '/lol-game-data/assets/ASSETS/Characters/Annie/Skins/Skin01/Images/annie_splash_centered_1.jpg',
+      uncenteredSplashPath: null,
+      loadScreenPath: null
+    });
+  });
+
+  it('数组形状也认', () => {
+    const { byChampion } = parseLcuSkins([
+      { id: 1000, skinClassification: 'kChampion' },
+      { id: 1001, skinClassification: 'kChampion' }
     ]);
-    // 默认皮肤(英雄编号 × 1000)客户端没有条目 —— 自己补上
-    expect(map.get(1)).toEqual([1000, 1001]);
-    expect(map.get(266)).toEqual([266000, 266001]);
+    expect(byChampion.get(1)).toEqual([1000, 1001]);
   });
 
-  it('只有英雄本体、没有皮肤条目的英雄 → 清单里只有它的默认皮肤', () => {
-    const map = parseLcuSkinIds([{ id: 5, alias: 'Ahri', name: '阿狸', roles: ['mage'] }]);
-    expect(map.get(5)).toEqual([5000]);
-  });
-
-  it('字典形状的载荷也认(客户端有两种形状)', () => {
-    const map = parseLcuSkinIds({ '1': { id: 1, skinId: 1001 } });
-    expect(map.get(1)).toEqual([1000, 1001]);
-  });
-
-  it('皮肤挂在英雄条目下面的形状也认', () => {
-    const map = parseLcuSkinIds([
-      { id: 103, alias: 'Ahri', name: '阿狸', roles: ['mage'], skins: [{ id: 103005 }, { id: 103006 }] }
+  it('非英雄皮肤的分类不收', () => {
+    const { byChampion } = parseLcuSkins([
+      { id: 1000, skinClassification: 'kChampion' },
+      { id: 2000, skinClassification: 'kMap' }
     ]);
-    expect(map.get(103)).toEqual([103000, 103005, 103006]);
+    expect(byChampion.get(2)).toBeUndefined();
   });
 
-  it('条目里的 id 本身就是皮肤 id → 按「皮肤 id = 英雄编号 × 1000 + 序号」反推英雄编号', () => {
-    const map = parseLcuSkinIds([
-      { id: 1, alias: 'Annie', name: '安妮' },
-      { id: 1001, alias: 'Jade_Annie', name: '玉剑传说 安妮' }
+  it('splash 文件名末尾的序号跟 id 对不上 → 这条皮肤不收(宁可认不出来)', () => {
+    const { byChampion, infos } = parseLcuSkins([
+      { id: 1001, skinClassification: 'kChampion', splashPath: '/x/annie_splash_centered_7.jpg' }
     ]);
-    expect(map.get(1)).toEqual([1000, 1001]);
+    expect(byChampion.size).toBe(0);
+    expect(infos.size).toBe(0);
   });
 });
 
@@ -81,7 +115,8 @@ describe('championIndexEntries', () => {
       ]),
       items: new Map(),
       runes: new Map(),
-      skinsByChampion: new Map()
+      skinsByChampion: new Map(),
+      skins: new Map()
     });
     expect(entries).toEqual([{ id: 1, name: '安妮', nameEn: 'Annie' }]);
   });

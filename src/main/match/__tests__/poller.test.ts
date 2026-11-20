@@ -54,14 +54,16 @@ vi.mock('../staticData', () => ({
     champions: new Map([[64, { name: '盲僧', iconUrl: null }]]),
     items: new Map(),
     runes: new Map(),
-    skinsByChampion: new Map()
+    skinsByChampion: new Map(),
+    skins: new Map()
   })),
   emptyStaticData: vi.fn(() => ({
     version: null,
     champions: new Map(),
     items: new Map(),
     runes: new Map(),
-    skinsByChampion: new Map()
+    skinsByChampion: new Map(),
+    skins: new Map()
   }))
 }));
 
