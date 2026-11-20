@@ -150,17 +150,19 @@ export function phaseFromEvent(data: unknown): string {
  * ⚠️ 皮肤**不宽松**:认错人就会把队友的皮肤当成自己的(见 `usedSkin.ts`)。
  *
  * ⚠️ 国服客户端的队伍条目**没有** `skinId`,给的是 `lastSelectedSkinIndex`
- * (皮肤序号)—— 换算成数字 id 的规则见 `usedSkin.ts` 的 `skinIdFromIndex`。
+ * (皮肤序号)和 `selectedSkinId`(是 id 还是序号没实测)—— 换算成数字 id 的规则
+ * 见 `usedSkin.ts` 的 `resolveSkinIndex` / `resolveSkinValue`。
  */
 export function selfPlayerFromEvent(
   data: unknown,
   myPuuid = ''
-): { championId: number; skinId: number; skinIndex: number } {
+): { championId: number; skinId: number; skinIndex: number; skinValue: number } {
   const self = parseGameflowSelf(data, myPuuid);
   return {
     championId: self.championId,
     skinId: self.skinId,
-    skinIndex: self.skinIndex
+    skinIndex: self.skinIndex,
+    skinValue: self.skinValue
   };
 }
 
@@ -217,6 +219,15 @@ export class MatchPoller {
    * 那一局。存成字段就会把上一局的皮肤 id 带进下一局。
    */
   private champSelectSkinId = 0;
+  /**
+   * 国服选人会话给的 `selectedSkinId` —— **是皮肤 id 还是皮肤序号没实测过**。
+   *
+   * 跟 {@link champSelectSkinChampionId} 成对记着:消歧要靠英雄编号,
+   * 拿上一局的英雄编号去配这一局的值会算出一个根本不存在的皮肤。
+   */
+  private champSelectSkinValue = -1;
+  /** 上面那个值所属的英雄编号 */
+  private champSelectSkinChampionId = 0;
   private gameflowSkinId = 0;
   /**
    * 国服 gameflow 给的皮肤**序号**(不是皮肤 id);-1 = 没读到。
@@ -228,6 +239,11 @@ export class MatchPoller {
   private gameflowSkinIndex = -1;
   /** 上面那个序号所属的英雄编号 */
   private gameflowSkinChampionId = 0;
+  /**
+   * 国服 gameflow 给的 `selectedSkinId` —— 是皮肤 id 还是皮肤序号没实测过;
+   * -1 = 没读到。结算时拿皮肤清单消歧(见 usedSkin.ts 的 resolveSkinValue)。
+   */
+  private gameflowSkinValue = -1;
   private liveClientSkinName: string | null = null;
   /** 本局英雄编号(选人阶段 / gameflow 事件里记下) */
   private currentChampionId = 0;
@@ -340,6 +356,12 @@ export class MatchPoller {
       // 免得下一局换了英雄却拿上一局的序号去换算出一个不存在的皮肤。
       if (inGame && self.skinIndex >= 0 && self.championId > 0) {
         this.gameflowSkinIndex = self.skinIndex;
+        this.gameflowSkinChampionId = self.championId;
+      }
+      // 国服客户端的 `selectedSkinId` —— 是 id 还是序号没实测,两个都记,
+      // 结算时拿皮肤清单消歧。
+      if (inGame && self.skinValue >= 0 && self.championId > 0) {
+        this.gameflowSkinValue = self.skinValue;
         this.gameflowSkinChampionId = self.championId;
       }
       if (phase) this.onPhaseChange(phase);
@@ -495,11 +517,25 @@ export class MatchPoller {
   private resolveSettlementSkin(): UsedSkin {
     return resolveUsedSkin({
       champSelectSkinId: this.champSelectSkinId,
+      champSelectSkinValue: this.champSelectSkinValue >= 0 ? this.champSelectSkinValue : null,
+      champSelectChampionId: this.champSelectSkinChampionId,
       gameflowSkinId: this.gameflowSkinId,
       gameflowSkinIndex: this.gameflowSkinIndex,
+      gameflowSkinValue: this.gameflowSkinValue >= 0 ? this.gameflowSkinValue : null,
       gameflowChampionId: this.gameflowSkinChampionId,
-      liveClientSkinName: this.liveClientSkinName
+      liveClientSkinName: this.liveClientSkinName,
+      knownSkinIds: (championId) => this.knownSkinIds(championId)
     });
+  }
+
+  /**
+   * 某个英雄的皮肤 id 清单(客户端的 champion-summary)。
+   *
+   * 换算出来的皮肤 id 拿它一校验就知道对不对 —— 清单里没有就是认不出来。
+   */
+  private knownSkinIds(championId: number): number[] {
+    if (!championId || championId <= 0) return [];
+    return this.staticData?.skinsByChampion.get(championId) ?? [];
   }
 
   /**
@@ -551,9 +587,12 @@ export class MatchPoller {
   /** 清掉本局的皮肤候选 —— 下一局重新攒。 */
   private resetSkinCandidates(): void {
     this.champSelectSkinId = 0;
+    this.champSelectSkinValue = -1;
+    this.champSelectSkinChampionId = 0;
     this.gameflowSkinId = 0;
     this.gameflowSkinIndex = -1;
     this.gameflowSkinChampionId = 0;
+    this.gameflowSkinValue = -1;
     this.liveClientSkinName = null;
   }
 
@@ -585,6 +624,11 @@ export class MatchPoller {
     if (!champSelect) return;
     if (champSelect.myChampionId > 0) this.currentChampionId = champSelect.myChampionId;
     if (champSelect.mySkinId > 0) this.champSelectSkinId = champSelect.mySkinId;
+    // 国服真正给的是 `selectedSkinId` —— 跟英雄编号成对记着,结算时消歧
+    if (champSelect.mySelectedSkinId >= 0 && champSelect.myChampionId > 0) {
+      this.champSelectSkinValue = champSelect.mySelectedSkinId;
+      this.champSelectSkinChampionId = champSelect.myChampionId;
+    }
   }
 
   /**
@@ -637,10 +681,14 @@ export class MatchPoller {
       const enriched: LocalSettlement = { ...base, match: toMatchScore(found.match) };
       // 结算时没认出皮肤的话,match history 里的 participant 可能给
       if (enriched.usedSkin.riotSkinId === 0 && found.skinId && found.skinId > 0) {
-        enriched.usedSkin = resolveUsedSkin({
-          matchHistorySkinId: found.skinId,
-          liveClientSkinName: enriched.usedSkin.displayName
-        });
+        // 皮肤 id 得是这个英雄的 —— 清单里没有就别认(认错了是给别人打分)
+        const known = this.knownSkinIds(base.championId);
+        if (known.length === 0 || known.includes(found.skinId)) {
+          enriched.usedSkin = resolveUsedSkin({
+            matchHistorySkinId: found.skinId,
+            liveClientSkinName: enriched.usedSkin.displayName
+          });
+        }
       }
       this.settlement = enriched;
       this.emitSettlement(enriched);
@@ -673,8 +721,10 @@ export class MatchPoller {
     const resolved = resolveUsedSkin({
       gameflowSkinId: self.skinId,
       gameflowSkinIndex: self.skinIndex,
+      gameflowSkinValue: self.skinValue,
       gameflowChampionId: self.championId,
-      liveClientSkinName: settlement.usedSkin.displayName
+      liveClientSkinName: settlement.usedSkin.displayName,
+      knownSkinIds: (championId) => this.knownSkinIds(championId)
     });
     if (resolved.riotSkinId === 0) return;
     this.updateSettlement({

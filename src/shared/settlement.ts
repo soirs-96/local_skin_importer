@@ -15,8 +15,9 @@ export const SETTLEMENT_CHANNEL = 'match:settlement';
  *   1. 选人会话 —— 数字 skinId,最准(但选人会话只在选人阶段存在)
  *   2. gameflow 的队伍条目 —— 一直活到局末。
  *      国际服客户端直接给数字 skinId;**国服客户端给的是皮肤序号**
- *      (`lastSelectedSkinIndex`),要按 `英雄编号 × 1000 + 序号` 换算。
- *   3. match history 的 participant —— 局后可用
+ *      (`lastSelectedSkinIndex`)和 `selectedSkinId`,要按
+ *      `英雄编号 × 1000 + 序号` 换算,并拿客户端的皮肤清单校验。
+ *   3. match history 的 participant —— 局后可用(国服实测**没有**皮肤字段)
  *   4. Live Client 的 allPlayers[].skin —— 只有英文资源名,拿不到数字 id
  */
 export interface UsedSkin {
@@ -27,8 +28,10 @@ export interface UsedSkin {
   /** 认皮肤认到哪儿了;null = 一条都没认到 */
   source:
     | 'champ-select'
+    | 'champ-select-value'
     | 'gameflow'
     | 'gameflow-index'
+    | 'gameflow-value'
     | 'match-history'
     | 'live-client'
     | null;

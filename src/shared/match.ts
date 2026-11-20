@@ -49,6 +49,16 @@ export interface ChampSelectMember extends ChampionRef {
    * ⚠️ 客户端给不给这个字段**还没实测** —— 探测 1 的结论决定它是不是真的有用。
    */
   skinId: number;
+  /**
+   * 客户端在选人会话里给的**另一个**皮肤字段。
+   *
+   * 国服实测:`skinId` 压根不存在,但 `selectedSkinId` 在 —— 它是皮肤 id 还是
+   * 皮肤序号没实测过,拿客户端的皮肤清单消歧(见 `usedSkin.ts` 的
+   * `resolveSkinValue`)。
+   *
+   * **-1 = 客户端没给这个字段**;0 是有意义的值(默认皮肤)。
+   */
+  selectedSkinId: number;
   summonerId: number;
   /** 召唤师的 puuid;空串 = 客户端没给 */
   puuid: string;
@@ -77,6 +87,13 @@ export interface ChampSelectSession {
    * 局末再问这个端点已经 404 了。
    */
   mySkinId: number;
+  /**
+   * 我这一局的 `selectedSkinId`(国服真正给的那个字段)。
+   *
+   * 是皮肤 id 还是皮肤序号没实测过 —— 结算时拿皮肤清单消歧。
+   * **-1 = 客户端没给**。
+   */
+  mySelectedSkinId: number;
   /** 我在 myTeam 里的格位;渲染进程靠它把「我」标出来 */
   myCellId: number;
   bannedChampions: ChampionRef[];

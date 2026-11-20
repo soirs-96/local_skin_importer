@@ -3,8 +3,9 @@ import {
   parseGameflowSelf,
   parseMatchHistorySkinId,
   parseSkinIndex,
-  resolveUsedSkin,
-  skinIdFromIndex
+  resolveSkinIndex,
+  resolveSkinValue,
+  resolveUsedSkin
 } from '../usedSkin';
 
 describe('parseMatchHistorySkinId', () => {
@@ -20,15 +21,49 @@ describe('parseMatchHistorySkinId', () => {
   });
 });
 
-describe('skinIdFromIndex', () => {
+describe('resolveSkinValue', () => {
+  const ahriSkins = [103000, 103005, 103006];
+
+  it('值在皮肤清单里 → 它就是皮肤 id', () => {
+    expect(resolveSkinValue(103, 103005, ahriSkins)).toBe(103005);
+  });
+
+  it('值是皮肤序号 → 换算成 id', () => {
+    expect(resolveSkinValue(103, 5, ahriSkins)).toBe(103005);
+  });
+
+  it('清单里没有 → 认不出来(不硬算一个可能不存在的皮肤)', () => {
+    expect(resolveSkinValue(103, 9, ahriSkins)).toBe(0);
+  });
+
+  it('没有清单可校验:1000 以上当 id,小的当序号', () => {
+    expect(resolveSkinValue(103, 103005)).toBe(103005);
+    expect(resolveSkinValue(103, 5)).toBe(103005);
+  });
+
+  it('没有英雄编号 → 认不出来', () => {
+    expect(resolveSkinValue(0, 5, ahriSkins)).toBe(0);
+  });
+});
+
+describe('resolveSkinIndex', () => {
   it('皮肤 id = 英雄编号 × 1000 + 皮肤序号', () => {
     // 安妮(1)的「玉剑传说」= 1001 —— 国服客户端自己的数据
-    expect(skinIdFromIndex(1, 1)).toBe(1001);
+    expect(resolveSkinIndex(1, 1)).toBe(1001);
     // Aatrox(266)的一款皮肤 = 266001
-    expect(skinIdFromIndex(266, 1)).toBe(266001);
+    expect(resolveSkinIndex(266, 1)).toBe(266001);
     // 序号 0 是默认皮肤
-    expect(skinIdFromIndex(103, 0)).toBe(103000);
-    expect(skinIdFromIndex(103, 0) % 1000).toBe(0);
+    expect(resolveSkinIndex(103, 0)).toBe(103000);
+    expect(resolveSkinIndex(103, 0) % 1000).toBe(0);
+  });
+
+  it('清单里没有 → 认不出来', () => {
+    expect(resolveSkinIndex(103, 9, [103000, 103005])).toBe(0);
+  });
+
+  it('0-based / 1-based 没实测 —— 两种都试,只认清单里真有的那个', () => {
+    expect(resolveSkinIndex(103, 1, [103000, 103001])).toBe(103001);
+    expect(resolveSkinIndex(103, 0, [103000, 103001])).toBe(103000);
   });
 });
 
@@ -92,6 +127,19 @@ describe('parseGameflowSelf', () => {
     expect(self.isSelf).toBe(false);
     expect(self.championId).toBe(0);
     expect(self.skinIndex).toBe(-1);
+    expect(self.skinValue).toBe(-1);
+  });
+
+  it('国服给的 selectedSkinId 也认(是 id 还是序号靠清单消歧)', () => {
+    const self = parseGameflowSelf({
+      gameData: { teamOne: [{ championId: 103, teamOwner: true, selectedSkinId: 5 }] }
+    });
+    expect(self.skinValue).toBe(5);
+    // 缺 selectedSkinId → -1(不能当成 0 = 默认皮肤)
+    const missing = parseGameflowSelf({
+      gameData: { teamOne: [{ championId: 103, teamOwner: true }] }
+    });
+    expect(missing.skinValue).toBe(-1);
   });
 });
 
@@ -144,6 +192,58 @@ describe('resolveUsedSkin', () => {
       displayName: null,
       source: 'match-history'
     });
+  });
+
+  it('国服选人会话的 selectedSkinId —— 拿皮肤清单消歧', () => {
+    expect(
+      resolveUsedSkin({
+        champSelectSkinValue: 5,
+        champSelectChampionId: 103,
+        knownSkinIds: (championId) => (championId === 103 ? [103000, 103005] : [])
+      })
+    ).toEqual({ riotSkinId: 103005, displayName: null, source: 'champ-select-value' });
+  });
+
+  it('选人会话那个值消歧不通过 → 不挡后面的来源', () => {
+    expect(
+      resolveUsedSkin({
+        champSelectSkinValue: 9,
+        champSelectChampionId: 103,
+        knownSkinIds: () => [103000, 103005],
+        gameflowSkinId: 333
+      })
+    ).toEqual({ riotSkinId: 333, displayName: null, source: 'gameflow' });
+  });
+
+  it('gameflow 序号换算出来的 id 不在清单里 → 认不出来', () => {
+    expect(
+      resolveUsedSkin({
+        gameflowSkinIndex: 9,
+        gameflowChampionId: 103,
+        knownSkinIds: () => [103000, 103005]
+      })
+    ).toEqual({ riotSkinId: 0, displayName: null, source: null });
+  });
+
+  it('gameflow 的 selectedSkinId —— 拿皮肤清单消歧', () => {
+    expect(
+      resolveUsedSkin({
+        gameflowSkinValue: 5,
+        gameflowChampionId: 103,
+        knownSkinIds: (championId) => (championId === 103 ? [103000, 103005] : [])
+      })
+    ).toEqual({ riotSkinId: 103005, displayName: null, source: 'gameflow-value' });
+  });
+
+  it('gameflow 的 selectedSkinId 消歧不通过 → 不挡后面的来源', () => {
+    expect(
+      resolveUsedSkin({
+        gameflowSkinValue: 9,
+        gameflowChampionId: 103,
+        knownSkinIds: () => [103000, 103005],
+        matchHistorySkinId: 222
+      })
+    ).toEqual({ riotSkinId: 222, displayName: null, source: 'match-history' });
   });
 
   it('只剩 Live Client 的名字 → 只给名字,不编 id', () => {

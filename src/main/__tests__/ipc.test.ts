@@ -900,7 +900,7 @@ describe('IPC wiring', () => {
   });
 
   it('match:recommend asks the service for the current session', async () => {
-    const session = { myTeam: [], theirTeam: [], myRole: 'MIDDLE', myChampionId: 1, mySkinId: 0, myCellId: 3, bannedChampions: [] };
+    const session = { myTeam: [], theirTeam: [], myRole: 'MIDDLE', myChampionId: 1, mySkinId: 0, mySelectedSkinId: -1, myCellId: 3, bannedChampions: [] };
     const state = { markdown: 'x', usedFallback: false, error: null, inflight: false, generatedAt: 1 };
     mocks.matchPollerGetSnapshot.mockReturnValue({ champSelect: session });
     mocks.requestRecommendation.mockResolvedValue(state);

@@ -14,7 +14,8 @@ const staticData: StaticData = {
     [64, { name: '李青', iconUrl: 'https://cdn/lee.png' }]
   ]),
   items: new Map(),
-  runes: new Map()
+  runes: new Map(),
+  skinsByChampion: new Map()
 };
 
 describe('parseChampSelectMembers', () => {
@@ -31,6 +32,7 @@ describe('parseChampSelectMembers', () => {
         assignedPosition: 'MIDDLE',
         cellId: 3,
         skinId: 0,
+        selectedSkinId: -1,
         summonerId: 111,
         puuid: '',
         displayName: '',
@@ -40,6 +42,16 @@ describe('parseChampSelectMembers', () => {
         rankedDisplay: ''
       }
     ]);
+  });
+
+  it('国服选人会话的 selectedSkinId 也认 —— 缺字段是 -1,不是 0', () => {
+    const members = parseChampSelectMembers(
+      [{ championId: 1, cellId: 1, selectedSkinId: 5 }, { championId: 64, cellId: 2 }],
+      staticData
+    );
+    expect(members[0].selectedSkinId).toBe(5);
+    // 0 是有意义的值(默认皮肤),所以「没给」必须跟 0 分开
+    expect(members[1].selectedSkinId).toBe(-1);
   });
 
   it('puuid 和 playerId 都认 —— 老客户端用 playerId 当召唤师 ID', () => {

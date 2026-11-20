@@ -10,7 +10,8 @@ const staticData: StaticData = {
     [142, { name: '凯南', iconUrl: 'lcuicon://champion/142.png' }]
   ]),
   items: new Map(),
-  runes: new Map()
+  runes: new Map(),
+  skinsByChampion: new Map()
 };
 
 /** 国服 gameflow 实测形状:teamOne 5 人、teamTwo 4 人,本地玩家带 teamOwner。 */

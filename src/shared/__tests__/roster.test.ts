@@ -10,6 +10,7 @@ function member(overrides: Partial<ChampSelectMember> = {}): ChampSelectMember {
     assignedPosition: 'MIDDLE',
     cellId: 1,
     skinId: 0,
+    selectedSkinId: -1,
     summonerId: 100,
     puuid: 'puuid-a',
     displayName: '队友甲',
@@ -28,6 +29,7 @@ function session(overrides: Partial<ChampSelectSession> = {}): ChampSelectSessio
     myRole: 'MIDDLE',
     myChampionId: 523,
     mySkinId: 0,
+    mySelectedSkinId: -1,
     myCellId: 1,
     bannedChampions: [],
     ...overrides

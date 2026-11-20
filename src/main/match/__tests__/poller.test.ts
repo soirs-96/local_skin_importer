@@ -53,13 +53,15 @@ vi.mock('../staticData', () => ({
     // 结算卡上的名字要靠这张表。
     champions: new Map([[64, { name: '盲僧', iconUrl: null }]]),
     items: new Map(),
-    runes: new Map()
+    runes: new Map(),
+    skinsByChampion: new Map()
   })),
   emptyStaticData: vi.fn(() => ({
     version: null,
     champions: new Map(),
     items: new Map(),
-    runes: new Map()
+    runes: new Map(),
+    skinsByChampion: new Map()
   }))
 }));
 
@@ -160,6 +162,7 @@ describe('MatchPoller', () => {
       myRole: 'MIDDLE',
       myChampionId: 1,
       mySkinId: 0,
+      mySelectedSkinId: -1,
       myCellId: -1,
       bannedChampions: []
     });
@@ -308,6 +311,7 @@ describe('MatchPoller 的局末检测', () => {
     myRole: 'MIDDLE',
     myChampionId: 64,
     mySkinId: 161013,
+    mySelectedSkinId: -1,
     myCellId: -1,
     bannedChampions: []
   };

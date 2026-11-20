@@ -19,7 +19,8 @@ const staticData: StaticData = {
     // 角色任务道具 —— 名字里写着位置
     [1204, { name: '打野任务', iconUrl: null }]
   ]),
-  runes: new Map()
+  runes: new Map(),
+  skinsByChampion: new Map()
 };
 
 function participant(overrides: Record<string, unknown> = {}): Record<string, unknown> {
@@ -102,7 +103,13 @@ describe('parseLedgeGame', () => {
   });
 
   it('静态数据里没有就退回腾讯给的英文名', () => {
-    const empty: StaticData = { version: null, champions: new Map(), items: new Map(), runes: new Map() };
+    const empty: StaticData = {
+      version: null,
+      champions: new Map(),
+      items: new Map(),
+      runes: new Map(),
+      skinsByChampion: new Map()
+    };
     const parsed = parseLedgeGame(game([participant()]), ME, empty);
     expect(parsed?.championName).toBe('MissFortune');
   });

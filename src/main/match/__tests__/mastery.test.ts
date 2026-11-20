@@ -23,7 +23,8 @@ const staticData: StaticData = {
     [142, { name: '凯南', iconUrl: 'lcuicon://champion/142.png' }]
   ]),
   items: new Map(),
-  runes: new Map()
+  runes: new Map(),
+  skinsByChampion: new Map()
 };
 
 describe('masteryPath', () => {

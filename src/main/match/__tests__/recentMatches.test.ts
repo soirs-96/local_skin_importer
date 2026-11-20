@@ -16,7 +16,8 @@ const staticData: StaticData = {
     // 角色任务道具 —— 客户端的 items.json 里有,Data Dragon 没有
     [1204, { name: '打野任务', iconUrl: 'https://cdn/1204.png' }]
   ]),
-  runes: new Map()
+  runes: new Map(),
+  skinsByChampion: new Map()
 };
 
 describe('extractGames', () => {
