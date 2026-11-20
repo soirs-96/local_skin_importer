@@ -64,35 +64,45 @@ function findLogsDirs(root, depth) {
   return out;
 }
 
-/** 日志文件名长什么样：r3dlog.txt / r3dlog.2026-11-20.txt / *.log */
-function isLogFile(name) {
-  const lower = name.toLowerCase();
-  return lower.endsWith('.log') || lower.startsWith('r3dlog');
+/** 二进制/资源文件扫了也没意义，直接排除 */
+const SKIP_EXT = new Set([
+  '.exe', '.dll', '.pak', '.bin', '.dat', '.idx', '.db', '.jpg', '.jpeg',
+  '.png', '.gif', '.bmp', '.tga', '.dds', '.mp3', '.mp4', '.avi', '.wav',
+  '.torrent', '.sbom', '.log.gz', '.nupkg', '.manifest'
+]);
+
+/** 递归列出目录下的所有文件 */
+function listFiles(dir, depth, out) {
+  if (depth < 0) return out;
+  let entries;
+  try {
+    entries = fs.readdirSync(dir, { withFileTypes: true });
+  } catch {
+    return out;
+  }
+  for (const e of entries) {
+    const full = path.join(dir, e.name);
+    if (e.isDirectory()) {
+      listFiles(full, depth - 1, out);
+      continue;
+    }
+    if (!e.isFile()) continue;
+    try {
+      const st = fs.statSync(full);
+      out.push({ path: full, name: e.name, size: st.size, mtime: st.mtimeMs });
+    } catch {
+      /* 读不到就跳过 */
+    }
+  }
+  return out;
 }
 
 /** 收集候选日志文件，按修改时间倒序 */
 function collectLogFiles(dirs) {
-  const files = [];
-  for (const dir of dirs) {
-    let entries;
-    try {
-      entries = fs.readdirSync(dir, { withFileTypes: true });
-    } catch {
-      continue;
-    }
-    for (const e of entries) {
-      if (!e.isFile() || !isLogFile(e.name)) continue;
-      const full = path.join(dir, e.name);
-      try {
-        const st = fs.statSync(full);
-        files.push({ path: full, size: st.size, mtime: st.mtimeMs });
-      } catch {
-        /* 读不到就跳过 */
-      }
-    }
-  }
-  files.sort((a, b) => b.mtime - a.mtime);
-  return files;
+  const all = [];
+  for (const dir of dirs) listFiles(dir, 3, all);
+  all.sort((a, b) => b.mtime - a.mtime);
+  return all;
 }
 
 /** 读文件尾部 */
@@ -100,7 +110,8 @@ function readTail(file) {
   const fd = fs.openSync(file, 'r');
   try {
     const size = fd.statSync().size;
-    const length = Math.min(size, TAIL_BYTES);
+    // 皮肤信息写在开局时(资源加载)，不一定在尾部 —— 64MB 以内整读，再大只读尾部
+    const length = size <= 64 * 1024 * 1024 ? size : TAIL_BYTES;
     const buf = Buffer.alloc(length);
     fd.read(buf, 0, length, size - length);
     return buf.toString('utf8');
@@ -151,9 +162,29 @@ function main() {
   console.log('log dirs: ' + (dirs.length ? dirs.join(', ') : '(none)'));
   if (dirs.length === 0) return;
 
-  const files = collectLogFiles(dirs).slice(0, 5);
+  const all = collectLogFiles(dirs);
+  console.log(`\nfound ${all.length} files under log dirs; newest 40:`);
+  for (const f of all.slice(0, 40)) {
+    console.log(
+      `  ${new Date(f.mtime).toISOString()}  ${String(f.size).padStart(10)}  ${f.path}`
+    );
+  }
+  if (all.length === 0) {
+    console.log('\nno files found at all under those dirs');
+    return;
+  }
+
+  // 只扫看起来像文本的：排除二进制扩展名，且体积别太大
+  const scannable = all.filter((f) => {
+    if (f.size === 0) return false;
+    const ext = path.extname(f.name).toLowerCase();
+    if (SKIP_EXT.has(ext)) return false;
+    return f.size < 256 * 1024 * 1024;
+  });
+  const files = scannable.slice(0, 6);
+  console.log(`\nscanning ${files.length} text-like files`);
   if (files.length === 0) {
-    console.log('no log files found');
+    console.log('nothing text-like to scan');
     return;
   }
 
