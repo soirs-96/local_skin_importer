@@ -130,6 +130,23 @@ export interface MyRating {
 }
 
 /**
+ * 我给某款皮肤打过的分(含评价文字)。
+ *
+ * `skinId` 是**站内**皮肤 id(t_skin.id)—— 跟游戏内皮肤 id(Riot itemId)不是一个东西,
+ * 打分接口要的就是前者。
+ */
+export interface MySkinRating {
+  /** 站内皮肤 id(t_skin.id) */
+  skinId: number;
+  handFeel: number;
+  artwork: number;
+  model: number;
+  mockery: number;
+  /** 评价文字;null = 没写 */
+  content: string | null;
+}
+
+/**
  * 渲染进程要的那份:本地事实 + 站内皮肤 + 现有评分 + 我打过的分。
  *
  * 缺的字段就是 null —— 界面上那块整块不显示,不写占位数字。

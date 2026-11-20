@@ -1,6 +1,6 @@
 import axios from 'axios';
 import { clearStoredToken, getStoredToken } from './auth';
-import type { MyRating, SkinRatingStats } from '../shared/settlement';
+import type { MyRating, MySkinRating, SkinRatingStats } from '../shared/settlement';
 
 /**
  * 后端的三个评分接口。
@@ -15,6 +15,10 @@ import type { MyRating, SkinRatingStats } from '../shared/settlement';
 
 const BACKEND_BASE_URL = 'http://101.34.210.254';
 const RATING_TIMEOUT_MS = 15_000;
+/** 「我打过的全部评分」一次拉完的条数上限 */
+const MY_RATINGS_PAGE_SIZE = 500;
+/** 翻页上限 —— 防止后端返回的 total 异常时无限翻 */
+const MY_RATINGS_MAX_PAGES = 20;
 
 interface BackendEnvelope<T> {
   code: number;
@@ -24,6 +28,7 @@ interface BackendEnvelope<T> {
 
 interface PagePayload {
   records?: Record<string, unknown>[];
+  total?: number;
 }
 
 function num(v: unknown): number | null {
@@ -102,12 +107,69 @@ export async function fetchMyRating(skinId: number, userId: number): Promise<MyR
   };
 }
 
+/** 后端一条评分记录 → 我打过的这一条。 */
+function toMySkinRating(raw: Record<string, unknown>): MySkinRating {
+  return {
+    skinId: num(raw.skinId) ?? 0,
+    handFeel: num(raw.handFeel) ?? 0,
+    artwork: num(raw.artwork) ?? 0,
+    model: num(raw.model) ?? 0,
+    mockery: num(raw.mockery) ?? 0,
+    content: str(raw.content)
+  };
+}
+
+/**
+ * 拉「我打过的全部评分」。
+ *
+ * 一次拉完,界面按站内皮肤 id 建索引 —— 逐个皮肤去查的话上千款皮肤要上千个请求。
+ * 后端按 token 里的 userId 判定「是不是查自己」,查自己不过滤,
+ * 所以评价文字也能拿回来。
+ *
+ * 打过分超过一页时往后翻 —— 截断会让老的评分在图鉴里莫名其妙变成「没评过」。
+ */
+export async function fetchMyRatings(userId: number): Promise<MySkinRating[]> {
+  const out: MySkinRating[] = [];
+  const headers = await authHeaders();
+  for (let page = 1; page <= MY_RATINGS_MAX_PAGES; page += 1) {
+    const { data } = await axios.get<BackendEnvelope<PagePayload>>(
+      `${BACKEND_BASE_URL}/api/ratings`,
+      {
+        timeout: RATING_TIMEOUT_MS,
+        params: { userId, page, size: MY_RATINGS_PAGE_SIZE },
+        headers
+      }
+    );
+    if (data.code !== 200 || !data.data) break;
+    const records = data.data.records ?? [];
+    out.push(...records.map(toMySkinRating));
+    const total = data.data.total ?? out.length;
+    if (out.length >= total || records.length === 0) break;
+  }
+  return out;
+}
+
 export interface SubmitRatingPayload {
   skinId: number;
   handFeel: number;
   artwork: number;
   model: number;
   mockery: number;
+  /** 评价文字;空 = 只打星 */
+  content?: string;
+}
+
+export interface SubmitRatingResult {
+  /** 提交后的聚合评分;null = 后端没给 */
+  stats: SkinRatingStats | null;
+  /**
+   * 后端**实际存下来**的评价文字。
+   *
+   * null 有两种含义:没写文字,或者后端把文字清掉了 ——
+   * 后端只放行桌面端 token / 管理员账号的文字(小程序是个人主体,
+   * 微信不开放用户生成内容)。界面靠它区分「写没写上」。
+   */
+  savedContent: string | null;
 }
 
 /**
@@ -119,23 +181,27 @@ export interface SubmitRatingPayload {
  */
 export async function submitSkinRating(
   payload: SubmitRatingPayload
-): Promise<SkinRatingStats | null> {
+): Promise<SubmitRatingResult> {
   const headers = await authHeaders();
+  const content = payload.content?.trim() ? payload.content.trim() : null;
+  let savedContent: string | null = null;
   try {
-    await axios.post(
+    const { data } = await axios.post<BackendEnvelope<Record<string, unknown>>>(
       `${BACKEND_BASE_URL}/api/ratings`,
       {
         skinId: payload.skinId,
         handFeel: payload.handFeel,
         artwork: payload.artwork,
         model: payload.model,
-        mockery: payload.mockery
+        mockery: payload.mockery,
+        content
       },
       {
         timeout: RATING_TIMEOUT_MS,
         headers: { ...headers, 'Content-Type': 'application/json' }
       }
     );
+    savedContent = str(data.data?.content);
   } catch (e) {
     // token 过期时清掉本地 token —— 留着过期 token 只会让「已登录」的假象一直挂着
     if (axios.isAxiosError(e) && e.response?.status === 401) {
@@ -147,5 +213,6 @@ export async function submitSkinRating(
     }
     throw e;
   }
-  return await fetchSkinRatingStats(payload.skinId);
+  const stats = await fetchSkinRatingStats(payload.skinId);
+  return { stats, savedContent };
 }

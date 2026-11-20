@@ -147,7 +147,7 @@ describe('filterSkins', () => {
 
   it('returns everything when no filter is set', () => {
     expect(
-      filterSkins(rows, owned, { keyword: '', heroId: null, rarity: null, onlyUnowned: false })
+      filterSkins(rows, owned, { keyword: '', heroId: null, rarity: null, ownership: 'all' })
     ).toHaveLength(3);
   });
 
@@ -156,7 +156,7 @@ describe('filterSkins', () => {
       keyword: '冠军',
       heroId: null,
       rarity: null,
-      onlyUnowned: false
+      ownership: 'all'
     });
     expect(byName.map((s) => s.id)).toEqual([1]);
 
@@ -164,7 +164,7 @@ describe('filterSkins', () => {
       keyword: 'night',
       heroId: null,
       rarity: null,
-      onlyUnowned: false
+      ownership: 'all'
     });
     expect(byEn.map((s) => s.id)).toEqual([2]);
 
@@ -172,34 +172,42 @@ describe('filterSkins', () => {
       keyword: '冰霜女巫',
       heroId: null,
       rarity: null,
-      onlyUnowned: false
+      ownership: 'all'
     });
     expect(byHero.map((s) => s.id)).toEqual([3]);
   });
 
   it('filters by hero and by rarity', () => {
     expect(
-      filterSkins(rows, owned, { keyword: '', heroId: 9, rarity: null, onlyUnowned: false }).map(
+      filterSkins(rows, owned, { keyword: '', heroId: 9, rarity: null, ownership: 'all' }).map(
         (s) => s.id
       )
     ).toEqual([3]);
 
     expect(
-      filterSkins(rows, owned, { keyword: '', heroId: null, rarity: '史诗', onlyUnowned: false }).map(
+      filterSkins(rows, owned, { keyword: '', heroId: null, rarity: '史诗', ownership: 'all' }).map(
         (s) => s.id
       )
     ).toEqual([2]);
   });
 
-  it('keeps only unowned skins when onlyUnowned is on', () => {
+  it('keeps only unowned skins in the unowned view', () => {
     expect(
-      filterSkins(rows, owned, { keyword: '', heroId: null, rarity: null, onlyUnowned: true }).map(
+      filterSkins(rows, owned, { keyword: '', heroId: null, rarity: null, ownership: 'unowned' }).map(
         (s) => s.id
       )
     ).toEqual([2, 3]);
   });
 
-  it('keeps skins without an id in the only-unowned view', () => {
+  it('keeps only owned skins in the owned view', () => {
+    expect(
+      filterSkins(rows, owned, { keyword: '', heroId: null, rarity: null, ownership: 'owned' }).map(
+        (s) => s.id
+      )
+    ).toEqual([1]);
+  });
+
+  it('keeps skins without an id in the unowned view', () => {
     const withNull = [...rows, skin({ id: 4, skinId: null })];
 
     expect(
@@ -207,9 +215,22 @@ describe('filterSkins', () => {
         keyword: '',
         heroId: null,
         rarity: null,
-        onlyUnowned: true
+        ownership: 'unowned'
       }).map((s) => s.id)
     ).toEqual([2, 3, 4]);
+  });
+
+  it('drops skins without an id in the owned view', () => {
+    const withNull = [...rows, skin({ id: 4, skinId: null })];
+
+    expect(
+      filterSkins(withNull, owned, {
+        keyword: '',
+        heroId: null,
+        rarity: null,
+        ownership: 'owned'
+      }).map((s) => s.id)
+    ).toEqual([1]);
   });
 });
 

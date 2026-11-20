@@ -49,7 +49,11 @@
           <el-select v-model="filters.rarity" placeholder="全部稀有度" clearable class="filter-select">
             <el-option v-for="r in rarityOptions" :key="r" :label="r" :value="r" />
           </el-select>
-          <el-checkbox v-model="filters.onlyUnowned">只看未拥有</el-checkbox>
+          <el-select v-model="filters.ownership" class="filter-select filter-ownership">
+            <el-option label="查看全部" value="all" />
+            <el-option label="只看已拥有" value="owned" />
+            <el-option label="只看未拥有" value="unowned" />
+          </el-select>
         </div>
       </div>
 
@@ -86,6 +90,15 @@
         class="overview-alert"
       />
 
+      <el-alert
+        v-if="!loggedIn"
+        type="info"
+        show-icon
+        :closable="false"
+        title="用同步码登录后,就能给已拥有的皮肤打分并写评价"
+        class="overview-alert"
+      />
+
       <div v-if="loading && catalogSize === 0" class="overview-loading">正在加载皮肤图鉴…</div>
       <div v-else-if="error" class="overview-error">
         <p>{{ error }}</p>
@@ -96,8 +109,10 @@
         :key="filterSignature"
         :skins="filteredSkins"
         :owned-ids="ownedIds"
+        :rated-ids="ratedIds"
         class="overview-grid"
         @select="openDetail"
+        @rate="openRate"
       />
 
       <div class="overview-footer">
@@ -107,26 +122,50 @@
     </div>
 
     <SkinDetailDialog v-model="detailVisible" :skin="selectedSkin" :owned="selectedOwned" />
+
+    <SkinRateDialog
+      v-model="rateVisible"
+      :skin="rateTarget"
+      :my-rating="rateMyRating"
+      @saved="onRated"
+    />
   </el-dialog>
 </template>
 
 <script setup lang="ts">
 import { computed, reactive, ref, shallowRef } from 'vue';
+import { ElNotification } from 'element-plus';
+import { storeToRefs } from 'pinia';
 import SkinDetailDialog from './SkinDetailDialog.vue';
 import SkinGrid from './SkinGrid.vue';
-import type { CatalogSkin } from '../../../preload/index';
-import { filterSkins, isOwned, parseServerTime } from '../composables/skinCatalogLogic';
+import SkinRateDialog from './SkinRateDialog.vue';
+import type { CatalogSkin, MySkinRating } from '../../../preload/index';
+import {
+  filterSkins,
+  isOwned,
+  parseServerTime,
+  type OwnershipFilter
+} from '../composables/skinCatalogLogic';
 import { useSkinCatalog } from '../composables/useSkinCatalog';
+import { useSkinRatings } from '../composables/useSkinRatings';
+import { useAuthStore } from '../stores/auth';
 
 const visible = ref(false);
 const detailVisible = ref(false);
 const selectedSkin = shallowRef<CatalogSkin | null>(null);
 
+/** 打分弹窗的目标皮肤 */
+const rateVisible = ref(false);
+const rateTarget = shallowRef<CatalogSkin | null>(null);
+
+const auth = useAuthStore();
+const { loggedIn } = storeToRefs(auth);
+
 const filters = reactive({
   keyword: '',
   heroId: null as number | null,
   rarity: null as string | null,
-  onlyUnowned: false
+  ownership: 'all' as OwnershipFilter
 });
 
 const {
@@ -142,12 +181,17 @@ const {
   load
 } = useSkinCatalog();
 
+const { myRatings, load: loadMyRatings, get: getMyRating, set: setMyRating } = useSkinRatings();
+
+/** 我打过分了的皮肤 id(站内口径)—— 网格靠它给卡片挂「已评」角标 */
+const ratedIds = computed<Set<number>>(() => new Set(myRatings.value.keys()));
+
 const filteredSkins = computed(() =>
   filterSkins(skins.value, ownedIds.value, {
     keyword: filters.keyword,
     heroId: filters.heroId,
     rarity: filters.rarity,
-    onlyUnowned: filters.onlyUnowned
+    ownership: filters.ownership
   })
 );
 
@@ -156,7 +200,7 @@ const filteredSkins = computed(() =>
  * 直接监听数组做不到:后台静默刷新目录也会换引用,那样会把用户拽回顶部。
  */
 const filterSignature = computed(
-  () => `${filters.keyword}|${filters.heroId ?? ''}|${filters.rarity ?? ''}|${filters.onlyUnowned}`
+  () => `${filters.keyword}|${filters.heroId ?? ''}|${filters.rarity ?? ''}|${filters.ownership}`
 );
 
 const heroOptions = computed(() => {
@@ -212,21 +256,52 @@ const selectedOwned = computed(() =>
   selectedSkin.value ? isOwned(selectedSkin.value, ownedIds.value) : false
 );
 
+/** 打分弹窗里要显示「我之前打的分」 */
+const rateMyRating = computed<MySkinRating | null>(() =>
+  rateTarget.value ? getMyRating(rateTarget.value.id) : null
+);
+
 async function onOpen(): Promise<void> {
+  // 图鉴重开时别把上一次的打分弹窗带出来
+  rateVisible.value = false;
+  await auth.refresh();
   await load();
+  // 没登录时这一步会失败 —— 失败就失败,评分区自然空着,不用报错打断浏览
+  await loadMyRatings();
 }
 
 async function reload(): Promise<void> {
   filters.keyword = '';
   filters.heroId = null;
   filters.rarity = null;
-  filters.onlyUnowned = false;
+  filters.ownership = 'all';
   await load({ force: true });
+  await loadMyRatings();
 }
 
 function openDetail(skin: CatalogSkin): void {
   selectedSkin.value = skin;
   detailVisible.value = true;
+}
+
+/** 打分入口。没登录就说清楚差什么,不把按钮藏起来让人猜。 */
+function openRate(skin: CatalogSkin): void {
+  if (!loggedIn.value) {
+    ElNotification({
+      title: '还不能打分',
+      message: '用同步码登录后才能给已拥有的皮肤打分',
+      type: 'warning',
+      duration: 4000
+    });
+    return;
+  }
+  rateTarget.value = skin;
+  rateVisible.value = true;
+}
+
+/** 打分弹窗存完之后,本地那份索引跟着更新 —— 卡片上的「已评」角标立刻变。 */
+function onRated(rating: MySkinRating): void {
+  setMyRating(rating);
 }
 
 function open(): void {
@@ -322,6 +397,9 @@ defineExpose({ open });
 }
 .filter-select {
   width: 150px;
+}
+.filter-ownership {
+  width: 130px;
 }
 .overview-alert {
   margin: 0;

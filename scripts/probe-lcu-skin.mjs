@@ -99,6 +99,67 @@ function toEntries(payload) {
   return [];
 }
 
+/**
+ * 递归找出载荷里所有「名字带 skin」的键,并打印它在哪、值是什么。
+ *
+ * 上一轮判「某来源没有皮肤字段」时踩过坑:可能是读错了数组层级
+ * (participants 也许在 gameData 下面),而不是真的没有。
+ * 这个函数绕开层级问题 —— 整个载荷里只要有 skin 相关的键就跑不掉。
+ */
+function findSkinKeys(value, matcher = /skin/i, path = '$', out = []) {
+  if (Array.isArray(value)) {
+    value.forEach((v, i) => findSkinKeys(v, matcher, `${path}[${i}]`, out));
+    return out;
+  }
+  if (!isRecord(value)) return out;
+  for (const key of Object.keys(value)) {
+    const child = value[key];
+    const p = `${path}.${key}`;
+    if (matcher.test(key)) out.push(`${p} = ${JSON.stringify(child)}`);
+    findSkinKeys(child, matcher, p, out);
+  }
+  return out;
+}
+
+/** 打印某个载荷里所有 skin 相关键;一个都没有就明说「确实没有」。 */
+function reportSkinKeys(label, payload, matcher = /skin/i) {
+  const hits = findSkinKeys(payload, matcher);
+  console.log(`  [skin 键扫描] ${label}: ${hits.length} 处`);
+  for (const h of hits.slice(0, 40)) console.log(`      ${h}`);
+  if (hits.length > 40) console.log(`      ... 还有 ${hits.length - 40} 处`);
+  return hits;
+}
+
+/** Generic recursive key scan: prints every key matching `matcher`, with its path. */
+function reportKeyScan(label, payload, matcher, limit = 40) {
+  const hits = findSkinKeys(payload, matcher);
+  console.log(`  [key scan] ${label}: ${hits.length} hits`);
+  for (const h of hits.slice(0, limit)) console.log(`      ${h}`);
+  if (hits.length > limit) console.log(`      ... ${hits.length - limit} more`);
+  return hits;
+}
+
+/**
+ * Recursively collect every array that lives under a key named like
+ * "participants" / "participant" — the previous probe only looked at
+ * game.participants, so a payload that nests them elsewhere (gameData.*)
+ * would look like "no participants" and be mistaken for "no skin fields".
+ */
+function collectParticipantArrays(value, path = '$', out = []) {
+  if (Array.isArray(value)) {
+    value.forEach((v, i) => collectParticipantArrays(v, `${path}[${i}]`, out));
+    return out;
+  }
+  if (!isRecord(value)) return out;
+  for (const key of Object.keys(value)) {
+    const child = value[key];
+    const p = `${path}.${key}`;
+    if (/participants?$/i.test(key) && Array.isArray(child)) out.push({ path: p, arr: child });
+    collectParticipantArrays(child, p, out);
+  }
+  return out;
+}
+
 async function dump(name, text) {
   if (!text) return;
   try {
@@ -280,6 +341,8 @@ async function main() {
       const j = JSON.parse(gf.text);
       console.log(`top fields: ${fieldNames(j)}`);
       console.log(`phase=${j.phase}`);
+      reportSkinKeys('gameflow whole payload', j);
+      reportKeyScan('gameflow selected/skin/champion keys', j, /selected|skin|champion/i);
       const gd = isRecord(j.gameData) ? j.gameData : {};
       console.log(`gameData fields: ${fieldNames(gd)}`);
       for (const key of ['teamOne', 'teamTwo']) {
@@ -328,6 +391,8 @@ async function main() {
       const j = JSON.parse(cs.text);
       console.log(`top fields: ${fieldNames(j)}`);
       console.log(`localPlayerCellId=${j.localPlayerCellId}`);
+      reportSkinKeys('champ-select whole payload', j);
+      reportKeyScan('champ-select selected/skin/champion keys', j, /selected|skin|champion/i);
       for (const key of ['myTeam', 'theirTeam']) {
         const team = j[key];
         if (!Array.isArray(team)) {
@@ -378,6 +443,20 @@ async function main() {
         else if (isRecord(b)) games = Object.values(b);
       }
       console.log(`games parsed: ${games.length}`);
+      reportSkinKeys('match-history whole payload', j);
+      const pArrays = collectParticipantArrays(j);
+      console.log(`participant arrays found: ${pArrays.length}`);
+      for (const pa of pArrays) {
+        console.log(`  ${pa.path}: ${pa.arr.length} entries`);
+        pa.arr.slice(0, 12).forEach((p, pi) => {
+          if (!isRecord(p)) return;
+          const skinish = Object.keys(p).filter((k) => /skin/i.test(k));
+          console.log(
+            `    [${pi}] championId=${p.championId} skinId=${p.skinId} skin=${p.skin} ` +
+              `itemSkinId=${p.itemSkinId} skinKeys=[${skinish.join(',')}]`
+          );
+        });
+      }
       games.slice(0, 3).forEach((g, gi) => {
         if (!isRecord(g)) return;
         console.log(`  --- game[${gi}] top fields: ${fieldNames(g)}`);
@@ -470,6 +549,7 @@ async function main() {
     try {
       const j = JSON.parse(live.text);
       console.log(`top fields: ${fieldNames(j)}`);
+      reportSkinKeys('live client whole payload', j);
       const ap = isRecord(j.activePlayer) ? j.activePlayer : {};
       console.log(`activePlayer fields: ${fieldNames(ap)}`);
       console.log(
@@ -549,10 +629,24 @@ async function main() {
         const j = JSON.parse(res.text);
         const games = Array.isArray(j) ? j : Array.isArray(j.games) ? j.games : [];
         console.log(`games: ${games.length}`);
+        reportSkinKeys('ledge whole payload', j);
         const g = games[0];
         const json = g && isRecord(g.json) ? g.json : {};
         const participants = Array.isArray(json.participants) ? json.participants.filter(isRecord) : [];
         console.log(`participants: ${participants.length}`);
+        const pArrays = collectParticipantArrays(j);
+        console.log(`participant arrays found: ${pArrays.length}`);
+        for (const pa of pArrays) {
+          console.log(`  ${pa.path}: ${pa.arr.length} entries`);
+          pa.arr.slice(0, 12).forEach((p, pi) => {
+            if (!isRecord(p)) return;
+            const skinish = Object.keys(p).filter((k) => /skin/i.test(k));
+            console.log(
+              `    [${pi}] championId=${p.championId} skinId=${p.skinId} skin=${p.skin} ` +
+                `itemSkinId=${p.itemSkinId} skinKeys=[${skinish.join(',')}]`
+            );
+          });
+        }
         const mine = participants.find((p) => String(p.puuid || '') === puuid) || participants[0];
         if (mine) {
           console.log(`MY PARTICIPANT fields: ${fieldNames(mine)}`);

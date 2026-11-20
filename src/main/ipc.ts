@@ -5,7 +5,7 @@ import * as auth from './auth';
 import { syncOwnedSkins, shouldSkipSync, minIntervalFor } from './backend';
 import { fetchCatalog, fetchMyOwned } from './catalog';
 import { buildSettlementView } from './match/settlement';
-import { submitSkinRating } from './rating';
+import { fetchMyRatings, fetchSkinRatingStats, submitSkinRating } from './rating';
 import { resolveOwnedSkinIds } from './owned';
 import { readSyncState, writeSyncState } from './syncState';
 import { matchPoller } from './match/poller';
@@ -23,12 +23,17 @@ import type { TopChampion } from '../shared/match';
 import { SETTLEMENT_CHANNEL } from '../shared/settlement';
 import type { LocalSettlement } from '../shared/settlement';
 
+/** 评价文字的长度上限 —— 截断而不是报错,用户写到一半不该被挡下来 */
+const MAX_RATING_CONTENT_LENGTH = 500;
+
 interface SubmitRatingPayload {
   skinId: number;
   handFeel: number;
   artwork: number;
   model: number;
   mockery: number;
+  /** 评价文字;空 = 只打星 */
+  content?: string;
 }
 
 interface RedeemPayload {
@@ -504,14 +509,33 @@ export function registerIpcHandlers(): void {
       const value = payload[key];
       if (!Number.isFinite(value) || value < 1 || value > 5) throw new Error(`invalid ${key}`);
     }
-    const stats = await submitSkinRating({
+    let content: string | undefined;
+    if (payload.content !== undefined && payload.content !== null) {
+      if (typeof payload.content !== 'string') throw new Error('invalid content');
+      content = payload.content.slice(0, MAX_RATING_CONTENT_LENGTH);
+    }
+    const result = await submitSkinRating({
       skinId: payload.skinId,
       handFeel: payload.handFeel,
       artwork: payload.artwork,
       model: payload.model,
-      mockery: payload.mockery
+      mockery: payload.mockery,
+      content
     });
-    return { ok: true as const, stats };
+    return { ok: true as const, stats: result.stats, savedContent: result.savedContent };
+  });
+
+  /** 我打过的全部评分(一次拉完,界面按站内皮肤 id 建索引)。 */
+  ipcMain.handle('rating:my-list', async () => {
+    const userId = auth.getStoredUserId();
+    if (userId === null) throw new Error('未登录:请先登录后再打分');
+    return await fetchMyRatings(userId);
+  });
+
+  /** 某款皮肤的聚合评分;null = 没人打过 */
+  ipcMain.handle('rating:skin-stats', async (_event, skinId: number) => {
+    if (!Number.isFinite(skinId)) throw new Error('invalid skinId');
+    return await fetchSkinRatingStats(skinId);
   });
 
   ipcMain.handle('llm:get-status', () => getLlmStatus());

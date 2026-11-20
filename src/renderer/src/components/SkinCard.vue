@@ -16,6 +16,15 @@
       <div v-else class="thumb-placeholder" />
       <div v-if="!owned" class="mask" />
       <span v-if="!owned" class="lock-badge">未拥有</span>
+      <button
+        v-else
+        type="button"
+        class="rate-btn"
+        :class="{ 'is-rated': rated }"
+        @click.stop="emit('rate', skin)"
+      >
+        {{ rated ? '已评' : '评分' }}
+      </button>
     </div>
     <div class="meta">
       <div class="name" :title="skin.name ?? ''">{{ skin.name ?? '—' }}</div>
@@ -31,11 +40,14 @@ import type { CatalogSkin } from '../../../preload/index';
 const props = defineProps<{
   skin: CatalogSkin;
   owned: boolean;
+  /** 我给这款皮肤打过分没有 */
+  rated: boolean;
   visible: boolean;
 }>();
 
 const emit = defineEmits<{
   (e: 'select', skin: CatalogSkin): void;
+  (e: 'rate', skin: CatalogSkin): void;
 }>();
 
 // 收敛成 string,模板里就不用再处理 null
@@ -110,6 +122,31 @@ watch(
   letter-spacing: 0.16em;
   text-transform: uppercase;
   color: var(--hx-badge-text);
+  background: var(--hx-badge-bg);
+}
+/* 打分入口:核心操作 = 魔法蓝;已经打过 = 金色 */
+.rate-btn {
+  position: absolute;
+  left: 0;
+  bottom: 0;
+  padding: 0 6px;
+  border: none;
+  border-top: 1px solid var(--hx-line-strong);
+  border-right: 1px solid var(--hx-line-strong);
+  border-radius: 0;
+  font-size: 10px;
+  line-height: 18px;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  cursor: pointer;
+  color: #ffffff;
+  background: var(--hx-blue-deep);
+}
+.rate-btn:hover {
+  background: var(--hx-blue);
+}
+.rate-btn.is-rated {
+  color: var(--hx-gold);
   background: var(--hx-badge-bg);
 }
 .meta {

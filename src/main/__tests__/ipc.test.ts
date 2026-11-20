@@ -63,6 +63,8 @@ const mocks = vi.hoisted(() => {
     matchPollerGetSettlement: vi.fn(),
     getStoredUserId: vi.fn(),
     submitSkinRating: vi.fn(),
+    fetchMyRatings: vi.fn(),
+    fetchSkinRatingStats: vi.fn(),
     buildSettlementView: vi.fn(),
     fetchCatalogSkinBySkinId: vi.fn(),
     getRecommendationState: vi.fn(),
@@ -138,7 +140,9 @@ vi.mock('../catalog', () => ({
 }));
 
 vi.mock('../rating', () => ({
-  submitSkinRating: mocks.submitSkinRating
+  submitSkinRating: mocks.submitSkinRating,
+  fetchMyRatings: mocks.fetchMyRatings,
+  fetchSkinRatingStats: mocks.fetchSkinRatingStats
 }));
 
 vi.mock('../match/settlement', () => ({
@@ -218,6 +222,8 @@ type ExposedApi = {
   getAutoAccept: () => unknown;
   setAutoAccept: (enabled: boolean) => unknown;
   setAutoAcceptDelay: (delaySeconds: number) => unknown;
+  fetchMyRatings: () => unknown;
+  fetchSkinRatingStats: (skinId: number) => unknown;
 };
 
 function handlerFor(channel: string): Handler {
@@ -265,6 +271,8 @@ describe('IPC wiring', () => {
     mocks.matchPollerGetSettlement.mockReset();
     mocks.getStoredUserId.mockReset();
     mocks.submitSkinRating.mockReset();
+    mocks.fetchMyRatings.mockReset();
+    mocks.fetchSkinRatingStats.mockReset();
     mocks.buildSettlementView.mockReset();
     mocks.fetchCatalogSkinBySkinId.mockReset();
     mocks.matchPollerSubscribeSettlement.mockReturnValue(() => undefined);
@@ -310,6 +318,8 @@ describe('IPC wiring', () => {
     api.getAutoAccept();
     api.setAutoAccept(true);
     api.setAutoAcceptDelay(5);
+    api.fetchMyRatings();
+    api.fetchSkinRatingStats(42);
 
     expect(mocks.ipcRendererInvoke.mock.calls).toEqual([
       ['lcu:check-status'],
@@ -326,11 +336,13 @@ describe('IPC wiring', () => {
       ['dev:console-detach'],
       ['tools:get-auto-accept'],
       ['tools:set-auto-accept', { enabled: true }],
-      ['tools:set-auto-accept-delay', { delaySeconds: 5 }]
+      ['tools:set-auto-accept-delay', { delaySeconds: 5 }],
+      ['rating:my-list'],
+      ['rating:skin-stats', 42]
     ]);
   });
 
-  it('registers all 29 ipc channels on call to registerIpcHandlers', () => {
+  it('registers all 31 ipc channels on call to registerIpcHandlers', () => {
     expect(mocks.ipcMainHandle.mock.calls.map(([channel]) => channel)).toEqual([
       'lcu:check-status',
       'lcu:fetch-skins',
@@ -355,6 +367,8 @@ describe('IPC wiring', () => {
       'match:recommend',
       'match:get-settlement',
       'rating:submit',
+      'rating:my-list',
+      'rating:skin-stats',
       'llm:get-status',
       'llm:set-key',
       'llm:clear-key',
@@ -369,7 +383,54 @@ describe('IPC wiring', () => {
   });
 
   it('rating:submit 缺参数时抛错', async () => {
-    await expect(invoke('rating:submit', { skinId: 42 })).rejects.toThrow();
+    await expect(invoke('rating:submit', {}, { skinId: 42 })).rejects.toThrow();
+  });
+
+  it('rating:submit 把评价文字一起交给主进程', async () => {
+    mocks.submitSkinRating.mockResolvedValue({ stats: null, savedContent: '写上了' });
+
+    await expect(
+      invoke('rating:submit', {}, {
+        skinId: 42,
+        handFeel: 5,
+        artwork: 4,
+        model: 3,
+        mockery: 2,
+        content: '手感真好'
+      })
+    ).resolves.toEqual({ ok: true, stats: null, savedContent: '写上了' });
+
+    expect(mocks.submitSkinRating).toHaveBeenCalledWith({
+      skinId: 42,
+      handFeel: 5,
+      artwork: 4,
+      model: 3,
+      mockery: 2,
+      content: '手感真好'
+    });
+  });
+
+  it('rating:my-list 拿本地 token 里的 userId 去查', async () => {
+    mocks.getStoredUserId.mockReturnValue(7);
+    mocks.fetchMyRatings.mockResolvedValue([]);
+
+    await expect(invoke('rating:my-list')).resolves.toEqual([]);
+
+    expect(mocks.fetchMyRatings).toHaveBeenCalledWith(7);
+  });
+
+  it('rating:my-list 没登录时报错', async () => {
+    mocks.getStoredUserId.mockReturnValue(null);
+
+    await expect(invoke('rating:my-list')).rejects.toThrow();
+  });
+
+  it('rating:skin-stats 拿聚合评分', async () => {
+    mocks.fetchSkinRatingStats.mockResolvedValue({ skinId: 42, totalCount: 3 });
+
+    await expect(invoke('rating:skin-stats', {}, 42)).resolves.toEqual({ skinId: 42, totalCount: 3 });
+
+    expect(mocks.fetchSkinRatingStats).toHaveBeenCalledWith(42);
   });
 
   it('lcu:check-status returns running true with the current summoner', async () => {

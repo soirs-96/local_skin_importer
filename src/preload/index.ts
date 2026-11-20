@@ -15,6 +15,7 @@ import { DEV_LOG_CHANNEL } from '../shared/dev';
 import { SETTLEMENT_CHANNEL } from '../shared/settlement';
 import type {
   LocalSettlement,
+  MySkinRating,
   SettlementView,
   SkinRatingStats
 } from '../shared/settlement';
@@ -56,6 +57,7 @@ export type {
   LiveScore,
   MatchScore,
   MyRating,
+  MySkinRating,
   SettlementSkin,
   SettlementView,
   SkinRatingStats,
@@ -266,7 +268,19 @@ const api = {
     artwork: number;
     model: number;
     mockery: number;
-  }): Promise<{ ok: true; stats: SkinRatingStats | null }> => invoke('rating:submit', payload),
+    /** 评价文字;空 = 只打星 */
+    content?: string;
+  }): Promise<{
+    ok: true;
+    stats: SkinRatingStats | null;
+    /** 后端实际存下来的评价文字;null = 没写上 */
+    savedContent: string | null;
+  }> => invoke('rating:submit', payload),
+  /** 我打过的全部评分(一次拉完,按站内皮肤 id 建索引) */
+  fetchMyRatings: (): Promise<MySkinRating[]> => invoke('rating:my-list'),
+  /** 某款皮肤的聚合评分;null = 还没人打过分 */
+  fetchSkinRatingStats: (skinId: number): Promise<SkinRatingStats | null> =>
+    invoke('rating:skin-stats', skinId),
   /** 订阅主进程推来的局末结算,返回取消订阅的函数 */
   onSettlement: (cb: (settlement: LocalSettlement) => void): (() => void) => {
     const listener = (_e: Electron.IpcRendererEvent, settlement: LocalSettlement): void => {

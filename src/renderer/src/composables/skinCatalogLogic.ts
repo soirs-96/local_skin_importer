@@ -59,11 +59,20 @@ export function dedupeBySkinId(records: CatalogSkin[]): CatalogSkin[] {
   return out;
 }
 
+/**
+ * 持有情况的筛选口径。
+ *
+ *  - all:     全部
+ *  - owned:   只看已拥有
+ *  - unowned: 只看未拥有
+ */
+export type OwnershipFilter = 'all' | 'owned' | 'unowned';
+
 export interface CatalogFilters {
   keyword: string;
   heroId: number | null;
   rarity: string | null;
-  onlyUnowned: boolean;
+  ownership: OwnershipFilter;
 }
 
 export function filterSkins(
@@ -75,7 +84,8 @@ export function filterSkins(
   return skins.filter((s) => {
     if (filters.heroId != null && s.heroId !== filters.heroId) return false;
     if (filters.rarity && s.rarity !== filters.rarity) return false;
-    if (filters.onlyUnowned && isOwned(s, ownedIds)) return false;
+    if (filters.ownership === 'owned' && !isOwned(s, ownedIds)) return false;
+    if (filters.ownership === 'unowned' && isOwned(s, ownedIds)) return false;
     if (kw) {
       const hay = `${s.name ?? ''} ${s.nameEn ?? ''} ${s.heroName ?? ''}`.toLowerCase();
       if (!hay.includes(kw)) return false;

@@ -14,8 +14,10 @@
           :key="item.key"
           :skin="item.skin"
           :owned="item.owned"
+          :rated="item.rated"
           :visible="true"
           @select="onSelect"
+          @rate="onRate"
         />
       </div>
     </div>
@@ -38,10 +40,13 @@ const ROW_H = CARD_H + GAP;
 const props = defineProps<{
   skins: CatalogSkin[];
   ownedIds: Set<number>;
+  /** 我打过分了的皮肤 —— 键是**站内**皮肤 id(t_skin.id) */
+  ratedIds: Set<number>;
 }>();
 
 const emit = defineEmits<{
   (e: 'select', skin: CatalogSkin): void;
+  (e: 'rate', skin: CatalogSkin): void;
 }>();
 
 const viewportRef = ref<HTMLElement | null>(null);
@@ -63,7 +68,8 @@ const visibleItems = computed(() =>
   props.skins.slice(range.value.startIndex, range.value.endIndex).map((skin) => ({
     key: `${skin.id}-${skin.skinId ?? 'x'}`,
     skin,
-    owned: skin.skinId != null && props.ownedIds.has(skin.skinId)
+    owned: skin.skinId != null && props.ownedIds.has(skin.skinId),
+    rated: props.ratedIds.has(skin.id)
   }))
 );
 
@@ -73,6 +79,10 @@ function onScroll(e: Event): void {
 
 function onSelect(skin: CatalogSkin): void {
   emit('select', skin);
+}
+
+function onRate(skin: CatalogSkin): void {
+  emit('rate', skin);
 }
 
 // 筛选后条目数变了 = 换了筛选条件,回到顶部,否则滚动区会停在旧位置留下空白。
