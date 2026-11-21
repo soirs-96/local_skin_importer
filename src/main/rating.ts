@@ -103,7 +103,9 @@ export async function fetchMyRating(skinId: number, userId: number): Promise<MyR
     handFeel: num(record.handFeel) ?? 0,
     artwork: num(record.artwork) ?? 0,
     model: num(record.model) ?? 0,
-    mockery: num(record.mockery) ?? 0
+    mockery: num(record.mockery) ?? 0,
+    // 查自己那条不过滤 —— 评价文字也能拿回来(界面上要显示「我写过什么」)
+    content: str(record.content)
   };
 }
 

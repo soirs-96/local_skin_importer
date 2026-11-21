@@ -149,6 +149,13 @@ const settlementView = shallowRef<SettlementView | null>(null);
 const settlementOpen = ref(false);
 /** 已经处理过的结算键 —— 同一局不重复弹 */
 let handledSettlementKey = '';
+/**
+ * 弹窗开着的时候又来了一条别的结算 —— 排队。
+ *
+ * 键是**这一局自己的编号**(主进程给的),同一局的补齐段键不变,
+ * 所以「又来一条」要么是同一局(就地更新),要么真的是下一局(排队)。
+ */
+let queuedSettlementKey = '';
 
 /**
  * 主进程推来一条结算。
@@ -157,11 +164,27 @@ let handledSettlementKey = '';
  * 就地更新,不再弹一次。
  */
 async function onSettlement(local: { key: string }): Promise<void> {
-  if (local.key === handledSettlementKey && settlementOpen.value) {
-    await refreshSettlement();
+  // 同一局 → 就地更新,**不重新弹**(弹窗开着的时候重置表单会吃掉正在写的东西)
+  if (local.key === handledSettlementKey) {
+    if (settlementOpen.value) await refreshSettlement();
+    return;
+  }
+  // 另一局,但当前弹窗还开着 → 排队,关掉这条再弹下一条
+  if (settlementOpen.value) {
+    queuedSettlementKey = local.key;
     return;
   }
   handledSettlementKey = local.key;
+  await refreshSettlement();
+  settlementOpen.value = settlementView.value !== null;
+}
+
+/** 当前这条关掉了 → 把排着的那条弹出来。 */
+async function popQueuedSettlement(): Promise<void> {
+  const key = queuedSettlementKey;
+  if (!key) return;
+  queuedSettlementKey = '';
+  handledSettlementKey = key;
   await refreshSettlement();
   settlementOpen.value = settlementView.value !== null;
 }
@@ -173,6 +196,11 @@ async function refreshSettlement(): Promise<void> {
     console.warn('get settlement failed', e);
   }
 }
+
+// 关掉当前这条 → 把排着的那条弹出来(排着的那条是**另一局**)
+watch(settlementOpen, (open) => {
+  if (!open) void popQueuedSettlement();
+});
 
 let unsubscribeSettlement: (() => void) | null = null;
 

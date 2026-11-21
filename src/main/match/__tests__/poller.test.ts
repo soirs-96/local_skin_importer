@@ -65,7 +65,9 @@ vi.mock('../staticData', () => ({
     items: new Map(),
     runes: new Map(),
     skinsByChampion: new Map(),
-    skins: new Map()
+    skins: new Map(),
+    chromaBaseSkinIds: new Map(),
+    chromaNames: new Map()
   }))
 }));
 
@@ -379,10 +381,71 @@ describe('MatchPoller 的局末检测', () => {
     await flush();
     wsFire({ uri: '/lol-gameflow/v1/session', eventType: 'Update', data: { phase: 'None' } });
     await flush();
+    // 下一局必然经过选人和对局中 —— 没有这一步就还是刚才那一局
+    wsFire({ uri: '/lol-gameflow/v1/session', eventType: 'Update', data: { phase: 'InProgress' } });
+    await flush();
     wsFire({ uri: '/lol-gameflow/v1/session', eventType: 'Update', data: { phase: 'PreEndOfGame' } });
     await flush();
 
     expect(settlements).toHaveLength(2);
+    poller.stop();
+  });
+
+  it('阶段来回跳(PreEndOfGame → None → EndOfGame)只结算一次', async () => {
+    champSelectMock.mockResolvedValue(myChampSelect);
+    const poller = new MatchPoller();
+    const settlements: LocalSettlement[] = [];
+    poller.subscribeSettlement((s) => settlements.push(s));
+
+    poller.start();
+    await flush();
+    settlements.length = 0;
+
+    // 同一局的编号 —— 键靠它,阶段跳几次都是同一把键
+    const gameId = 401197993047;
+    for (const phase of ['PreEndOfGame', 'None', 'EndOfGame']) {
+      wsFire({
+        uri: '/lol-gameflow/v1/session',
+        eventType: 'Update',
+        data: { phase, gameData: { gameId } }
+      });
+      await flush();
+    }
+
+    expect(settlements).toHaveLength(1);
+    expect(settlements[0].key).toBe(`g${gameId}`);
+    // 第二次结算时皮肤候选已经清空 —— 跳回来不能把皮肤弄丢
+    expect(settlements[0].usedSkin.riotSkinId).toBe(161013);
+    poller.stop();
+  });
+
+  it('下一局(编号变了)会再结算一次', async () => {
+    champSelectMock.mockResolvedValue(myChampSelect);
+    const poller = new MatchPoller();
+    const settlements: LocalSettlement[] = [];
+    poller.subscribeSettlement((s) => settlements.push(s));
+
+    poller.start();
+    await flush();
+    settlements.length = 0;
+
+    const fire = async (phase: string, gameId: number): Promise<void> => {
+      wsFire({
+        uri: '/lol-gameflow/v1/session',
+        eventType: 'Update',
+        data: { phase, gameData: { gameId } }
+      });
+      await flush();
+    };
+
+    await fire('PreEndOfGame', 401197993047);
+    await fire('None', 401197993047);
+    await fire('InProgress', 401197993048);
+    await fire('PreEndOfGame', 401197993048);
+
+    expect(settlements).toHaveLength(2);
+    expect(settlements[0].key).toBe('g401197993047');
+    expect(settlements[1].key).toBe('g401197993048');
     poller.stop();
   });
 
@@ -468,8 +531,88 @@ describe('MatchPoller 的局末检测', () => {
     await flush();
 
     expect(settlements).toHaveLength(1);
+    // 认不出具体哪款皮肤 → 退到这个英雄的默认皮肤(来源标清楚,界面上会说一句)
+    expect(settlements[0].usedSkin.riotSkinId).toBe(64000);
+    expect(settlements[0].usedSkin.source).toBe('champion-default');
+    poller.stop();
+  });
+
+  it('英雄编号跟着「选中记录」走 —— 队伍里第一个人的编号可能是队友的', async () => {
+    const poller = new MatchPoller();
+    const settlements: LocalSettlement[] = [];
+    poller.subscribeSettlement((s) => settlements.push(s));
+
+    poller.start();
+    await poller.refreshNow();
+    await flush();
+    settlements.length = 0;
+
+    // 队伍条目里没有「我」(没有 teamOwner、puuid 也对不上)——
+    // 宽松值是队伍里第一个人的编号 999,那是**队友**。
+    // 真正能认出「我」的是选中记录里 puuid 对上那条:英雄 64、皮肤序号 7。
+    wsFire({
+      uri: '/lol-gameflow/v1/session',
+      eventType: 'Update',
+      data: {
+        phase: 'InProgress',
+        gameData: {
+          teamOne: [{ championId: 999, puuid: 'ally-puuid', lastSelectedSkinIndex: 0 }],
+          playerChampionSelections: [{ championId: 64, puuid: 'puuid-1', selectedSkinIndex: 7 }]
+        }
+      }
+    });
+    await flush();
+
+    wsFire({
+      uri: '/lol-gameflow/v1/session',
+      eventType: 'Update',
+      data: { phase: 'PreEndOfGame' }
+    });
+    await flush();
+
+    expect(settlements).toHaveLength(1);
+    expect(settlements[0].championId).toBe(64);
+    expect(settlements[0].championVerified).toBe(true);
+    expect(settlements[0].championName).toBe('盲僧');
+    expect(settlements[0].usedSkin.riotSkinId).toBe(64007);
+    poller.stop();
+  });
+
+  it('认不准「我」是谁 → 不写英雄名,也不拿队友的英雄去取默认皮肤', async () => {
+    const poller = new MatchPoller();
+    const settlements: LocalSettlement[] = [];
+    poller.subscribeSettlement((s) => settlements.push(s));
+
+    poller.start();
+    await flush();
+    settlements.length = 0;
+
+    // 只有队友的条目,没有「我」—— 宽松值 999 是队友的英雄。
+    wsFire({
+      uri: '/lol-gameflow/v1/session',
+      eventType: 'Update',
+      data: {
+        phase: 'InProgress',
+        gameData: {
+          teamOne: [{ championId: 999, puuid: 'ally-puuid', lastSelectedSkinIndex: 0 }]
+        }
+      }
+    });
+    await flush();
+
+    wsFire({
+      uri: '/lol-gameflow/v1/session',
+      eventType: 'Update',
+      data: { phase: 'PreEndOfGame' }
+    });
+    await flush();
+
+    expect(settlements).toHaveLength(1);
+    expect(settlements[0].championVerified).toBe(false);
+    // 认不准就不写名字 —— 写上去就是把队友的英雄摆在这一局上
+    expect(settlements[0].championName).toBe('');
+    // 也不能拿队友的英雄去取默认皮肤
     expect(settlements[0].usedSkin.riotSkinId).toBe(0);
-    expect(settlements[0].usedSkin.source).toBe(null);
     poller.stop();
   });
 

@@ -51,6 +51,8 @@ export interface UsedSkin {
     | 'gameflow-selection'
     | 'match-history'
     | 'live-client'
+    /** 没认出具体哪款皮肤,落到了这个英雄的默认皮肤 */
+    | 'champion-default'
     | null;
 }
 
@@ -83,8 +85,12 @@ export interface MatchScore {
   durationS: number;
   /** 分路;空串 = 没给 */
   lane: string;
+  /** 定位(Riot 的 role);空串 = 没给 */
+  role: string;
   /** 角色任务道具的名字(名字里写着位置,最准);空串 = 没给 */
   roleBoundItemName: string;
+  /** 地图编号;0 = 没给 —— 只有召唤师峡谷(11)才有位置可言 */
+  mapId: number;
   gameMode: string;
   queueType: string;
   championId: number;
@@ -96,9 +102,22 @@ export interface MatchScore {
  * 这一份**不碰网络** —— 皮肤名字、站内 id、现有评分都是渲染进程那边另外拉的。
  */
 export interface LocalSettlement {
-  /** 去重键:`${championId}-${riotSkinId}-${endedAt}`,同一局只弹一次 */
+  /**
+   * 去重键 —— 同一局只弹一次。
+   *
+   * 优先用这一局自己的编号(`gameData.gameId`):客户端的阶段会来回跳
+   * (PreEndOfGame → None → EndOfGame),用时间戳当键的话同一局会弹两遍。
+   * 拿不到编号时退到 `${championId}-${riotSkinId}-${endedAt}`。
+   */
   key: string;
   championId: number;
+  /**
+   * 这个英雄编号**认得准不准**。
+   *
+   * false = 只能拿到「队伍里第一个带英雄编号的人」,可能是队友 ——
+   * 这时候英雄名留空,别在标题上写别人的英雄。
+   */
+  championVerified: boolean;
   championName: string;
   usedSkin: UsedSkin;
   /** 2999 的即时战绩;null = 没取到 */
@@ -144,6 +163,8 @@ export interface MyRating {
   artwork: number;
   model: number;
   mockery: number;
+  /** 我写的评价文字;null = 没写 */
+  content: string | null;
 }
 
 /**

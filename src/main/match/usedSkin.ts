@@ -161,6 +161,13 @@ export function resolveSkinValue(
 export interface GameflowSelf {
   /** 英雄编号;0 = 没认出来 */
   championId: number;
+  /**
+   * 这个英雄编号**认得准不准**。
+   *
+   * false = 「队伍里第一个带英雄编号的人」—— 那可能是队友。
+   * 拿它当英雄名会把英雄写成队友的(实测:皮肤认的是自己,名字却写成队友的)。
+   */
+  championVerified: boolean;
   /** 皮肤数字 id(客户端直接给的时候);0 = 没有 */
   skinId: number;
   /** 皮肤序号(客户端给序号的时候);-1 = 没有 */
@@ -228,6 +235,7 @@ export function parseSkinValue(entry: Record<string, unknown>): number {
 export function parseGameflowSelf(raw: unknown, myPuuid = ''): GameflowSelf {
   const empty: GameflowSelf = {
     championId: 0,
+    championVerified: false,
     skinId: 0,
     skinIndex: -1,
     skinValue: -1,
@@ -250,6 +258,7 @@ export function parseGameflowSelf(raw: unknown, myPuuid = ''): GameflowSelf {
       if (isSelf) {
         return {
           championId: championId > 0 ? championId : looseChampionId,
+          championVerified: championId > 0,
           skinId: num(entry.skinId),
           skinIndex: parseSkinIndex(entry),
           skinValue: parseSkinValue(entry),
@@ -259,6 +268,7 @@ export function parseGameflowSelf(raw: unknown, myPuuid = ''): GameflowSelf {
       if (looseChampionId <= 0 && championId > 0) looseChampionId = championId;
     }
   }
+  // 宽松值 —— 队伍里第一个带英雄编号的人,**不保证是「我」**。
   return { ...empty, championId: looseChampionId };
 }
 

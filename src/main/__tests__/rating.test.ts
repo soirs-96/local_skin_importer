@@ -69,14 +69,30 @@ describe('fetchSkinRatingStats', () => {
 });
 
 describe('fetchMyRating', () => {
-  it('查到我打过的分', async () => {
+  it('查到我打过的分(连评价文字一起)', async () => {
     vi.mocked(axios.get).mockResolvedValue(
-      page([{ handFeel: 5, artwork: 4, model: 3, mockery: 2 }])
+      page([{ handFeel: 5, artwork: 4, model: 3, mockery: 2, content: '手感真好' }])
     );
 
     const mine = await fetchMyRating(42, 7);
 
-    expect(mine).toEqual({ handFeel: 5, artwork: 4, model: 3, mockery: 2 });
+    expect(mine).toEqual({
+      handFeel: 5,
+      artwork: 4,
+      model: 3,
+      mockery: 2,
+      content: '手感真好'
+    });
+  });
+
+  it('没写评价 → content 是 null', async () => {
+    vi.mocked(axios.get).mockResolvedValue(
+      page([{ handFeel: 5, artwork: 4, model: 3, mockery: 2, content: '' }])
+    );
+
+    const mine = await fetchMyRating(42, 7);
+
+    expect(mine?.content).toBeNull();
   });
 
   it('没打过 → null', async () => {

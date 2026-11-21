@@ -92,6 +92,13 @@ const SETTLEMENT_ENRICH_RETRY_MS = 20_000;
  * 但也别每 2 秒打一次端点。
  */
 const SETTLEMENT_SKIN_RETRY_MS = 20_000;
+/**
+ * 拿不到这一局编号时(事件流断了)判「是不是同一局」的窗口(毫秒)。
+ *
+ * 客户端的阶段会来回跳(PreEndOfGame → None → EndOfGame),
+ * 两次结算落在几十秒内 —— 同一个英雄 + 这么短的间隔 = 同一局跳回来的。
+ */
+const SETTLEMENT_FLAP_WINDOW_MS = 60_000;
 
 export function emptySnapshot(): MatchSnapshot {
   return {
@@ -139,6 +146,22 @@ export function phaseFromEvent(data: unknown): string {
 }
 
 /**
+ * 从 gameflow 事件载荷里取这一局的编号(`gameData.gameId`)。
+ *
+ * 结算的去重键靠它 —— 同一局只弹一次,不管客户端的阶段跳了几回。
+ * 没有就返回空串(调用方退到时间戳当键)。
+ */
+export function gameIdFromEvent(data: unknown): string {
+  if (typeof data !== 'object' || data === null) return '';
+  const gameData = (data as Record<string, unknown>).gameData;
+  if (typeof gameData !== 'object' || gameData === null) return '';
+  const gameId = (gameData as Record<string, unknown>).gameId;
+  if (typeof gameId === 'number' && Number.isFinite(gameId) && gameId > 0) return String(gameId);
+  if (typeof gameId === 'string' && gameId.trim() !== '') return gameId.trim();
+  return '';
+}
+
+/**
  * 从 gameflow 事件载荷里取「我」这条的英雄编号和皮肤线索。
  *
  * gameflow 用 `teamOwner: true` 标本地玩家那条 —— 这是最准的认法;
@@ -158,6 +181,14 @@ export function selfPlayerFromEvent(
   myPuuid = ''
 ): {
   championId: number;
+  championVerified: boolean;
+  /**
+   * 队伍条目里「我」那条的英雄编号。
+   *
+   * 队伍条目里的皮肤线索跟它**成对** —— 拿别的英雄编号去换算那个序号,
+   * 会算出一个不存在的皮肤 id。
+   */
+  selfChampionId: number;
   skinId: number;
   skinIndex: number;
   skinValue: number;
@@ -166,8 +197,15 @@ export function selfPlayerFromEvent(
 } {
   const self = parseGameflowSelf(data, myPuuid);
   const selection = parseGameflowSelection(data, myPuuid);
+  // 英雄编号跟皮肤**同源**:认皮肤靠 `playerChampionSelections` 里 puuid 对上那条,
+  // 英雄编号必须也从那条来 —— 拿队伍里第一个人的编号会把英雄写成队友的
+  // (实测:皮肤认的是自己,结算标题却写着队友的英雄)。
+  const fromSelection = selection.isSelf && selection.championId > 0;
+  const fromSelf = self.isSelf && self.championId > 0;
   return {
-    championId: self.championId,
+    championId: fromSelection ? selection.championId : self.championId,
+    championVerified: fromSelection || fromSelf,
+    selfChampionId: self.championId,
     skinId: self.skinId,
     skinIndex: self.skinIndex,
     skinValue: self.skinValue,
@@ -267,6 +305,47 @@ export class MatchPoller {
   private liveClientSkinName: string | null = null;
   /** 本局英雄编号(选人阶段 / gameflow 事件里记下) */
   private currentChampionId = 0;
+  /**
+   * 这个英雄编号**认得准不准**。
+   *
+   * gameflow 的队伍条目里没有 `teamOwner`,认「我」只能靠 puuid;
+   * 认不出「我」时只能拿队伍里第一个带英雄编号的人 —— 那可能是队友,
+   * 这种编号不能拿去写英雄名(会写成队友的英雄)。
+   */
+  private currentChampionVerified = false;
+  /**
+   * 认出来英雄编号时,那一局的编号(gameflow 的 `gameData.gameId`);空串 = 不知道。
+   *
+   * 用来判断「这个英雄编号是不是**当前这一局**的」——
+   * 上一局认出来的编号会一直留着,这一局认不出「我」是谁时,
+   * 拿它去写英雄名、去取默认皮肤,写上的就是上一局的英雄。
+   */
+  private championGameId = '';
+  /**
+   * 这个英雄编号是不是从**选人会话**里来的。
+   *
+   * 选人会话是本地玩家自己的会话 —— 认得准,而且就是**当前这一局**的
+   * (选人完就进这一局)。所以它不受「上一局的编号还没清」的影响。
+   */
+  private championFromChampSelect = false;
+  /**
+   * 本局的编号(gameflow 的 `gameData.gameId`)。
+   *
+   * 结算的去重键靠它 —— 客户端的阶段是会来回跳的
+   * (PreEndOfGame → None → EndOfGame),每跳一次就当「结束了一次」,
+   * 同一局会弹两遍结算。用**这一局自己的编号**当键,跳多少次都是同一把键。
+   *
+   * 故意**不清**:局末之后 gameData 里还留着上一局的编号,
+   * 留着才能认出「还是刚才那一局」。
+   */
+  private currentGameId = '';
+  /**
+   * 上一次结算之后,有没有进过「选人 / 对局中」。
+   *
+   * 用来分辨「同一局的阶段跳回来了」和「玩家又打完了一局」——
+   * 前者不该再弹一次结算。
+   */
+  private sawGamePhaseSinceSettlement = false;
   /** 局末结算 */
   private settlement: LocalSettlement | null = null;
   /** 上次尝试补 match history 的时刻 */
@@ -364,25 +443,42 @@ export class MatchPoller {
     if (event.uri.startsWith('/lol-gameflow/v1/session')) {
       const phase = phaseFromEvent(event.data);
       const self = selfPlayerFromEvent(event.data, this.myPuuid());
-      // 「空闲 / 大厅」阶段的 gameData 还是上一局的残留 —— 不收,
-      // 不然下一局没读到皮肤时会拿上一局的编号顶上。
-      const stale = phase === 'None' || phase === 'Lobby';
       // 队伍信息是不是当前这一局的 —— 大厅/选人阶段 gameData 里还是上一局的人。
       const inGame = hasCurrentGameTeams(phase);
-      if (!stale && self.championId > 0) this.currentChampionId = self.championId;
+      // 这一局自己的编号 —— 结算的去重键靠它(阶段会来回跳,别按跳的次数算「结束了几次」)
+      // ⚠️ 只在「确实在对局里」的阶段收 —— 大厅/选人阶段 gameData 还是上一局的残留,
+      //    收错了会把下一局算成上一局(键一样 → 结算被当成重复的吃掉)。
+      const gameId = gameIdFromEvent(event.data);
+      if (inGame && gameId) this.currentGameId = gameId;
+      // ⚠️ 英雄编号只在**确实在对局里**的阶段收 ——
+      // 大厅 / 空闲 / 选人这几个阶段 gameData 里还是上一局的人,
+      // 收了就等于拿上一局的英雄编号当这一局的(实测会写成队友的英雄)。
+      // 选人阶段的英雄由选人会话给(见 recordChampSelect),那才是准的。
+      if (
+        inGame &&
+        self.championId > 0 &&
+        // 认不准的编号不许覆盖已经认准的(可能是队友的)
+        (self.championVerified || !this.currentChampionVerified)
+      ) {
+        this.currentChampionId = self.championId;
+        this.currentChampionVerified = self.championVerified;
+        // 记下这是**哪一局**认出来的 —— 下一局认不出「我」时别拿它当这一局的
+        this.championGameId = gameId;
+        this.championFromChampSelect = false;
+      }
       // gameflow 里的皮肤编号 —— 选人会话之外的第二条来源
       if (inGame && self.skinId > 0) this.gameflowSkinId = self.skinId;
       // 国服客户端给的是「皮肤序号」,不是皮肤 id —— 序号跟英雄编号**成对**记着,
       // 免得下一局换了英雄却拿上一局的序号去换算出一个不存在的皮肤。
-      if (inGame && self.skinIndex >= 0 && self.championId > 0) {
+      if (inGame && self.skinIndex >= 0 && self.selfChampionId > 0) {
         this.gameflowSkinIndex = self.skinIndex;
-        this.gameflowSkinChampionId = self.championId;
+        this.gameflowSkinChampionId = self.selfChampionId;
       }
       // 国服客户端的 `selectedSkinId` —— 是 id 还是序号没实测,两个都记,
       // 结算时拿皮肤清单消歧。
-      if (inGame && self.skinValue >= 0 && self.championId > 0) {
+      if (inGame && self.skinValue >= 0 && self.selfChampionId > 0) {
         this.gameflowSkinValue = self.skinValue;
-        this.gameflowSkinChampionId = self.championId;
+        this.gameflowSkinChampionId = self.selfChampionId;
       }
       // 国服最准的一条:`playerChampionSelections` 里「我」那条的皮肤序号
       if (inGame && self.selectionSkinIndex >= 0 && self.selectionChampionId > 0) {
@@ -534,6 +630,12 @@ export class MatchPoller {
     const wasEnd = isGameEndPhase(this.phase);
     const isEnd = isGameEndPhase(phase);
     this.phase = phase;
+    // 「进了一局新的」—— 阶段跳回结束段时靠它区分「同一局跳回来了」和「又打完一局」。
+    // 客户端的阶段会来回跳(PreEndOfGame → None → EndOfGame),
+    // 真打一局必然经过选人/对局中 —— 没经过就不是新的一局。
+    if (!isEnd && (phase === 'InProgress' || phase === 'ChampSelect')) {
+      this.sawGamePhaseSinceSettlement = true;
+    }
     if (!isEnd || wasEnd) return;
     this.createSettlement();
   }
@@ -554,7 +656,46 @@ export class MatchPoller {
       liveClientSkinName: this.liveClientSkinName,
       knownSkinIds: (championId) => this.knownSkinIds(championId)
     });
-    return this.withChromaBase(resolved);
+    return this.withChampionDefault(this.withChromaBase(resolved));
+  }
+
+  /**
+   * 这个英雄编号是不是**当前这一局**的。
+   *
+   * 上一局认出来的编号会一直留着 —— 这一局认不出「我」是谁时,
+   * 拿它去写英雄名、去取默认皮肤,写上的就是**上一局的英雄**。
+   * 认不准就别用。
+   */
+  private championBelongsToCurrentGame(): boolean {
+    if (!this.currentChampionVerified) return false;
+    // 选人阶段认的 —— 就是当前这一局
+    if (this.championFromChampSelect) return true;
+    // 两边都没有编号 —— 没得比,只能信它
+    if (this.championGameId === '' || this.currentGameId === '') return true;
+    return this.championGameId === this.currentGameId;
+  }
+
+  /**
+   * 没认出具体哪款皮肤时,落到**这个英雄自己的默认皮肤**。
+   *
+   * 认不出来就什么都不给 → 玩家这一局完全没法打分。
+   * 但落到同一个英雄的默认皮肤**不会打错人**(还是这个英雄的),
+   * 玩家能接着评价 —— 分数记在默认皮肤上,界面上说明白。
+   *
+   * ⚠️ 只有英雄编号**认准了、而且是当前这一局的**才能这么退 ——
+   * 认不准的编号可能是队友的,上一局的编号可能是上一局的,
+   * 拿它去取默认皮肤就是给别人的皮肤打分。
+   */
+  private withChampionDefault(used: UsedSkin): UsedSkin {
+    if (used.riotSkinId > 0) return used;
+    if (!this.championBelongsToCurrentGame()) return used;
+    const championId = this.currentChampionId;
+    if (championId <= 0) return used;
+    // 客户端的 id 空间:英雄编号 × 1000 + 序号,序号 0 就是默认皮肤。
+    const defaultSkinId = championId * 1000;
+    const known = this.knownSkinIds(championId);
+    if (known.length > 0 && !known.includes(defaultSkinId)) return used;
+    return { ...used, riotSkinId: defaultSkinId, source: 'champion-default' };
   }
 
   /**
@@ -609,13 +750,55 @@ export class MatchPoller {
     const endedAt = Date.now();
     const live = this.lastLive;
     const usedSkin = this.resolveSettlementSkin();
+    // 认不准 / 不是当前这一局的英雄编号 —— 一律当没有。
+    const championBelongs = this.championBelongsToCurrentGame();
+    const championId = championBelongs ? this.currentChampionId : 0;
+
+    // 去重键:**这一局自己的编号**。
+    // 客户端的阶段会来回跳(PreEndOfGame → None → EndOfGame),
+    // 每跳一次都会走到这儿 —— 用时间戳当键的话同一局会弹两遍。
+    const key = this.currentGameId
+      ? `g${this.currentGameId}`
+      : `${championId}-${usedSkin.riotSkinId}-${endedAt}`;
+
+    // 同一局又跳回来了 —— **别重新生成一份**。
+    // 皮肤候选在第一次结算后已经清空,再生成一次只会把「这局用的哪款皮肤」弄丢,
+    // 界面上就变成「未识别到皮肤」。这次读到的皮肤并回原来那份就行。
+    const prev = this.settlement;
+    if (prev && prev.key === key) {
+      if (usedSkin.riotSkinId > 0 && prev.usedSkin.riotSkinId === 0) {
+        this.updateSettlement({ usedSkin });
+      }
+      this.resetSkinCandidates();
+      return;
+    }
+
+    // 拿不到这一局编号时(事件流断了)退到「同英雄 + 没进过新的一局 + 短窗口」——
+    // 阶段跳回结束段、但中间没经过选人/对局中 = 还是刚才那一局。
+    if (
+      prev &&
+      !this.currentGameId &&
+      !this.sawGamePhaseSinceSettlement &&
+      prev.championId === championId &&
+      endedAt - prev.endedAt < SETTLEMENT_FLAP_WINDOW_MS
+    ) {
+      this.resetSkinCandidates();
+      return;
+    }
 
     const settlement: LocalSettlement = {
-      key: `${this.currentChampionId}-${usedSkin.riotSkinId}-${endedAt}`,
-      championId: this.currentChampionId,
+      key,
+      // 认不准 / 不是当前这一局的英雄编号 —— 一律清掉。
+      // 留着会在结算标题上显示别人的英雄,还会拿它去取默认皮肤。
+      championId,
+      championVerified: championBelongs,
+      // 英雄名只在**英雄编号认准了**的时候写 —— 认不准的编号可能是队友的,
+      // 写上去就是在结算标题上显示别人的英雄。
       // 静态数据里的英雄名最准;它还没加载出来时才退到 Live Client 的名字
       // (局末那会儿 Live Client 给的可能是占位符,补齐段里会换成真名)。
-      championName: this.championName(this.currentChampionId) || live?.championName || '',
+      championName: championBelongs
+        ? this.championName(this.currentChampionId) || live?.championName || ''
+        : '',
       usedSkin,
       live: this.lastPlayerStats,
       match: null,
@@ -624,6 +807,7 @@ export class MatchPoller {
     this.settlement = settlement;
     this.settlementEnrichedAt = 0;
     this.settlementSkinTriedAt = 0;
+    this.sawGamePhaseSinceSettlement = false;
     this.emitSettlement(settlement);
     // 结算快照已经带走了这一局的皮肤 —— 候选作废,免得带进下一局。
     this.resetSkinCandidates();
@@ -669,7 +853,14 @@ export class MatchPoller {
    */
   private recordChampSelect(champSelect: ChampSelectSession | null): void {
     if (!champSelect) return;
-    if (champSelect.myChampionId > 0) this.currentChampionId = champSelect.myChampionId;
+    if (champSelect.myChampionId > 0) {
+      this.currentChampionId = champSelect.myChampionId;
+      // 选人会话是**本地玩家自己**的会话 —— 英雄编号认得准。
+      this.currentChampionVerified = true;
+      // 选人阶段还不知道这一局的编号 —— 空串表示「就是当前这一局」
+      this.championGameId = '';
+      this.championFromChampSelect = true;
+    }
     if (champSelect.mySkinId > 0) this.champSelectSkinId = champSelect.mySkinId;
     // 国服真正给的是 `selectedSkinId` —— 跟英雄编号成对记着,结算时消歧
     if (champSelect.mySelectedSkinId >= 0 && champSelect.myChampionId > 0) {
@@ -697,7 +888,8 @@ export class MatchPoller {
     if (!settlement) return;
 
     // 1. 英雄名 —— 静态数据里的真名
-    if (!settlement.championName && settlement.championId > 0) {
+    //    英雄编号没认准就不写 —— 认不准的编号可能是队友的。
+    if (!settlement.championName && settlement.championId > 0 && settlement.championVerified) {
       const name = staticData.champions.get(settlement.championId)?.name ?? '';
       if (name) this.updateSettlement({ championName: name });
     }
@@ -712,9 +904,21 @@ export class MatchPoller {
       this.updateSettlement({ usedSkin: withBase });
     }
 
-    // 3. 皮肤 —— 事件流没读到的话,直接问一次客户端的 gameflow
-    if (settlement.usedSkin.riotSkinId === 0) {
+    // 3. 皮肤 —— 事件流没读到的话,直接问一次客户端的 gameflow。
+    //    「只认到英雄默认皮肤」也算没读到:默认皮肤是**兜底**,不是答案。
+    const beforeSkin = this.settlement;
+    if (
+      beforeSkin &&
+      (beforeSkin.usedSkin.riotSkinId === 0 || beforeSkin.usedSkin.source === 'champion-default')
+    ) {
       await this.resolveSkinFromGameflow(client, puuid, now);
+    }
+
+    // 3.5 还是没认出来 —— 退到这个英雄的默认皮肤(这一局总得能打分)
+    const afterSkin = this.settlement;
+    if (afterSkin && afterSkin.usedSkin.riotSkinId === 0) {
+      const fallback = this.withChampionDefault(afterSkin.usedSkin);
+      if (fallback.riotSkinId > 0) this.updateSettlement({ usedSkin: fallback });
     }
 
     // 3. match history 的战绩

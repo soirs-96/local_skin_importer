@@ -24,6 +24,7 @@ const userIdMock = vi.mocked(getStoredUserId);
 const local: LocalSettlement = {
   key: '64-161013-1',
   championId: 64,
+  championVerified: true,
   championName: '阿狸',
   usedSkin: { riotSkinId: 161013, displayName: null, source: 'champ-select' },
   live: null,
@@ -59,7 +60,13 @@ beforeEach(() => {
     avgModel: 8,
     avgMockery: 8
   });
-  myRatingMock.mockResolvedValue({ handFeel: 5, artwork: 4, model: 3, mockery: 2 });
+  myRatingMock.mockResolvedValue({
+    handFeel: 5,
+    artwork: 4,
+    model: 3,
+    mockery: 2,
+    content: '手感真好'
+  });
 });
 
 describe('buildSettlementView', () => {
@@ -68,7 +75,13 @@ describe('buildSettlementView', () => {
 
     expect(view.skin?.id).toBe(42);
     expect(view.stats?.totalCount).toBe(3);
-    expect(view.myRating).toEqual({ handFeel: 5, artwork: 4, model: 3, mockery: 2 });
+    expect(view.myRating).toEqual({
+      handFeel: 5,
+      artwork: 4,
+      model: 3,
+      mockery: 2,
+      content: '手感真好'
+    });
     expect(view.loggedIn).toBe(true);
   });
 
@@ -98,6 +111,44 @@ describe('buildSettlementView', () => {
 
     expect(view.stats).toBeNull();
     expect(view.skin?.id).toBe(42);
+  });
+
+  it('认出来的是炫彩 → 站内没有这条炫彩,退到底图那款皮肤', async () => {
+    catalogMock.mockImplementation(async (riotSkinId: number) => {
+      // 站内目录里没有炫彩
+      if (riotSkinId === 200009) return null;
+      return {
+        id: 43,
+        skinId: 200001,
+        heroId: 200,
+        heroName: '卑尔维斯',
+        name: '战场BOSS 卑尔维斯',
+        nameEn: null,
+        rarity: '传说',
+        priceRp: 1350,
+        splashUrl: 'https://x/base.jpg',
+        iconUrl: 'https://x/base-i.jpg'
+      };
+    });
+
+    const chroma: LocalSettlement = {
+      ...local,
+      usedSkin: {
+        riotSkinId: 200009,
+        displayName: null,
+        source: 'gameflow-selection',
+        baseRiotSkinId: 200001,
+        chromaName: '战场BOSS 卑尔维斯 拒绝之尾'
+      }
+    };
+
+    const view = await buildSettlementView(chroma);
+
+    // 打分对象是底图那款(站内目录里没有炫彩)
+    expect(view.skin?.skinId).toBe(200001);
+    expect(view.skin?.name).toBe('战场BOSS 卑尔维斯');
+    // 炫彩名留着 —— 界面上另起一行显示
+    expect(view.usedSkin.chromaName).toBe('战场BOSS 卑尔维斯 拒绝之尾');
   });
 
   it('没认到皮肤 → 不去查目录', async () => {

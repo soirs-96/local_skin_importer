@@ -27,6 +27,15 @@ function str(v: unknown): string {
   return typeof v === 'string' ? v : '';
 }
 
+/**
+ * 客户端在「这一项没有值」时给的是字符串 `"NONE"` —— 当成没有。
+ *
+ * 原样透出去,界面上就是一个刺眼的「NONE」。
+ */
+function noneToEmpty(value: string): string {
+  return value.trim().toUpperCase() === 'NONE' ? '' : value;
+}
+
 function num(v: unknown): number {
   if (typeof v === 'number' && Number.isFinite(v)) return v;
   // 有的数据源把编号给成字符串 —— 认得出来就用,认不出来当没有。
@@ -197,8 +206,8 @@ export function parseMatchEntry(
     mapId: pickNum(raw, ['mapId', 'gameMetadata.mapId']),
     queueId: pickNum(raw, ['queueId', 'gameMetadata.queueId']),
     queueType: pickStr(raw, ['queueType', 'gameMetadata.queueType']),
-    lane: str(timeline.lane) || str(stats.lane),
-    role: str(timeline.role) || str(stats.role),
+    lane: noneToEmpty(str(timeline.lane) || str(stats.lane)),
+    role: noneToEmpty(str(timeline.role) || str(stats.role)),
     // 角色任务道具:名字里写着位置,是唯一不会写错的位置来源。
     roleBoundItemName: roleBoundItemName(stats, staticData),
     kills,
@@ -305,7 +314,9 @@ export function toMatchScore(match: RecentMatch): MatchScore {
     minionKills: match.minionKills,
     durationS: match.durationS,
     lane: match.lane,
+    role: match.role,
     roleBoundItemName: match.roleBoundItemName ?? '',
+    mapId: match.mapId,
     gameMode: match.gameMode,
     queueType: match.queueType,
     championId: match.championId
