@@ -29,6 +29,7 @@
         <div class="skin-meta">
           <span class="skin-name">{{ skinName }}</span>
           <span v-if="rarity" class="skin-rarity">{{ rarity }}</span>
+          <span v-if="chromaNote" class="skin-chroma">{{ chromaNote }}</span>
           <span v-if="!view.usedSkin.riotSkinId" class="skin-unknown">
             未识别到具体皮肤 —— 这一局用的哪款皮肤没读出来
           </span>
@@ -166,9 +167,28 @@ function prettySkinName(raw: string): string {
   return short || raw;
 }
 
+/**
+ * 客户端给的炫彩名(「战场BOSS 卑尔维斯 拒绝之尾」);没有 = 不是炫彩。
+ *
+ * 炫彩名自带底图皮肤名 —— 显示它,不然玩家看到的是自己**没用过**的那款。
+ */
+const chromaName = computed<string>(() => props.view?.usedSkin.chromaName ?? '');
+
+/** 炫彩提示:底下垫一句「炫彩」和底图是哪款。 */
+const chromaNote = computed<string>(() => {
+  const view = props.view;
+  if (!chromaName.value) return '';
+  const baseName = view?.skin?.name;
+  if (baseName && baseName !== chromaName.value) {
+    return `炫彩 · 底图「${baseName}」`;
+  }
+  return '炫彩';
+});
+
 const skinName = computed<string>(() => {
   const view = props.view;
   const skin = view?.skin;
+  if (chromaName.value) return chromaName.value;
   if (skin?.name) return skin.name;
   if (skin?.nameEn) return skin.nameEn;
   // 站内目录里没有这条皮肤,但本地读到了皮肤名 —— 总比一句「未知皮肤」强
@@ -356,6 +376,11 @@ async function onSubmit(): Promise<void> {
 .skin-rarity {
   font-size: 11px;
   color: var(--hx-text-dim);
+}
+.skin-chroma {
+  font-size: 11px;
+  color: var(--hx-blue);
+  letter-spacing: 0.04em;
 }
 .skin-unknown {
   font-size: 11px;

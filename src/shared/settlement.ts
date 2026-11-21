@@ -11,20 +11,36 @@ export const SETTLEMENT_CHANNEL = 'match:settlement';
 /**
  * 「我这局用的皮肤」。
  *
- * 四条来源,可靠度依次降级(见 src/main/match/usedSkin.ts):
+ * 五条来源,可靠度依次降级(见 src/main/match/usedSkin.ts):
  *   1. 选人会话 —— 数字 skinId,最准(但选人会话只在选人阶段存在)
- *   2. gameflow 的队伍条目 —— 一直活到局末。
- *      国际服客户端直接给数字 skinId;**国服客户端给的是皮肤序号**
- *      (`lastSelectedSkinIndex`)和 `selectedSkinId`,要按
- *      `英雄编号 × 1000 + 序号` 换算,并拿客户端的皮肤清单校验。
- *   3. match history 的 participant —— 局后可用(国服实测**没有**皮肤字段)
- *   4. Live Client 的 allPlayers[].skin —— 只有英文资源名,拿不到数字 id
+ *   2. gameflow 的 `playerChampionSelections` —— **国服最准的一条**
+ *      (每条选中都带 `selectedSkinIndex`,局末还读得到)
+ *   3. gameflow 的队伍条目 —— 一直活到局末。
+ *      国际服客户端直接给数字 skinId;国服队伍条目里的
+ *      `lastSelectedSkinIndex` 恒为 0,**不能采信**(会把默认皮肤当成本局用的皮肤)
+ *   4. match history 的 participant —— 局后可用(国服实测**没有**皮肤字段)
+ *   5. Live Client 的 allPlayers[].skin —— 只有英文资源名,拿不到数字 id
  */
 export interface UsedSkin {
   /** 游戏内皮肤 id(= LCU itemId);0 = 没认出来 */
   riotSkinId: number;
   /** 只认到名字时的兜底(英文资源名);null = 没有 */
   displayName: string | null;
+  /**
+   * 认出来的是**炫彩**时,它的底图皮肤 id(= 英雄编号 × 1000 + 底图序号);
+   * null / 没有 = 不是炫彩。
+   *
+   * 炫彩没有自己的立绘,游戏里显示的是底图那张图调了色 ——
+   * 站内目录里查不到这条炫彩时,要退到底图那款皮肤(打分的对象是它)。
+   */
+  baseRiotSkinId?: number | null;
+  /**
+   * 认出来的是**炫彩**时,客户端给的那个中文名
+   * (如「战场BOSS 卑尔维斯 拒绝之尾」);null / 没有 = 不是炫彩。
+   *
+   * 炫彩名自带底图皮肤名 —— 界面上显示它,底下再标「炫彩」。
+   */
+  chromaName?: string | null;
   /** 认皮肤认到哪儿了;null = 一条都没认到 */
   source:
     | 'champ-select'
@@ -32,6 +48,7 @@ export interface UsedSkin {
     | 'gameflow'
     | 'gameflow-index'
     | 'gameflow-value'
+    | 'gameflow-selection'
     | 'match-history'
     | 'live-client'
     | null;

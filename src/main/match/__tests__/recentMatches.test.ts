@@ -18,7 +18,9 @@ const staticData: StaticData = {
   ]),
   runes: new Map(),
   skinsByChampion: new Map(),
-  skins: new Map()
+  skins: new Map(),
+  chromaBaseSkinIds: new Map(),
+  chromaNames: new Map()
 };
 
 describe('extractGames', () => {

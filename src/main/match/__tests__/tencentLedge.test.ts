@@ -21,7 +21,9 @@ const staticData: StaticData = {
   ]),
   runes: new Map(),
   skinsByChampion: new Map(),
-  skins: new Map()
+  skins: new Map(),
+  chromaBaseSkinIds: new Map(),
+  chromaNames: new Map()
 };
 
 function participant(overrides: Record<string, unknown> = {}): Record<string, unknown> {
@@ -110,7 +112,9 @@ describe('parseLedgeGame', () => {
       items: new Map(),
       runes: new Map(),
       skinsByChampion: new Map(),
-      skins: new Map()
+      skins: new Map(),
+      chromaBaseSkinIds: new Map(),
+      chromaNames: new Map()
     };
     const parsed = parseLedgeGame(game([participant()]), ME, empty);
     expect(parsed?.championName).toBe('MissFortune');

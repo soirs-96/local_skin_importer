@@ -7,7 +7,7 @@ import { findJustFinishedMatch, getRecentMatches, toMatchScore } from './recentM
 import { getChampionMastery } from './mastery';
 import { getMatchSummoner } from './summoner';
 import { getGameflowPhase, getGameflowSession, getOpponents } from './opponents';
-import { parseGameflowSelf, resolveUsedSkin } from './usedSkin';
+import { parseGameflowSelection, parseGameflowSelf, resolveUsedSkin } from './usedSkin';
 import { failedLookup, lookupPlayer as lookupPlayerByQuery } from './playerLookup';
 import { fetchPlayerGames as fetchPlayerGamesFromLedge } from './tencentLedge';
 import { championIndexEntries, emptyStaticData, loadStaticData, type StaticData } from './staticData';
@@ -156,13 +156,23 @@ export function phaseFromEvent(data: unknown): string {
 export function selfPlayerFromEvent(
   data: unknown,
   myPuuid = ''
-): { championId: number; skinId: number; skinIndex: number; skinValue: number } {
+): {
+  championId: number;
+  skinId: number;
+  skinIndex: number;
+  skinValue: number;
+  selectionSkinIndex: number;
+  selectionChampionId: number;
+} {
   const self = parseGameflowSelf(data, myPuuid);
+  const selection = parseGameflowSelection(data, myPuuid);
   return {
     championId: self.championId,
     skinId: self.skinId,
     skinIndex: self.skinIndex,
-    skinValue: self.skinValue
+    skinValue: self.skinValue,
+    selectionSkinIndex: selection.skinIndex,
+    selectionChampionId: selection.championId
   };
 }
 
@@ -244,6 +254,16 @@ export class MatchPoller {
    * -1 = 没读到。结算时拿皮肤清单消歧(见 usedSkin.ts 的 resolveSkinValue)。
    */
   private gameflowSkinValue = -1;
+  /**
+   * 国服 gameflow 的 `playerChampionSelections` 里「我」那条的皮肤序号。
+   *
+   * **国服最准的一条**(实测 10 个玩家全都有值,局末还读得到);
+   * 队伍条目里的 `lastSelectedSkinIndex` 恒为 0,不能采信 ——
+   * 采信它会把「默认皮肤」当成本局用的皮肤。
+   */
+  private gameflowSelectionSkinIndex = -1;
+  /** 上面那个序号所属的英雄编号 —— 换算皮肤 id 要用,必须成对 */
+  private gameflowSelectionChampionId = 0;
   private liveClientSkinName: string | null = null;
   /** 本局英雄编号(选人阶段 / gameflow 事件里记下) */
   private currentChampionId = 0;
@@ -363,6 +383,11 @@ export class MatchPoller {
       if (inGame && self.skinValue >= 0 && self.championId > 0) {
         this.gameflowSkinValue = self.skinValue;
         this.gameflowSkinChampionId = self.championId;
+      }
+      // 国服最准的一条:`playerChampionSelections` 里「我」那条的皮肤序号
+      if (inGame && self.selectionSkinIndex >= 0 && self.selectionChampionId > 0) {
+        this.gameflowSelectionSkinIndex = self.selectionSkinIndex;
+        this.gameflowSelectionChampionId = self.selectionChampionId;
       }
       if (phase) this.onPhaseChange(phase);
     }
@@ -515,7 +540,7 @@ export class MatchPoller {
 
   /** 四条候选合成一个结论 —— 优先级在 `usedSkin.ts` 里定死。 */
   private resolveSettlementSkin(): UsedSkin {
-    return resolveUsedSkin({
+    const resolved = resolveUsedSkin({
       champSelectSkinId: this.champSelectSkinId,
       champSelectSkinValue: this.champSelectSkinValue >= 0 ? this.champSelectSkinValue : null,
       champSelectChampionId: this.champSelectSkinChampionId,
@@ -523,9 +548,29 @@ export class MatchPoller {
       gameflowSkinIndex: this.gameflowSkinIndex,
       gameflowSkinValue: this.gameflowSkinValue >= 0 ? this.gameflowSkinValue : null,
       gameflowChampionId: this.gameflowSkinChampionId,
+      gameflowSelectionSkinIndex:
+        this.gameflowSelectionSkinIndex >= 0 ? this.gameflowSelectionSkinIndex : null,
+      gameflowSelectionChampionId: this.gameflowSelectionChampionId,
       liveClientSkinName: this.liveClientSkinName,
       knownSkinIds: (championId) => this.knownSkinIds(championId)
     });
+    return this.withChromaBase(resolved);
+  }
+
+  /**
+   * 认出来的是**炫彩**时,补上它底图皮肤 id。
+   *
+   * 客户端把炫彩和普通皮肤排在同一个 id 空间里 —— 认到的 id 可能是炫彩
+   * (国服实测序号 9 → 200009 =「战场BOSS 卑尔维斯 拒绝之尾」)。
+   * 炫彩没有自己的立绘,游戏里显示的是底图那张图调了色,
+   * 站内查不到这条炫彩时要退到底图那款皮肤。
+   */
+  private withChromaBase(used: UsedSkin): UsedSkin {
+    if (!used.riotSkinId) return used;
+    const base = this.staticData?.chromaBaseSkinIds.get(used.riotSkinId);
+    if (!base) return used;
+    const chromaName = this.staticData?.chromaNames.get(used.riotSkinId) ?? null;
+    return { ...used, baseRiotSkinId: base, chromaName };
   }
 
   /**
@@ -593,6 +638,8 @@ export class MatchPoller {
     this.gameflowSkinIndex = -1;
     this.gameflowSkinChampionId = 0;
     this.gameflowSkinValue = -1;
+    this.gameflowSelectionSkinIndex = -1;
+    this.gameflowSelectionChampionId = 0;
     this.liveClientSkinName = null;
   }
 
@@ -655,7 +702,17 @@ export class MatchPoller {
       if (name) this.updateSettlement({ championName: name });
     }
 
-    // 2. 皮肤 —— 事件流没读到的话,直接问一次客户端的 gameflow
+    // 2. 炫彩的底图 —— 静态数据可能这会儿才加载好(游戏中途才打开应用),
+    //    结算那一刻认皮肤的时候还拿不到「炫彩 → 底图」的映射,这里补一次。
+    const withBase = this.withChromaBase(settlement.usedSkin);
+    if (
+      withBase.baseRiotSkinId !== settlement.usedSkin.baseRiotSkinId ||
+      withBase.chromaName !== settlement.usedSkin.chromaName
+    ) {
+      this.updateSettlement({ usedSkin: withBase });
+    }
+
+    // 3. 皮肤 —— 事件流没读到的话,直接问一次客户端的 gameflow
     if (settlement.usedSkin.riotSkinId === 0) {
       await this.resolveSkinFromGameflow(client, puuid, now);
     }
@@ -715,7 +772,8 @@ export class MatchPoller {
     const raw = await getGameflowSession(client);
     if (!raw) return;
     const self = parseGameflowSelf(raw, puuid);
-    if (!self.isSelf) return;
+    const selection = parseGameflowSelection(raw, puuid);
+    if (!self.isSelf && !selection.isSelf) return;
     const settlement = this.settlement;
     if (!settlement) return;
     const resolved = resolveUsedSkin({
@@ -723,13 +781,15 @@ export class MatchPoller {
       gameflowSkinIndex: self.skinIndex,
       gameflowSkinValue: self.skinValue,
       gameflowChampionId: self.championId,
+      gameflowSelectionSkinIndex: selection.skinIndex,
+      gameflowSelectionChampionId: selection.championId,
       liveClientSkinName: settlement.usedSkin.displayName,
       knownSkinIds: (championId) => this.knownSkinIds(championId)
     });
     if (resolved.riotSkinId === 0) return;
     this.updateSettlement({
       usedSkin: {
-        ...resolved,
+        ...this.withChromaBase(resolved),
         displayName: resolved.displayName ?? settlement.usedSkin.displayName
       }
     });

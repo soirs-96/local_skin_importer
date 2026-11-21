@@ -66,6 +66,20 @@ export interface StaticData {
   skinsByChampion: Map<number, number[]>;
   /** 皮肤 id → 那款皮肤(目录条目:中文名 + 美术资源路径)。 */
   skins: Map<number, SkinInfo>;
+  /**
+   * 炫彩 id → 它所属的普通皮肤 id。
+   *
+   * 客户端把炫彩和普通皮肤放在同一个 id 空间里:英雄编号 × 1000 + 序号,
+   * 序号从 0 连续排到 K,普通皮肤和炫彩交替占位。
+   */
+  chromaBaseSkinIds: Map<number, number>;
+  /**
+   * 炫彩 id → 它的中文名(如「战场BOSS 卑尔维斯 拒绝之尾」)。
+   *
+   * 炫彩的名字自带底图皮肤名(客户端就是这么给的),所以界面上直接显示它,
+   * 底下再标一句「炫彩」—— 只显示底图名字的话,玩家看到的是自己没用过的那款。
+   */
+  chromaNames: Map<number, string>;
 }
 
 /** 客户端 `skins.json` 里的一条皮肤。 */
@@ -374,7 +388,9 @@ export function emptyStaticData(): StaticData {
     items: new Map(),
     runes: new Map(),
     skinsByChampion: new Map(),
-    skins: new Map()
+    skins: new Map(),
+    chromaBaseSkinIds: new Map(),
+    chromaNames: new Map()
   };
 }
 
@@ -404,9 +420,13 @@ export function emptyStaticData(): StaticData {
 export function parseLcuSkins(raw: unknown): {
   byChampion: Map<number, number[]>;
   infos: Map<number, SkinInfo>;
+  chromaBaseSkinIds: Map<number, number>;
+  chromaNames: Map<number, string>;
 } {
   const byChampion = new Map<number, number[]>();
   const infos = new Map<number, SkinInfo>();
+  const chromaBaseSkinIds = new Map<number, number>();
+  const chromaNames = new Map<number, string>();
 
   const entries: Record<string, unknown>[] = [];
   if (Array.isArray(raw)) {
@@ -419,41 +439,63 @@ export function parseLcuSkins(raw: unknown): {
     }
   }
 
+  // 先按英雄归堆 —— 炫彩要知道自己属于哪款底图,得看它前面的普通皮肤
+  const perChampion = new Map<number, { id: number; entry: Record<string, unknown> }[]>();
   for (const entry of entries) {
     const id = num(entry.id);
     if (id <= 0) continue;
-    // 只有英雄皮肤才收 —— 客户端数据里还混着别的分类
-    const classification = str(entry.skinClassification);
-    if (classification && classification !== 'kChampion') continue;
-
     const championId = Math.floor(id / 1000);
-    const index = id % 1000;
     if (championId <= 0) continue;
-
-    const splashPath = str(entry.splashPath) || null;
-    // splash 文件名末尾的 `_N` 应当就是序号 —— 对不上说明这份数据不守
-    // 「皮肤 id = 英雄编号 × 1000 + 序号」,这条皮肤干脆别收
-    // (收了会让换算把皮肤认到别的英雄头上)。
-    const suffix = splashPath ? /_(\d+)\.jpg$/i.exec(splashPath) : null;
-    if (suffix && Number(suffix[1]) !== index) continue;
-
-    infos.set(id, {
-      id,
-      index,
-      championId,
-      name: str(entry.name),
-      splashPath,
-      uncenteredSplashPath: str(entry.uncenteredSplashPath) || null,
-      loadScreenPath: str(entry.loadScreenPath) || null
-    });
-
-    const list = byChampion.get(championId) ?? [];
-    list.push(id);
-    byChampion.set(championId, list);
+    const list = perChampion.get(championId) ?? [];
+    list.push({ id, entry });
+    perChampion.set(championId, list);
   }
 
-  for (const list of byChampion.values()) list.sort((a, b) => a - b);
-  return { byChampion, infos };
+  for (const [championId, list] of perChampion) {
+    list.sort((a, b) => a.id - b.id);
+    const ids: number[] = [];
+    let lastChampionSkinId = 0;
+    for (const { id, entry } of list) {
+      // 英雄皮肤和炫彩都收 —— 客户端数据里还混着地图皮肤等别的分类
+      const classification = str(entry.skinClassification);
+      if (classification && classification !== 'kChampion' && classification !== 'kRecolor') {
+        continue;
+      }
+      const index = id % 1000;
+      ids.push(id);
+
+      if (classification === 'kRecolor') {
+        // 炫彩没有自己的立绘,游戏里显示的是底图皮肤那张图调了色
+        if (lastChampionSkinId > 0) chromaBaseSkinIds.set(id, lastChampionSkinId);
+        const chromaName = str(entry.name);
+        if (chromaName) chromaNames.set(id, chromaName);
+        continue;
+      }
+
+      lastChampionSkinId = id;
+      const splashPath = str(entry.splashPath) || null;
+      // splash 文件名末尾的 `_N` 应当就是序号 —— 对不上说明这份数据不守
+      // 「皮肤 id = 英雄编号 × 1000 + 序号」,这条皮肤的图不能用,别收进目录。
+      // ⚠️ 但**仍要留在 id 空间里**:少一条就会让「序号 → 位置」的换算整体错位,
+      // 认到别的皮肤上 —— 那比认不出来糟糕得多。
+      const suffix = splashPath ? /_(\d+)\.jpg$/i.exec(splashPath) : null;
+      if (suffix && Number(suffix[1]) !== index) continue;
+
+      infos.set(id, {
+        id,
+        index,
+        championId,
+        name: str(entry.name),
+        splashPath,
+        uncenteredSplashPath: str(entry.uncenteredSplashPath) || null,
+        loadScreenPath: str(entry.loadScreenPath) || null
+      });
+    }
+    // 这个英雄一条皮肤都没收到(整组都是别的分类)→ 不占位
+    if (ids.length > 0) byChampion.set(championId, ids);
+  }
+
+  return { byChampion, infos, chromaBaseSkinIds, chromaNames };
 }
 
 /**
@@ -506,7 +548,16 @@ async function loadDdragonVersion(version: string): Promise<StaticData | null> {
   }
 
   // Data Dragon 不给皮肤目录 —— 皮肤对照表只有 LCU 那份有。
-  return { version, champions, items, runes, skinsByChampion: new Map(), skins: new Map() };
+  return {
+    version,
+    champions,
+    items,
+    runes,
+    skinsByChampion: new Map(),
+    skins: new Map(),
+    chromaBaseSkinIds: new Map(),
+    chromaNames: new Map()
+  };
 }
 
 /** LCU 一路:本机回环,每个文件各自独立。 */
@@ -536,6 +587,8 @@ async function loadFromLcu(client: AxiosInstance): Promise<StaticData> {
     const parsed = parseLcuSkins(skinsRaw);
     out.skinsByChampion = parsed.byChampion;
     out.skins = parsed.infos;
+    out.chromaBaseSkinIds = parsed.chromaBaseSkinIds;
+    out.chromaNames = parsed.chromaNames;
   }
 
   return out;
@@ -581,8 +634,19 @@ function mergeStaticData(primary: StaticData, fallback: StaticData): StaticData 
   // 皮肤目录只有 LCU 那份有(Data Dragon 不给)—— 直接用兜底那份。
   const skinsByChampion = new Map(fallback.skinsByChampion);
   const skins = new Map(fallback.skins);
+  const chromaBaseSkinIds = new Map(fallback.chromaBaseSkinIds);
+  const chromaNames = new Map(fallback.chromaNames);
 
-  return { version: primary.version, champions, items, runes, skinsByChampion, skins };
+  return {
+    version: primary.version,
+    champions,
+    items,
+    runes,
+    skinsByChampion,
+    skins,
+    chromaBaseSkinIds,
+    chromaNames
+  };
 }
 
 /**

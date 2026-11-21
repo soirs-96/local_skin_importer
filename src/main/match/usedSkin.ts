@@ -1,7 +1,7 @@
 /**
  * 「我这局用的皮肤」的认法 —— **纯解析,不发任何请求**。
  *
- * 四条来源,可靠度依次降级:
+ * 五条来源,可靠度依次降级:
  *
  *   1. 选人会话(`/lol-champ-select/v1/session`)本地玩家那条的皮肤字段
  *      —— 国际服给 `skinId`;**国服实测没有 `skinId`,给的是 `selectedSkinId`**
@@ -9,12 +9,18 @@
  *      选人会话只在选人阶段存在,局末已经 404,
  *      所以**必须在选人阶段就记下来**(提取在 `champSelect.ts`,认本地玩家那条的
  *      逻辑也在那儿 —— 这里只管「几条来源里挑哪一条」)。
- *   2. gameflow(`/lol-gameflow/v1/session`)队伍条目里的皮肤
- *      —— **国际服客户端给 `skinId`(数字 id);国服客户端不给数字 id,给的是
- *      `lastSelectedSkinIndex`(皮肤序号)**,靠 {@link resolveSkinIndex} 换算。
- *      这一条**一直活到局末**,是国服上最靠得住的来源。
- *   3. match history 的 participant —— 局后可用(国服实测**没有** skin 字段)。
- *   4. Live Client `/liveclientdata/allgamedata` 的 `allPlayers[].skin`
+ *   2. gameflow(`/lol-gameflow/v1/session`)的
+ *      `gameData.playerChampionSelections` —— **国服最靠得住的一条**
+ *      (国服实测,2026-11-21):每条选中都带 `championId` 和 `selectedSkinIndex`,
+ *      10 个玩家全都有值,局末(`phase=EndOfGame`)还读得到。
+ *      「我」靠 puuid 认(这个数组里没有 `teamOwner` 标记)。
+ *   3. gameflow 的队伍条目(`gameData.teamOne/teamTwo`)里的皮肤
+ *      —— **国际服客户端给 `skinId`(数字 id)**;
+ *      **国服队伍条目里的 `lastSelectedSkinIndex` 恒为 0**(实测 10 人全是 0),
+ *      跟实际用了哪款皮肤无关 —— 采信它会把「默认皮肤」当成「本局用的皮肤」,
+ *      所以**不采信**(见 {@link parseSkinIndex})。
+ *   4. match history 的 participant —— 局后可用(国服实测**没有** skin 字段)。
+ *   5. Live Client `/liveclientdata/allgamedata` 的 `allPlayers[].skin`
  *      —— 只给英文资源名(如 `game_character_displayname_Ahri_Snow_Dawn`),
  *      拿不到数字 id,对不上站内的中文名。所以它只能当「认出了名字」用
  *      (提取在 `liveClient.ts`)。
@@ -25,6 +31,12 @@
  * 里面每个英雄有哪些皮肤一目了然(见 `staticData.ts` 的 `skinsByChampion`)。
  * 换算结果不在清单里 → 认不出来,而不是硬报一个可能存在的皮肤。
  * 认错皮肤 = 给别人的皮肤打分,比认不出来糟糕得多。
+ *
+ * ⚠️ **皮肤 id 空间里混着炫彩**:客户端把炫彩和普通皮肤排在同一个 id 空间里
+ * (英雄编号 × 1000 + 序号,序号连续,普通皮肤和炫彩交替占位)。
+ * 国服实测序号 9 → id 200009 = 「战场BOSS 卑尔维斯 拒绝之尾」,**是炫彩**。
+ * 炫彩没有自己的立绘,用的是底图皮肤那张图调了色 —— 落回站内目录时
+ * 要用炫彩→底图的映射(见 `staticData.ts` 的 `chromaBaseSkinIds`)。
  */
 
 import type { UsedSkin } from '../../shared/settlement';
@@ -46,6 +58,22 @@ function num(v: unknown): number {
 
 function str(v: unknown): string {
   return typeof v === 'string' ? v : '';
+}
+
+/**
+ * 皮肤序号字段的值:**缺字段 = -1**。
+ *
+ * 0 是有意义的值(序号 0 = 默认皮肤),所以「没给」和「给了 0」必须分得开 ——
+ * 混了就会把「没给」当成「用的默认皮肤」。
+ */
+function parseSelectedIndex(entry: Record<string, unknown>): number {
+  const raw = entry.selectedSkinIndex;
+  if (typeof raw === 'number' && Number.isInteger(raw) && raw >= 0) return raw;
+  if (typeof raw === 'string' && raw.trim() !== '') {
+    const parsed = Number(raw);
+    if (Number.isInteger(parsed) && parsed >= 0) return parsed;
+  }
+  return -1;
 }
 
 /**
@@ -80,6 +108,9 @@ export function parseMatchHistorySkinId(participant: unknown): number | null {
  *
  * 两种都算,取**清单里真有的**那个。清单里一个都没有 → 返回 0(**认不出来**),
  * 绝不硬算一个 id 上去:认错皮肤比认不出来糟糕得多(那是给别人的皮肤打分)。
+ *
+ * ⚠️ 清单里**含炫彩**(国服实测)—— 序号落在炫彩上也是合法的,那是玩家
+ * 真的用了那款炫彩。
  */
 export function resolveSkinIndex(
   championId: number,
@@ -147,13 +178,17 @@ export interface GameflowSelf {
 /**
  * 队伍条目里的皮肤序号。
  *
- * 国服客户端给的是 `lastSelectedSkinIndex`(选人时选中的第几个皮肤);
- * 国际服直接给数字 `skinId`,压根不用序号。
+ * ⚠️ **`lastSelectedSkinIndex` 不采信** —— 国服实测它对 10 个玩家**全是 0**,
+ * 跟谁实际用了哪款皮肤无关(真正有值的是 `gameData.playerChampionSelections`
+ * 里那条 `selectedSkinIndex`,见 {@link parseGameflowSelection})。
+ * 采信它会把「默认皮肤」当成「本局用的皮肤」—— 认错皮肤比认不出来糟糕得多。
+ *
+ * 国际服客户端直接给数字 `skinId`,压根不用序号。
  *
  * 空串**不算**序号 0 —— 字段缺就是缺,不能当成「默认皮肤」。
  */
 export function parseSkinIndex(entry: Record<string, unknown>): number {
-  for (const key of ['lastSelectedSkinIndex', 'selectedSkinIndex', 'skinIndex']) {
+  for (const key of ['selectedSkinIndex', 'skinIndex']) {
     const raw = entry[key];
     if (typeof raw === 'number' && Number.isInteger(raw) && raw >= 0) return raw;
     if (typeof raw === 'string' && raw.trim() !== '') {
@@ -165,7 +200,7 @@ export function parseSkinIndex(entry: Record<string, unknown>): number {
 }
 
 /**
- * 「皮肤线索」的值:**缺字段 = -1**。
+ * 队伍条目里的「皮肤线索」值:**缺字段 = -1**。
  *
  * 0 是有意义的值(皮肤序号 0 = 默认皮肤),所以「没给」和「给了 0」必须分得开 ——
  * 混了就会把「没给」当成「用的默认皮肤」。
@@ -228,9 +263,52 @@ export function parseGameflowSelf(raw: unknown, myPuuid = ''): GameflowSelf {
 }
 
 /**
- * 四条来源合成一个结论。
+ * gameflow 的 `gameData.playerChampionSelections` 里「我」那条。
  *
- * 优先级:选人会话 > gameflow(`selectedSkinId`)> gameflow(序号换算)
+ * **这是国服最靠得住的皮肤来源**(国服实测,2026-11-21):
+ * 每条选中都带 `championId` 和 `selectedSkinIndex`,10 个玩家全都有值,
+ * 局末(`phase=EndOfGame`)还读得到。
+ * 皮肤 id = 英雄编号 × 1000 + 序号(客户端的 id 空间里普通皮肤和炫彩
+ * 交替占位、序号连续,所以这个换算是无歧义的)。
+ *
+ * 「我」靠 **puuid** 认 —— 这个数组里没有 `teamOwner` 标记。
+ * 没有 puuid 就认不出「我」,宁可不认:认错人就是给队友的皮肤打分。
+ */
+export interface GameflowSelection {
+  /** 英雄编号;0 = 没认出来 */
+  championId: number;
+  /** 皮肤序号(换算成 id 要乘 1000);-1 = 没给 */
+  skinIndex: number;
+  /** 有没有**严认**出「我」这条 */
+  isSelf: boolean;
+}
+
+export function parseGameflowSelection(raw: unknown, myPuuid = ''): GameflowSelection {
+  const empty: GameflowSelection = { championId: 0, skinIndex: -1, isSelf: false };
+  if (!isRecord(raw)) return empty;
+  if (!myPuuid) return empty;
+  const gameData = raw.gameData;
+  if (!isRecord(gameData)) return empty;
+  const selections = (gameData as Record<string, unknown>).playerChampionSelections;
+  if (!Array.isArray(selections)) return empty;
+
+  for (const entry of selections) {
+    if (!isRecord(entry)) continue;
+    if (str(entry.puuid) !== myPuuid) continue;
+    return {
+      championId: num(entry.championId),
+      skinIndex: parseSelectedIndex(entry),
+      isSelf: true
+    };
+  }
+  return empty;
+}
+
+/**
+ * 五条来源合成一个结论。
+ *
+ * 优先级:选人会话 > gameflow(数字 id)> gameflow(`selectedSkinId`)
+ * > gameflow(选中记录里的序号)> gameflow(队伍条目里的序号)
  * > match history > Live Client。
  * 认到数字 id 就用数字;只认到名字就只给名字(界面据此说明「没认到具体皮肤」)。
  */
@@ -253,6 +331,15 @@ export function resolveUsedSkin(candidates: {
   gameflowSkinValue?: number | null;
   /** 序号所属的英雄编号 —— 换算皮肤 id 时必须跟序号成对,不能拿别的英雄来算 */
   gameflowChampionId?: number | null;
+  /**
+   * 国服 gameflow 的 `playerChampionSelections` 里「我」那条的皮肤序号。
+   *
+   * **这是国服最准的一条**(实测每条选中都带这个值);队伍条目里的
+   * `lastSelectedSkinIndex` 恒为 0,不能采信。
+   */
+  gameflowSelectionSkinIndex?: number | null;
+  /** 上面那个序号所属的英雄编号 —— 必须成对 */
+  gameflowSelectionChampionId?: number | null;
   matchHistorySkinId?: number | null;
   liveClientSkinName?: string | null;
   /**
@@ -313,6 +400,25 @@ export function resolveUsedSkin(candidates: {
     const skinId = resolveSkinValue(championId, gameflowValue, skinIdsFor(championId));
     if (skinId > 0) {
       return { riotSkinId: skinId, displayName: null, source: 'gameflow-value' };
+    }
+  }
+  // 国服最准的一条:`playerChampionSelections` 里「我」那条的序号。
+  const selectionIndex = candidates.gameflowSelectionSkinIndex;
+  const selectionChampionId = candidates.gameflowSelectionChampionId;
+  if (
+    selectionIndex !== undefined &&
+    selectionIndex !== null &&
+    selectionIndex >= 0 &&
+    selectionChampionId &&
+    selectionChampionId > 0
+  ) {
+    const skinId = resolveSkinIndex(
+      selectionChampionId,
+      selectionIndex,
+      skinIdsFor(selectionChampionId)
+    );
+    if (skinId > 0) {
+      return { riotSkinId: skinId, displayName: null, source: 'gameflow-selection' };
     }
   }
   const index = candidates.gameflowSkinIndex;

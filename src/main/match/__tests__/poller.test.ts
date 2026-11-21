@@ -55,7 +55,9 @@ vi.mock('../staticData', () => ({
     items: new Map(),
     runes: new Map(),
     skinsByChampion: new Map(),
-    skins: new Map()
+    skins: new Map(),
+    chromaBaseSkinIds: new Map(),
+    chromaNames: new Map()
   })),
   emptyStaticData: vi.fn(() => ({
     version: null,
@@ -384,16 +386,19 @@ describe('MatchPoller 的局末检测', () => {
     poller.stop();
   });
 
-  it('国服 gameflow 只给皮肤序号时,按「英雄编号 × 1000 + 序号」换算', async () => {
+  it('国服 gameflow 的选中记录里给皮肤序号时,按「英雄编号 × 1000 + 序号」换算', async () => {
     const poller = new MatchPoller();
     const settlements: LocalSettlement[] = [];
     poller.subscribeSettlement((s) => settlements.push(s));
 
     poller.start();
+    // 快照里得有召唤师 —— 「我」靠 puuid 认(选中记录里没有 teamOwner 标记)
+    await poller.refreshNow();
     await flush();
     settlements.length = 0;
 
-    // 局中:gameflow 事件带上队伍条目(国服给的是 lastSelectedSkinIndex)
+    // 局中:队伍条目里的 lastSelectedSkinIndex 国服实测恒为 0(不可采信),
+    // 真正给序号的是 playerChampionSelections 里「我」那条(靠 puuid 认)。
     wsFire({
       uri: '/lol-gameflow/v1/session',
       eventType: 'Update',
@@ -401,8 +406,12 @@ describe('MatchPoller 的局末检测', () => {
         phase: 'InProgress',
         gameData: {
           teamOne: [
-            { championId: 64, puuid: 'ally-puuid', lastSelectedSkinIndex: 3 },
-            { championId: 64, puuid: 'my-puuid', teamOwner: true, lastSelectedSkinIndex: 7 }
+            { championId: 64, puuid: 'ally-puuid', lastSelectedSkinIndex: 0 },
+            { championId: 64, puuid: 'puuid-1', teamOwner: true, lastSelectedSkinIndex: 0 }
+          ],
+          playerChampionSelections: [
+            { championId: 64, puuid: 'ally-puuid', selectedSkinIndex: 3 },
+            { championId: 64, puuid: 'puuid-1', selectedSkinIndex: 7 }
           ]
         }
       }
@@ -419,9 +428,48 @@ describe('MatchPoller 的局末检测', () => {
     expect(settlements).toHaveLength(1);
     expect(settlements[0].championId).toBe(64);
     expect(settlements[0].usedSkin.riotSkinId).toBe(64007);
-    expect(settlements[0].usedSkin.source).toBe('gameflow-index');
+    expect(settlements[0].usedSkin.source).toBe('gameflow-selection');
     // 英雄名按英雄编号从静态数据里取(局末 Live Client 给的是占位符)
     expect(settlements[0].championName).toBe('盲僧');
+    poller.stop();
+  });
+
+  it('队伍条目里的 lastSelectedSkinIndex 不采信 —— 采信它会把默认皮肤当成本局皮肤', async () => {
+    const poller = new MatchPoller();
+    const settlements: LocalSettlement[] = [];
+    poller.subscribeSettlement((s) => settlements.push(s));
+
+    poller.start();
+    await flush();
+    settlements.length = 0;
+
+    // 只有队伍条目、没有选中记录 —— 国服这时给的 lastSelectedSkinIndex 恒为 0,
+    // 但即使写着 7 也不采信:认错皮肤比认不出来糟糕得多。
+    wsFire({
+      uri: '/lol-gameflow/v1/session',
+      eventType: 'Update',
+      data: {
+        phase: 'InProgress',
+        gameData: {
+          teamOne: [
+            { championId: 64, puuid: 'ally-puuid', lastSelectedSkinIndex: 0 },
+            { championId: 64, puuid: 'puuid-1', teamOwner: true, lastSelectedSkinIndex: 7 }
+          ]
+        }
+      }
+    });
+    await flush();
+
+    wsFire({
+      uri: '/lol-gameflow/v1/session',
+      eventType: 'Update',
+      data: { phase: 'PreEndOfGame' }
+    });
+    await flush();
+
+    expect(settlements).toHaveLength(1);
+    expect(settlements[0].usedSkin.riotSkinId).toBe(0);
+    expect(settlements[0].usedSkin.source).toBe(null);
     poller.stop();
   });
 

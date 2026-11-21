@@ -25,7 +25,9 @@ const staticData: StaticData = {
   items: new Map(),
   runes: new Map(),
   skinsByChampion: new Map(),
-  skins: new Map()
+  skins: new Map(),
+  chromaBaseSkinIds: new Map(),
+  chromaNames: new Map()
 };
 
 describe('masteryPath', () => {

@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
+  parseGameflowSelection,
   parseGameflowSelf,
   parseMatchHistorySkinId,
   parseSkinIndex,
@@ -68,27 +69,33 @@ describe('resolveSkinIndex', () => {
 });
 
 describe('parseSkinIndex', () => {
-  it('国服给的是 lastSelectedSkinIndex', () => {
-    expect(parseSkinIndex({ lastSelectedSkinIndex: 3 })).toBe(3);
-    expect(parseSkinIndex({ lastSelectedSkinIndex: '3' })).toBe(3);
+  it('队伍条目里的 lastSelectedSkinIndex 不采信(国服实测恒为 0)', () => {
+    // 采信它会把「默认皮肤」当成本局用的皮肤 —— 认错比认不出来糟糕得多
+    expect(parseSkinIndex({ lastSelectedSkinIndex: 3 })).toBe(-1);
+    expect(parseSkinIndex({ lastSelectedSkinIndex: 0 })).toBe(-1);
+  });
+
+  it('认 selectedSkinIndex / skinIndex', () => {
     expect(parseSkinIndex({ selectedSkinIndex: 2 })).toBe(2);
+    expect(parseSkinIndex({ skinIndex: 4 })).toBe(4);
+    expect(parseSkinIndex({ selectedSkinIndex: '3' })).toBe(3);
   });
 
   it('序号 0 也是合法值(默认皮肤)', () => {
-    expect(parseSkinIndex({ lastSelectedSkinIndex: 0 })).toBe(0);
+    expect(parseSkinIndex({ selectedSkinIndex: 0 })).toBe(0);
   });
 
   it('字段缺 / 是空串 → 没有序号(不能当成 0)', () => {
     expect(parseSkinIndex({})).toBe(-1);
-    expect(parseSkinIndex({ lastSelectedSkinIndex: '' })).toBe(-1);
-    expect(parseSkinIndex({ lastSelectedSkinIndex: -1 })).toBe(-1);
+    expect(parseSkinIndex({ selectedSkinIndex: '' })).toBe(-1);
+    expect(parseSkinIndex({ selectedSkinIndex: -1 })).toBe(-1);
   });
 });
 
 describe('parseGameflowSelf', () => {
   const team = [
-    { championId: 64, teamOwner: false, puuid: 'ally-puuid', lastSelectedSkinIndex: 5 },
-    { championId: 103, teamOwner: true, puuid: 'my-puuid', lastSelectedSkinIndex: 7 }
+    { championId: 64, teamOwner: false, puuid: 'ally-puuid', selectedSkinIndex: 5 },
+    { championId: 103, teamOwner: true, puuid: 'my-puuid', selectedSkinIndex: 7 }
   ];
 
   it('认 teamOwner 那条 —— 皮肤只从「我」这条上取', () => {
@@ -100,7 +107,7 @@ describe('parseGameflowSelf', () => {
 
   it('没有 teamOwner 时靠 puuid 对上', () => {
     const self = parseGameflowSelf(
-      { gameData: { teamOne: [{ championId: 103, puuid: 'my-puuid', lastSelectedSkinIndex: 2 }] } },
+      { gameData: { teamOne: [{ championId: 103, puuid: 'my-puuid', selectedSkinIndex: 2 }] } },
       'my-puuid'
     );
     expect(self.isSelf).toBe(true);
@@ -110,8 +117,8 @@ describe('parseGameflowSelf', () => {
 
   it('认不出「我」是谁 → 皮肤不认,英雄编号可以宽松拿一个', () => {
     const noOwner = [
-      { championId: 64, puuid: 'ally-puuid', lastSelectedSkinIndex: 5 },
-      { championId: 103, puuid: 'my-puuid', lastSelectedSkinIndex: 7 }
+      { championId: 64, puuid: 'ally-puuid', selectedSkinIndex: 5 },
+      { championId: 103, puuid: 'my-puuid', selectedSkinIndex: 7 }
     ];
     // 没给 puuid,队伍里也没有 teamOwner → 认定不了哪条是「我」
     const unknown = parseGameflowSelf({ gameData: { teamOne: noOwner } });
@@ -140,6 +147,65 @@ describe('parseGameflowSelf', () => {
       gameData: { teamOne: [{ championId: 103, teamOwner: true }] }
     });
     expect(missing.skinValue).toBe(-1);
+  });
+});
+
+describe('parseGameflowSelection', () => {
+  // 国服实测形状(2026-11-21,结算画面那次):10 条选中,每条都带
+  // championId / puuid / selectedSkinIndex
+  const selections = [
+    { championId: 76, puuid: 'ally-1', selectedSkinIndex: 9 },
+    { championId: 200, puuid: 'my-puuid', selectedSkinIndex: 9 },
+    { championId: 29, puuid: 'ally-2', selectedSkinIndex: 6 }
+  ];
+
+  it('靠 puuid 认出「我」那条的英雄和皮肤序号', () => {
+    const sel = parseGameflowSelection(
+      { gameData: { playerChampionSelections: selections } },
+      'my-puuid'
+    );
+    expect(sel.isSelf).toBe(true);
+    expect(sel.championId).toBe(200);
+    expect(sel.skinIndex).toBe(9);
+  });
+
+  it('没有 puuid → 认不出来(这个数组里没有 teamOwner 标记)', () => {
+    const sel = parseGameflowSelection({ gameData: { playerChampionSelections: selections } });
+    expect(sel.isSelf).toBe(false);
+    expect(sel.championId).toBe(0);
+    expect(sel.skinIndex).toBe(-1);
+  });
+
+  it('puuid 对不上 → 认不出来', () => {
+    const sel = parseGameflowSelection(
+      { gameData: { playerChampionSelections: selections } },
+      'someone-else'
+    );
+    expect(sel.isSelf).toBe(false);
+    expect(sel.skinIndex).toBe(-1);
+  });
+
+  it('缺 selectedSkinIndex → 序号 -1,但英雄编号还认得(名字要显示)', () => {
+    const sel = parseGameflowSelection(
+      { gameData: { playerChampionSelections: [{ championId: 200, puuid: 'my-puuid' }] } },
+      'my-puuid'
+    );
+    expect(sel.isSelf).toBe(true);
+    expect(sel.championId).toBe(200);
+    expect(sel.skinIndex).toBe(-1);
+  });
+
+  it('序号 0 是合法值(用的就是默认皮肤)', () => {
+    const sel = parseGameflowSelection(
+      { gameData: { playerChampionSelections: [{ championId: 200, puuid: 'my-puuid', selectedSkinIndex: 0 }] } },
+      'my-puuid'
+    );
+    expect(sel.skinIndex).toBe(0);
+  });
+
+  it('载荷不是那个形状 → 全空', () => {
+    expect(parseGameflowSelection(null, 'my-puuid').isSelf).toBe(false);
+    expect(parseGameflowSelection({ gameData: {} }, 'my-puuid').isSelf).toBe(false);
   });
 });
 
@@ -255,6 +321,49 @@ describe('resolveUsedSkin', () => {
         knownSkinIds: () => [103000, 103005]
       })
     ).toEqual({ riotSkinId: 103005, displayName: null, source: 'gameflow-value' });
+  });
+
+  it('国服最准的一条:playerChampionSelections 里「我」那条的序号', () => {
+    // 国服实测:卑尔维斯(200)序号 9 → 200009,那是款炫彩
+    expect(
+      resolveUsedSkin({
+        gameflowSelectionSkinIndex: 9,
+        gameflowSelectionChampionId: 200,
+        knownSkinIds: () => [200000, 200001, 200009]
+      })
+    ).toEqual({ riotSkinId: 200009, displayName: null, source: 'gameflow-selection' });
+  });
+
+  it('选中记录里的序号优先于队伍条目里的序号', () => {
+    expect(
+      resolveUsedSkin({
+        gameflowSelectionSkinIndex: 9,
+        gameflowSelectionChampionId: 200,
+        gameflowSkinIndex: 0,
+        gameflowChampionId: 200,
+        knownSkinIds: () => [200000, 200001, 200009]
+      })
+    ).toEqual({ riotSkinId: 200009, displayName: null, source: 'gameflow-selection' });
+  });
+
+  it('选中记录没序号 → 队伍条目里的序号照旧', () => {
+    expect(
+      resolveUsedSkin({
+        gameflowSelectionSkinIndex: -1,
+        gameflowSelectionChampionId: 0,
+        gameflowSkinIndex: 1,
+        gameflowChampionId: 200,
+        knownSkinIds: () => [200000, 200001]
+      })
+    ).toEqual({ riotSkinId: 200001, displayName: null, source: 'gameflow-index' });
+  });
+
+  it('选中记录的序号必须跟英雄编号成对 —— 没有英雄编号就不换算', () => {
+    expect(resolveUsedSkin({ gameflowSelectionSkinIndex: 9 })).toEqual({
+      riotSkinId: 0,
+      displayName: null,
+      source: null
+    });
   });
 
   it('只剩 Live Client 的名字 → 只给名字,不编 id', () => {

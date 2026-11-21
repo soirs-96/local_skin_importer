@@ -75,12 +75,56 @@ describe('parseLcuSkins', () => {
     expect(byChampion.get(2)).toBeUndefined();
   });
 
-  it('splash 文件名末尾的序号跟 id 对不上 → 这条皮肤不收(宁可认不出来)', () => {
+  it('splash 文件名末尾的序号跟 id 对不上 → 不进皮肤目录,但仍留在 id 空间里', () => {
+    // 少一条就会让「序号 → 位置」的换算整体错位,认到别的皮肤上
     const { byChampion, infos } = parseLcuSkins([
       { id: 1001, skinClassification: 'kChampion', splashPath: '/x/annie_splash_centered_7.jpg' }
     ]);
-    expect(byChampion.size).toBe(0);
     expect(infos.size).toBe(0);
+    expect(byChampion.get(1)).toEqual([1001]);
+  });
+
+  it('炫彩进 id 空间(序号连续),普通皮肤进皮肤目录', () => {
+    // 国服实测形状:200009 是「战场BOSS 卑尔维斯 拒绝之尾」,一款炫彩
+    const { byChampion, infos, chromaBaseSkinIds, chromaNames } = parseLcuSkins([
+      {
+        id: 200000,
+        name: '虚空女皇',
+        skinClassification: 'kChampion',
+        splashPath: '/x/belveth_splash_centered_0.jpg'
+      },
+      {
+        id: 200001,
+        name: '战场BOSS 卑尔维斯',
+        skinClassification: 'kChampion',
+        splashPath: '/x/belveth_splash_centered_1.jpg'
+      },
+      {
+        id: 200009,
+        name: '战场BOSS 卑尔维斯 拒绝之尾',
+        skinClassification: 'kRecolor',
+        chromaPath: '/x/Belveth/Skins/Skin09/ChromaPreview.png'
+      }
+    ]);
+    expect(byChampion.get(200)).toEqual([200000, 200001, 200009]);
+    // 炫彩没有自己的立绘 → 不进皮肤目录
+    expect(infos.has(200009)).toBe(false);
+    expect(infos.has(200001)).toBe(true);
+    // 炫彩归属底图:小于它的最大普通皮肤 id
+    expect(chromaBaseSkinIds.get(200009)).toBe(200001);
+    // 炫彩名自带底图皮肤名(客户端就这么给的)
+    expect(chromaNames.get(200009)).toBe('战场BOSS 卑尔维斯 拒绝之尾');
+  });
+
+  it('炫彩排在底图前面 → 没有底图可归属', () => {
+    const { chromaBaseSkinIds } = parseLcuSkins([
+      {
+        id: 200009,
+        name: '战场BOSS 卑尔维斯 拒绝之尾',
+        skinClassification: 'kRecolor'
+      }
+    ]);
+    expect(chromaBaseSkinIds.has(200009)).toBe(false);
   });
 });
 
@@ -116,7 +160,9 @@ describe('championIndexEntries', () => {
       items: new Map(),
       runes: new Map(),
       skinsByChampion: new Map(),
-      skins: new Map()
+      skins: new Map(),
+      chromaBaseSkinIds: new Map(),
+      chromaNames: new Map()
     });
     expect(entries).toEqual([{ id: 1, name: '安妮', nameEn: 'Annie' }]);
   });
