@@ -5,6 +5,7 @@ import { getMatchSummoner } from '../summoner';
 import { getChampSelectSession } from '../champSelect';
 import { getRankedEntries } from '../ranked';
 import { getRecentMatches } from '../recentMatches';
+import { getGameflowSession } from '../opponents';
 import { resolveLcuAuthAsync } from '../../lcu';
 import type { LcuWsEvent } from '../lcuWs';
 import type { LcuWsStatus } from '../../../shared/match';
@@ -46,6 +47,12 @@ vi.mock('../recentMatches', async (importOriginal) => {
   const actual = await importOriginal<typeof import('../recentMatches')>();
   return { ...actual, getRecentMatches: vi.fn() };
 });
+// opponents 里的 gameflow 会话 —— 局中补皮肤那条路要读它
+vi.mock('../opponents', () => ({
+  getGameflowPhase: vi.fn(async () => ''),
+  getGameflowSession: vi.fn(async () => null),
+  getOpponents: vi.fn(async () => ({ phase: '', queueType: '', inGame: false, opponents: [] }))
+}));
 vi.mock('../staticData', () => ({
   loadStaticData: vi.fn(async () => ({
     version: '14.1.1',
@@ -115,6 +122,7 @@ const summonerMock = vi.mocked(getMatchSummoner);
 const champSelectMock = vi.mocked(getChampSelectSession);
 const rankedMock = vi.mocked(getRankedEntries);
 const recentMock = vi.mocked(getRecentMatches);
+const gameflowMock = vi.mocked(getGameflowSession);
 const authMock = vi.mocked(resolveLcuAuthAsync);
 
 const summoner = {
@@ -143,6 +151,7 @@ beforeEach(() => {
   champSelectMock.mockResolvedValue(null);
   rankedMock.mockResolvedValue({ entries: [], source: '/lol-ranked/v1/current-ranked-stats' });
   recentMock.mockResolvedValue({ total: 0, wins: 0, winrate: 0, matches: [] });
+  gameflowMock.mockResolvedValue(null);
 });
 
 describe('MatchPoller', () => {
@@ -613,6 +622,68 @@ describe('MatchPoller 的局末检测', () => {
     expect(settlements[0].championName).toBe('');
     // 也不能拿队友的英雄去取默认皮肤
     expect(settlements[0].usedSkin.riotSkinId).toBe(0);
+    poller.stop();
+  });
+
+  it('结算画面上 Live Client 还开着 → 局中就把皮肤问出来', async () => {
+    const poller = new MatchPoller();
+    const settlements: LocalSettlement[] = [];
+    poller.subscribeSettlement((s) => settlements.push(s));
+
+    poller.start();
+    // 先问一次召唤师 —— 快照里得有 puuid,「我」全靠它认
+    await poller.refreshNow();
+    await flush();
+    settlements.length = 0;
+
+    // 局中:队伍条目里 puuid 对上 → 英雄编号认准了(893 = 阿萝拉)
+    wsFire({
+      uri: '/lol-gameflow/v1/session',
+      eventType: 'Update',
+      data: {
+        phase: 'InProgress',
+        gameData: {
+          teamOne: [{ championId: 893, puuid: 'puuid-1', lastSelectedSkinIndex: 0 }]
+        }
+      }
+    });
+    await flush();
+
+    // 结算:事件流里没有「选中记录」→ 皮肤停在「这个英雄的默认皮肤」
+    wsFire({
+      uri: '/lol-gameflow/v1/session',
+      eventType: 'Update',
+      data: { phase: 'PreEndOfGame' }
+    });
+    await flush();
+
+    expect(settlements).toHaveLength(1);
+    expect(settlements[0].usedSkin.riotSkinId).toBe(893000);
+    expect(settlements[0].usedSkin.source).toBe('champion-default');
+
+    // 结算画面上 2999 还开着 → 轮询走 in_game 分支,常规补齐段跑不到。
+    // 但客户端的会话里带着「选中记录」—— 皮肤得在这儿问出来。
+    gameflowMock.mockResolvedValue({
+      phase: 'PreEndOfGame',
+      gameData: {
+        gameId: 401197993047,
+        playerChampionSelections: [{ championId: 893, puuid: 'puuid-1', selectedSkinIndex: 1 }]
+      }
+    });
+    liveMock.mockResolvedValue({
+      summonerName: '测试召唤师',
+      currentGold: 500,
+      gameTime: 300,
+      gameMode: 'CLASSIC'
+    });
+
+    await poller.refreshNow();
+    await flush();
+
+    expect(settlements.length).toBeGreaterThan(1);
+    const latest = settlements[settlements.length - 1];
+    expect(latest.usedSkin.riotSkinId).toBe(893001);
+    expect(latest.usedSkin.source).toBe('gameflow-selection');
     poller.stop();
   });
 

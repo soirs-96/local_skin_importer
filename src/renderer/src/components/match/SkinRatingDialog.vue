@@ -30,7 +30,7 @@
           <span class="skin-name">{{ skinName }}</span>
           <span v-if="rarity" class="skin-rarity">{{ rarity }}</span>
           <span v-if="chromaNote" class="skin-chroma">{{ chromaNote }}</span>
-          <span v-if="defaultFallbackNote" class="skin-unknown">{{ defaultFallbackNote }}</span>
+          <span v-if="fallbackNote" class="skin-unknown">{{ fallbackNote }}</span>
           <span v-else-if="!view.usedSkin.riotSkinId" class="skin-unknown">
             未识别到具体皮肤 —— 这一局用的哪款皮肤没读出来
           </span>
@@ -237,14 +237,24 @@ const skinName = computed<string>(() => {
 });
 
 /**
- * 只认到英雄默认皮肤时的说明。
+ * 退到英雄默认皮肤时的说明。
  *
- * 没认出具体哪款皮肤就退到**这个英雄自己的默认皮肤** ——
- * 不会打错人(还是这个英雄),但得分记在默认皮肤上,得说清楚。
+ * 两种退法,说法不一样:
+ *   - **没认出具体哪款皮肤** → 退到默认皮肤,不知道用的哪款;
+ *   - **认出来了但站内还没有** → 退到默认皮肤,知道用的哪款但目录里没有。
+ *
+ * 两种都不会打错人(还是这个英雄),但得分记在默认皮肤上,得说清楚。
  */
-const defaultFallbackNote = computed<string>(() => {
-  if (props.view?.usedSkin.source !== 'champion-default') return '';
-  return '没认出具体哪款皮肤,先按这个英雄的默认皮肤记';
+const fallbackNote = computed<string>(() => {
+  const view = props.view;
+  if (!view) return '';
+  if (view.usedSkin.source === 'champion-default') {
+    return '没认出具体哪款皮肤,先按这个英雄的默认皮肤记';
+  }
+  if (view.skinFallback) {
+    return '站内还没有这款皮肤,先按这个英雄的默认皮肤记';
+  }
+  return '';
 });
 
 const rarity = computed<string>(() => props.view?.skin?.rarity ?? '');

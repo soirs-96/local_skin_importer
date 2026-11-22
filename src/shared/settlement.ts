@@ -192,6 +192,13 @@ export interface MySkinRating {
 export interface SettlementView extends LocalSettlement {
   /** 站内目录里的这条皮肤;null = 不在目录里 / 没认到皮肤 */
   skin: SettlementSkin | null;
+  /**
+   * 打分对象是不是**退**到英雄默认皮肤的。
+   *
+   * 站内目录里没有认出来的那款皮肤(新皮肤还没进目录)→ 退到这个英雄的
+   * 默认皮肤,分数记在它上面。界面上要说明白 —— 别让人以为评的是刚才那款。
+   */
+  skinFallback: boolean;
   /** 现有聚合评分;null = 后端没给 / 还没拉到 */
   stats: SkinRatingStats | null;
   /** 我打过的分;null = 没打过 */

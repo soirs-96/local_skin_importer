@@ -93,6 +93,17 @@ const SETTLEMENT_ENRICH_RETRY_MS = 20_000;
  */
 const SETTLEMENT_SKIN_RETRY_MS = 20_000;
 /**
+ * 局中补结算皮肤的窗口(毫秒)。
+ *
+ * 结算画面上 2999(Live Client)还开着 —— 轮询走的是 in_game 分支,
+ * 常规的补齐段(`enrichSettlement`)根本跑不到,皮肤就永远停在
+ * 「这个英雄的默认皮肤」。所以皮肤得在**局中**补一次。
+ *
+ * 这个窗口只管「刚打完这一局」:上一局留下的结算不该在下一局里
+ * 反复去问客户端。
+ */
+const SETTLEMENT_IN_GAME_WINDOW_MS = 10 * 60_000;
+/**
  * 拿不到这一局编号时(事件流断了)判「是不是同一局」的窗口(毫秒)。
  *
  * 客户端的阶段会来回跳(PreEndOfGame → None → EndOfGame),
@@ -352,6 +363,20 @@ export class MatchPoller {
   private settlementEnrichedAt = 0;
   /** 上次尝试从 gameflow 补皮肤的时刻(事件流漏了的时候兜底) */
   private settlementSkinTriedAt = 0;
+  /**
+   * 局中那次补皮肤的时间戳。
+   *
+   * 和 `settlementSkinTriedAt` **分开记** —— 两条路都可能先跑到,
+   * 共用一个的话先跑的那条会把另一条挡掉 20 秒,皮肤就又停在默认皮肤上。
+   */
+  private settlementInGameSkinTriedAt = 0;
+  /**
+   * 局中问客户端要来的 puuid。
+   *
+   * 快照里的召唤师是**大厅阶段**问到的 —— 应用是局中才打开的话就没有。
+   * 认「我」全靠 puuid(国服队伍条目里没有 `teamOwner`),所以局中也得有一份。
+   */
+  private puuidCache = '';
   private settlementListeners = new Set<SettlementListener>();
 
   private wsClient: LcuWsClient | null = null;
@@ -514,11 +539,12 @@ export class MatchPoller {
    * 「查的是不是自己」要靠它判断。
    */
   private async resolveMyPuuid(client: AxiosInstance): Promise<string> {
-    const cached = this.snapshot.summoner?.puuid;
+    const cached = this.snapshot.summoner?.puuid || this.puuidCache;
     if (cached) return cached;
     try {
       const summoner = await getMatchSummoner(client);
-      return summoner?.puuid ?? '';
+      this.puuidCache = summoner?.puuid ?? '';
+      return this.puuidCache;
     } catch {
       return '';
     }
@@ -528,9 +554,12 @@ export class MatchPoller {
    * 我的 puuid(同步版)。
    *
    * 队伍条目里认「我」那条用 —— `teamOwner` 认不到时靠 puuid 对上。
+   *
+   * 快照里的召唤师是**大厅阶段**问到的;应用是局中才打开的话快照里没有 ——
+   * 这时候靠 {@link puuidCache}(局中问客户端要来的那一份)。
    */
   private myPuuid(): string {
-    return this.snapshot.summoner?.puuid ?? '';
+    return this.snapshot.summoner?.puuid || this.puuidCache;
   }
 
   /**
@@ -638,6 +667,10 @@ export class MatchPoller {
     }
     if (!isEnd || wasEnd) return;
     this.createSettlement();
+    // 结算刚出来,皮肤多半还没认出来 —— 立刻问一次客户端的 gameflow。
+    // 不等下一轮轮询:局末那几秒客户端就把上一局的队伍信息清掉了,
+    // 而且结算画面上 Live Client 还活着,常规的补齐段压根跑不到。
+    void this.resolveSettlementSkinFromGameflow(Date.now(), true);
   }
 
   /** 四条候选合成一个结论 —— 优先级在 `usedSkin.ts` 里定死。 */
@@ -807,6 +840,7 @@ export class MatchPoller {
     this.settlement = settlement;
     this.settlementEnrichedAt = 0;
     this.settlementSkinTriedAt = 0;
+    this.settlementInGameSkinTriedAt = 0;
     this.sawGamePhaseSinceSettlement = false;
     this.emitSettlement(settlement);
     // 结算快照已经带走了这一局的皮肤 —— 候选作废,免得带进下一局。
@@ -911,7 +945,11 @@ export class MatchPoller {
       beforeSkin &&
       (beforeSkin.usedSkin.riotSkinId === 0 || beforeSkin.usedSkin.source === 'champion-default')
     ) {
-      await this.resolveSkinFromGameflow(client, puuid, now);
+      // 别每 2 秒打一次端点
+      if (now - this.settlementSkinTriedAt >= SETTLEMENT_SKIN_RETRY_MS) {
+        this.settlementSkinTriedAt = now;
+        await this.resolveSkinFromGameflow(client, puuid);
+      }
     }
 
     // 3.5 还是没认出来 —— 退到这个英雄的默认皮肤(这一局总得能打分)
@@ -961,18 +999,19 @@ export class MatchPoller {
   /**
    * 皮肤还没认出来时,直接问一次客户端的 gameflow。
    *
-   * 事件流(WS)漏掉那一次更新的场合走这里 —— 队伍条目里的皮肤线索就在
-   * `gameData.teamOne/teamTwo` 里,客户端只在局末那几秒还留着。
+   * 事件流(WS)漏掉那一次更新的场合走这里 —— 客户端的会话里带着
+   * `gameData.playerChampionSelections`,每条选中都带皮肤序号(国服实测)。
    *
-   * 严认「我」那条(见 `parseGameflowSelf`)—— 认错了就是给队友的皮肤打分。
+   * ⚠️ **只认「选中记录」里的那一条**(`puuid` 对上的 `selectedSkinIndex`)。
+   * 队伍条目里的皮肤线索**不可信**:国服实测 `lastSelectedSkinIndex`
+   * 对 10 个玩家**全是 0**,采信它就是把「默认皮肤」当成本局用的皮肤。
+   *
+   * 严认「我」那条 —— 认错了就是给队友的皮肤打分。
    */
   private async resolveSkinFromGameflow(
     client: AxiosInstance,
-    puuid: string,
-    now: number
+    puuid: string
   ): Promise<void> {
-    if (now - this.settlementSkinTriedAt < SETTLEMENT_SKIN_RETRY_MS) return;
-    this.settlementSkinTriedAt = now;
     const raw = await getGameflowSession(client);
     if (!raw) return;
     const self = parseGameflowSelf(raw, puuid);
@@ -982,21 +1021,77 @@ export class MatchPoller {
     if (!settlement) return;
     const resolved = resolveUsedSkin({
       gameflowSkinId: self.skinId,
-      gameflowSkinIndex: self.skinIndex,
-      gameflowSkinValue: self.skinValue,
-      gameflowChampionId: self.championId,
+      // 队伍条目里的两条线索不采信(国服实测不可信)—— 见上面的说明
+      gameflowSkinIndex: null,
+      gameflowSkinValue: null,
       gameflowSelectionSkinIndex: selection.skinIndex,
       gameflowSelectionChampionId: selection.championId,
       liveClientSkinName: settlement.usedSkin.displayName,
       knownSkinIds: (championId) => this.knownSkinIds(championId)
     });
-    if (resolved.riotSkinId === 0) return;
-    this.updateSettlement({
-      usedSkin: {
+    const patch: Partial<LocalSettlement> = {};
+    if (resolved.riotSkinId > 0) {
+      patch.usedSkin = {
         ...this.withChromaBase(resolved),
         displayName: resolved.displayName ?? settlement.usedSkin.displayName
-      }
-    });
+      };
+    }
+    // 英雄也一起补 —— 结算那一刻可能没认出来(应用是局中才打开的,
+    // 或者事件流里只有队伍条目)。选中记录里的英雄编号是**按 puuid 严认**
+    // 出来的,可以用。
+    if (!settlement.championId && selection.championId > 0) {
+      patch.championId = selection.championId;
+      patch.championVerified = true;
+      patch.championName = this.championName(selection.championId) || settlement.championName;
+    }
+    if (Object.keys(patch).length === 0) return;
+    this.updateSettlement(patch);
+  }
+
+  /**
+   * 结算的皮肤还没认出来时,问一次客户端的 gameflow 会话。
+   *
+   * 会话里带着 `playerChampionSelections`,每条选中都带皮肤序号(国服实测)。
+   *
+   * 三个调用点:
+   *   - **结算刚生成时**(WS 事件)—— 立刻问一次,不等下一轮轮询;
+   *   - **局中**(Live Client 还活着)—— 结算画面上补齐段跑不到,在这儿补;
+   *   - **局末的常规补齐段** —— 老兜底。
+   *
+   * ⚠️ 为什么要单独做前两条:玩家还站在结算画面上的时候,2999(Live Client)
+   * 还在,`collect()` 走的是 in_game 分支**直接 return** —— 挂在 LCU 分支上的
+   * 补齐段(`enrichSettlement`)根本跑不到。皮肤就永远停在「英雄默认皮肤」。
+   * 实测就丢在这:游戏里明明看得到皮肤,弹窗却写着「没认出具体哪款皮肤」。
+   */
+  private async resolveSettlementSkinFromGameflow(now: number, force: boolean): Promise<void> {
+    const settlement = this.settlement;
+    if (!settlement) return;
+    const used = settlement.usedSkin;
+    // 已经认出具体哪款皮肤了 —— 不用再问
+    if (used.riotSkinId > 0 && used.source !== 'champion-default') return;
+    if (!force) {
+      // 只管刚打完这一局 —— 上一局留下的结算不该在下一局里反复问客户端
+      if (now - settlement.endedAt > SETTLEMENT_IN_GAME_WINDOW_MS) return;
+      // 别每 2 秒打一次端点。
+      // ⚠️ 这条路和局末补齐段**各用各的时间戳** —— 共用一个的话,
+      //    先跑的那条会把另一条挡掉 20 秒(实测就是这么丢的)。
+      if (now - this.settlementInGameSkinTriedAt < SETTLEMENT_SKIN_RETRY_MS) return;
+      this.settlementInGameSkinTriedAt = now;
+    }
+
+    let client: AxiosInstance;
+    try {
+      const auth = await this.ensureAuth();
+      client = lcu.createLcuClient(auth);
+    } catch {
+      // 客户端连不上 —— 常规补齐段会再试
+      return;
+    }
+    // 皮肤清单(客户端自己的 skins.json)—— 换算皮肤 id、认炫彩底图都要它
+    await this.ensureStaticData(client);
+    // 「我」是谁要靠 puuid(国服队伍条目里没有 teamOwner 标记)
+    const puuid = this.myPuuid() || (await this.resolveMyPuuid(client));
+    await this.resolveSkinFromGameflow(client, puuid);
   }
 
   private async poll(): Promise<void> {
@@ -1160,6 +1255,9 @@ export class MatchPoller {
       // 即时战绩也缓存一份(等下结算要用)
       const stats = await getPlayerStats();
       if (stats) this.lastPlayerStats = stats;
+      // ⚠ 结算画面上 2999 还开着 —— 下面的 LCU 分支跑不到,补齐段也跟着跑不到。
+      //    皮肤还没认出来时,在**局中**就直接问一次客户端的 gameflow。
+      await this.resolveSettlementSkinFromGameflow(now, false);
       return {
         ...previous,
         state: 'in_game',

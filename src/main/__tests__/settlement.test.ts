@@ -151,7 +151,9 @@ describe('buildSettlementView', () => {
     expect(view.usedSkin.chromaName).toBe('战场BOSS 卑尔维斯 拒绝之尾');
   });
 
-  it('没认到皮肤 → 不去查目录', async () => {
+  it('没认到皮肤 → 退到这个英雄的默认皮肤,目录里也没有就还是没皮肤', async () => {
+    catalogMock.mockResolvedValue(null);
+
     const noSkin: LocalSettlement = {
       ...local,
       usedSkin: { riotSkinId: 0, displayName: null, source: null }
@@ -160,6 +162,42 @@ describe('buildSettlementView', () => {
     const view = await buildSettlementView(noSkin);
 
     expect(view.skin).toBeNull();
-    expect(catalogMock).not.toHaveBeenCalled();
+    expect(view.skinFallback).toBe(false);
+    // 只问了一次:英雄的默认皮肤(英雄 64 → 64000)
+    expect(catalogMock).toHaveBeenCalledTimes(1);
+    expect(catalogMock).toHaveBeenCalledWith(64000);
+  });
+
+  it('认出来的那款站内还没有 → 退到这个英雄的默认皮肤', async () => {
+    catalogMock.mockImplementation(async (riotSkinId: number) => {
+      // 站内还没有 893001(新皮肤没进目录)
+      if (riotSkinId === 893001) return null;
+      return {
+        id: 44,
+        skinId: 893000,
+        heroId: 893,
+        heroName: '阿萝拉',
+        name: '双界灵兔',
+        nameEn: null,
+        rarity: '普通',
+        priceRp: 975,
+        splashUrl: 'https://x/base.jpg',
+        iconUrl: 'https://x/base-i.jpg'
+      };
+    });
+
+    const detected: LocalSettlement = {
+      ...local,
+      championId: 893,
+      championName: '阿萝拉',
+      usedSkin: { riotSkinId: 893001, displayName: null, source: 'gameflow-selection' }
+    };
+
+    const view = await buildSettlementView(detected);
+
+    // 打分对象退到英雄的默认皮肤 —— 这一局还能打分
+    expect(view.skin?.skinId).toBe(893000);
+    // 界面上要说明白:这是退的,不是认出来的那款
+    expect(view.skinFallback).toBe(true);
   });
 });
