@@ -7,7 +7,12 @@ import { findJustFinishedMatch, getRecentMatches, toMatchScore } from './recentM
 import { getChampionMastery } from './mastery';
 import { getMatchSummoner } from './summoner';
 import { getGameflowPhase, getGameflowSession, getOpponents } from './opponents';
-import { parseGameflowSelection, parseGameflowSelf, resolveUsedSkin } from './usedSkin';
+import {
+  parseGameflowSelection,
+  parseGameflowSelf,
+  resolveSkinIndex,
+  resolveUsedSkin
+} from './usedSkin';
 import { failedLookup, lookupPlayer as lookupPlayerByQuery } from './playerLookup';
 import { fetchPlayerGames as fetchPlayerGamesFromLedge } from './tencentLedge';
 import { championIndexEntries, emptyStaticData, loadStaticData, type StaticData } from './staticData';
@@ -92,6 +97,13 @@ const SETTLEMENT_ENRICH_RETRY_MS = 20_000;
  * 但也别每 2 秒打一次端点。
  */
 const SETTLEMENT_SKIN_RETRY_MS = 20_000;
+
+/**
+ * 局中记皮肤的间隔(毫秒)。
+ *
+ * 局中的皮肤**不会中途变** —— 认出来一次就够;没认出来才隔一会儿再试。
+ */
+const IN_GAME_SKIN_RETRY_MS = 30_000;
 /**
  * 局中补结算皮肤的窗口(毫秒)。
  *
@@ -370,6 +382,16 @@ export class MatchPoller {
    * 共用一个的话先跑的那条会把另一条挡掉 20 秒,皮肤就又停在默认皮肤上。
    */
   private settlementInGameSkinTriedAt = 0;
+  /**
+   * **局中**认出来的皮肤 —— 「我这局用的哪款皮肤」。
+   *
+   * ⚠ 为什么非得在局中记:结算画面上客户端往往已经把 gameflow 会话清掉了
+   *    (选中记录没了)。这就是「时好时坏」的根因 —— 读结算那一刻的会话,
+   *    早一秒晚一秒结果完全不同。局中读,那份数据一定在,皮肤也不会中途变。
+   */
+  private liveGameSkin: { gameId: string; championId: number; skinIndex: number } | null = null;
+  /** 上次尝试在局中记皮肤的时刻 */
+  private liveGameSkinTriedAt = 0;
   /**
    * 局中问客户端要来的 puuid。
    *
@@ -664,6 +686,9 @@ export class MatchPoller {
     // 真打一局必然经过选人/对局中 —— 没经过就不是新的一局。
     if (!isEnd && (phase === 'InProgress' || phase === 'ChampSelect')) {
       this.sawGamePhaseSinceSettlement = true;
+      // 又开了一局 —— 上一局记下来的皮肤作废,别带进这一局。
+      this.liveGameSkin = null;
+      this.liveGameSkinTriedAt = 0;
     }
     if (!isEnd || wasEnd) return;
     this.createSettlement();
@@ -675,6 +700,19 @@ export class MatchPoller {
 
   /** 四条候选合成一个结论 —— 优先级在 `usedSkin.ts` 里定死。 */
   private resolveSettlementSkin(): UsedSkin {
+    // 局中记下来的皮肤 —— **最靠得住的一条**。
+    // 结算那一刻客户端往往已经把 gameflow 会话清掉了,这时才去读就晚了
+    // (读到的时好时坏)。局中记下来的这份一直在。
+    const cached = this.liveGameSkinId();
+    if (cached > 0) {
+      return this.withChampionDefault(
+        this.withChromaBase({
+          riotSkinId: cached,
+          displayName: this.liveClientSkinName,
+          source: 'gameflow-selection'
+        })
+      );
+    }
     const resolved = resolveUsedSkin({
       champSelectSkinId: this.champSelectSkinId,
       champSelectSkinValue: this.champSelectSkinValue >= 0 ? this.champSelectSkinValue : null,
@@ -783,6 +821,10 @@ export class MatchPoller {
     const endedAt = Date.now();
     const live = this.lastLive;
     const usedSkin = this.resolveSettlementSkin();
+    if (usedSkin.source === 'champion-default') {
+      // 只在「退到默认皮肤」时留一句 —— 排查「时好时坏」用
+      console.log('[皮肤] 结算没认出具体皮肤 —— 局中没记到,退到英雄默认皮肤');
+    }
     // 认不准 / 不是当前这一局的英雄编号 —— 一律当没有。
     const championBelongs = this.championBelongsToCurrentGame();
     const championId = championBelongs ? this.currentChampionId : 0;
@@ -1008,17 +1050,104 @@ export class MatchPoller {
    *
    * 严认「我」那条 —— 认错了就是给队友的皮肤打分。
    */
+  /**
+   * **局中**读一次客户端的会话,把这局用的皮肤记下来。
+   *
+   * ⚠ 为什么非得在局中读:结算画面上客户端往往已经把 gameflow 会话清掉了
+   *    (选中记录没了)—— 读结算那一刻的会话,早一秒晚一秒结果完全不同,
+   *    这就是「时好时坏」的根因。局中读,那份数据一定在,皮肤也不会中途变。
+   */
+  private async captureInGameSkin(now: number): Promise<void> {
+    // 认出来过就不用再读 —— 局中皮肤不会中途变
+    if (this.liveGameSkin) return;
+    // 别每 2 秒打一次端点
+    if (now - this.liveGameSkinTriedAt < IN_GAME_SKIN_RETRY_MS) return;
+    this.liveGameSkinTriedAt = now;
+    let client: AxiosInstance;
+    try {
+      const auth = await this.ensureAuth();
+      client = lcu.createLcuClient(auth);
+    } catch {
+      // 客户端连不上 —— 下次再试
+      return;
+    }
+    const raw = await getGameflowSession(client);
+    if (!raw) return;
+    // 只在**对局进行中**记 —— 结算画面和大厅里读到的是上一局的残留。
+    const phase = phaseFromEvent(raw);
+    if (!phase || isGameEndPhase(phase) || phase === 'None') return;
+    // 「我」是谁要靠 puuid(国服队伍条目里没有 teamOwner 标记)
+    const puuid = this.myPuuid() || (await this.resolveMyPuuid(client));
+    if (!puuid) return;
+    const selection = parseGameflowSelection(raw, puuid);
+    if (!selection.isSelf || selection.championId <= 0 || selection.skinIndex < 0) return;
+    const gameId = gameIdFromEvent(raw);
+    this.liveGameSkin = {
+      gameId,
+      championId: selection.championId,
+      skinIndex: selection.skinIndex
+    };
+    console.log(
+      `[皮肤] 局中记到: 英雄 ${selection.championId} 皮肤序号 ${selection.skinIndex} gameId ${gameId || '无'}`
+    );
+    // 英雄也一并记下 —— 选中记录里那条是**按 puuid 严认**出来的,
+    // 跟队伍条目里「第一个带英雄编号的人」一样可靠。
+    if (selection.championId > 0 && !this.currentChampionVerified) {
+      this.currentChampionId = selection.championId;
+      this.currentChampionVerified = true;
+      this.championGameId = gameId;
+      this.championFromChampSelect = false;
+    }
+  }
+
+  /**
+   * 局中记下来的皮肤 → 皮肤 id(0 = 没记着 / 认不出来)。
+   *
+   * 不是**当前这一局**的 → 宁可不认 —— 认错了就是给别人的皮肤打分。
+   */
+  private liveGameSkinId(): number {
+    const cached = this.liveGameSkin;
+    if (!cached || cached.championId <= 0 || cached.skinIndex < 0) return 0;
+    if (cached.gameId && this.currentGameId && cached.gameId !== this.currentGameId) return 0;
+    return resolveSkinIndex(
+      cached.championId,
+      cached.skinIndex,
+      this.knownSkinIds(cached.championId)
+    );
+  }
+
+  /**
+   * 把局中记下来的皮肤套到结算上 —— 认得出来就用它。
+   *
+   * 返回有没有套上。
+   */
+  private applyLiveGameSkin(settlement: LocalSettlement): boolean {
+    const skinId = this.liveGameSkinId();
+    if (skinId <= 0) return false;
+    this.updateSettlement({
+      usedSkin: this.withChromaBase({
+        riotSkinId: skinId,
+        displayName: settlement.usedSkin.displayName,
+        source: 'gameflow-selection'
+      })
+    });
+    return true;
+  }
+
   private async resolveSkinFromGameflow(
     client: AxiosInstance,
     puuid: string
   ): Promise<void> {
+    const settlement = this.settlement;
+    if (!settlement) return;
+    // 局中记下来的皮肤 —— 结算那一刻客户端往往已经把会话清掉了,
+    // 这是最靠得住的一条,先看它。
+    if (this.applyLiveGameSkin(settlement)) return;
     const raw = await getGameflowSession(client);
     if (!raw) return;
     const self = parseGameflowSelf(raw, puuid);
     const selection = parseGameflowSelection(raw, puuid);
     if (!self.isSelf && !selection.isSelf) return;
-    const settlement = this.settlement;
-    if (!settlement) return;
     const resolved = resolveUsedSkin({
       gameflowSkinId: self.skinId,
       // 队伍条目里的两条线索不采信(国服实测不可信)—— 见上面的说明
@@ -1258,6 +1387,9 @@ export class MatchPoller {
       // ⚠ 结算画面上 2999 还开着 —— 下面的 LCU 分支跑不到,补齐段也跟着跑不到。
       //    皮肤还没认出来时,在**局中**就直接问一次客户端的 gameflow。
       await this.resolveSettlementSkinFromGameflow(now, false);
+      // 趁**局中**把这局用的皮肤记下来 —— 结算那一刻客户端往往已经把
+      // 会话清掉了(选中记录没了),那时再读就晚了(读到的时好时坏)。
+      await this.captureInGameSkin(now);
       return {
         ...previous,
         state: 'in_game',

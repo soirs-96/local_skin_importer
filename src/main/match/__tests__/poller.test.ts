@@ -198,8 +198,12 @@ describe('MatchPoller', () => {
     const snapshot = await poller.refreshNow();
     expect(snapshot.state).toBe('in_game');
     expect(snapshot.live?.currentGold).toBe(500);
-    // 在对局里不该去问 LCU
-    expect(authMock).not.toHaveBeenCalled();
+    // 对局里不去拉 LCU 的快照数据(段位/最近对局)
+    expect(rankedMock).not.toHaveBeenCalled();
+    expect(recentMock).not.toHaveBeenCalled();
+    // 只多问了一次凭据 —— 「记这局用的皮肤」得读 gameflow 会话,
+    // 那是**唯一**能在局中拿到皮肤序号的地方(结算那一刻客户端已经清掉了)。
+    expect(authMock).toHaveBeenCalledTimes(1);
   });
 
   it('大厅里才去拉段位和最近对局', async () => {
@@ -684,6 +688,57 @@ describe('MatchPoller 的局末检测', () => {
     const latest = settlements[settlements.length - 1];
     expect(latest.usedSkin.riotSkinId).toBe(893001);
     expect(latest.usedSkin.source).toBe('gameflow-selection');
+    poller.stop();
+  });
+
+  it('局中就把这局的皮肤记下来 → 结算那一刻会话没了也照样认得出来', async () => {
+    const poller = new MatchPoller();
+    const settlements: LocalSettlement[] = [];
+    poller.subscribeSettlement((s) => settlements.push(s));
+
+    poller.start();
+    await poller.refreshNow();
+    await flush();
+    settlements.length = 0;
+
+    // 局中:客户端的会话里带着「选中记录」—— 皮肤序号 1
+    gameflowMock.mockResolvedValue({
+      phase: 'InProgress',
+      gameData: {
+        gameId: 401197993047,
+        playerChampionSelections: [{ championId: 893, puuid: 'puuid-1', selectedSkinIndex: 1 }]
+      }
+    });
+    liveMock.mockResolvedValue({
+      summonerName: '测试召唤师',
+      currentGold: 500,
+      gameTime: 300,
+      gameMode: 'CLASSIC'
+    });
+    wsFire({
+      uri: '/lol-gameflow/v1/session',
+      eventType: 'Update',
+      data: {
+        phase: 'InProgress',
+        gameData: { teamOne: [{ championId: 893, puuid: 'puuid-1', lastSelectedSkinIndex: 0 }] }
+      }
+    });
+    await flush();
+    await poller.refreshNow();
+    await flush();
+
+    // 结算那一刻客户端把会话清掉了 —— 皮肤靠**局中**记下来的那份
+    gameflowMock.mockResolvedValue(null);
+    wsFire({
+      uri: '/lol-gameflow/v1/session',
+      eventType: 'Update',
+      data: { phase: 'PreEndOfGame' }
+    });
+    await flush();
+
+    expect(settlements).toHaveLength(1);
+    expect(settlements[0].usedSkin.riotSkinId).toBe(893001);
+    expect(settlements[0].usedSkin.source).toBe('gameflow-selection');
     poller.stop();
   });
 
