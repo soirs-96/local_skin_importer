@@ -742,6 +742,69 @@ describe('MatchPoller 的局末检测', () => {
     poller.stop();
   });
 
+  it('选中记录到 EndOfGame 才冒出来 → 那一格也得抓到', async () => {
+    const poller = new MatchPoller();
+    const settlements: LocalSettlement[] = [];
+    poller.subscribeSettlement((s) => settlements.push(s));
+
+    poller.start();
+    await poller.refreshNow();
+    await flush();
+    settlements.length = 0;
+
+    // 局中:队伍条目认得出英雄,但客户端还没把「选中记录」端上来
+    gameflowMock.mockResolvedValue({
+      phase: 'InProgress',
+      gameData: { gameId: 401197993047, teamOne: [{ championId: 893, puuid: 'puuid-1' }] }
+    });
+    liveMock.mockResolvedValue({
+      summonerName: '测试召唤师',
+      currentGold: 500,
+      gameTime: 300,
+      gameMode: 'CLASSIC'
+    });
+    wsFire({
+      uri: '/lol-gameflow/v1/session',
+      eventType: 'Update',
+      data: {
+        phase: 'InProgress',
+        gameData: { teamOne: [{ championId: 893, puuid: 'puuid-1', lastSelectedSkinIndex: 0 }] }
+      }
+    });
+    await flush();
+
+    // 结算刚出来(PreEndOfGame):选中记录还读不到 → 先退到默认皮肤
+    wsFire({
+      uri: '/lol-gameflow/v1/session',
+      eventType: 'Update',
+      data: { phase: 'PreEndOfGame' }
+    });
+    await flush();
+    expect(settlements).toHaveLength(1);
+    expect(settlements[0].usedSkin.source).toBe('champion-default');
+
+    // 到了 EndOfGame,客户端才把选中记录补上 —— 这一格必须抓到
+    gameflowMock.mockResolvedValue({
+      phase: 'EndOfGame',
+      gameData: {
+        gameId: 401197993047,
+        playerChampionSelections: [{ championId: 893, puuid: 'puuid-1', selectedSkinIndex: 1 }]
+      }
+    });
+    wsFire({
+      uri: '/lol-gameflow/v1/session',
+      eventType: 'Update',
+      data: { phase: 'EndOfGame' }
+    });
+    await flush();
+    await flush();
+
+    const latest = settlements[settlements.length - 1];
+    expect(latest.usedSkin.riotSkinId).toBe(893001);
+    expect(latest.usedSkin.source).toBe('gameflow-selection');
+    poller.stop();
+  });
+
   it('应用刚启动、客户端停在结算画面上 → 不产生结算(没打过这一局)', async () => {
     // champSelectMock 默认就是 null,currentChampionId 拿不到,lastLive 也是 null
     const poller = new MatchPoller();
