@@ -79,7 +79,8 @@ const mocks = vi.hoisted(() => {
     autoAcceptSetEnabled: vi.fn(),
     autoAcceptSetDelay: vi.fn(),
     writeAutoAcceptPrefs: vi.fn(),
-    fetchRegionUsers: vi.fn()
+    fetchRegionUsers: vi.fn(),
+    fetchMatchProfile: vi.fn()
   };
 });
 
@@ -142,6 +143,11 @@ vi.mock('../catalog', () => ({
 
 vi.mock('../regionUsers', () => ({
   fetchRegionUsers: mocks.fetchRegionUsers
+}));
+
+// 读段位/位置要连游戏客户端,单测里换掉。
+vi.mock('../match/positionStats', () => ({
+  fetchMatchProfile: mocks.fetchMatchProfile
 }));
 
 vi.mock('../rating', () => ({
@@ -303,6 +309,8 @@ describe('IPC wiring', () => {
       userCount: 0,
       users: []
     });
+    mocks.fetchMatchProfile.mockReset();
+    mocks.fetchMatchProfile.mockResolvedValue({ ranked: [], positions: [] });
     mocks.getFocusedWindow.mockReset();
     mocks.clipboardWriteText.mockReset();
     mocks.readSyncState.mockReturnValue({ lastSyncAt: null });
@@ -355,7 +363,7 @@ describe('IPC wiring', () => {
     ]);
   });
 
-  it('registers all 32 ipc channels on call to registerIpcHandlers', () => {
+  it('registers all 33 ipc channels on call to registerIpcHandlers', () => {
     expect(mocks.ipcMainHandle.mock.calls.map(([channel]) => channel)).toEqual([
       'lcu:check-status',
       'lcu:fetch-skins',
@@ -372,6 +380,7 @@ describe('IPC wiring', () => {
       'match:get-state',
       'match:refresh',
       'match:get-top-champions',
+      'match:get-profile',
       'match:lookup-player',
       'match:fetch-player-games',
       'match:get-opponents',
@@ -392,12 +401,53 @@ describe('IPC wiring', () => {
     ]);
   });
 
+  it('match:get-profile 从游戏客户端读段位和主玩位置', async () => {
+    const client = {} as AxiosInstance;
+    mocks.resolveLcuAuth.mockResolvedValue({ port: 1234 });
+    mocks.createLcuClient.mockReturnValue(client);
+    mocks.getCurrentSummoner.mockResolvedValue({
+      displayName: '林俊杰',
+      puuid: 'puuid-1',
+      tagLine: '18557'
+    });
+    const profile = {
+      ranked: [
+        {
+          queueType: 'RANKED_SOLO_5x5',
+          tier: 'GOLD',
+          division: 'II',
+          leaguePoints: 40,
+          wins: 10,
+          losses: 8
+        }
+      ],
+      positions: [{ position: 'mid' as const, matchCount: 7 }]
+    };
+    mocks.fetchMatchProfile.mockResolvedValue(profile);
+
+    await expect(invoke('match:get-profile')).resolves.toEqual(profile);
+    expect(mocks.fetchMatchProfile).toHaveBeenCalledWith(client, 'puuid-1');
+  });
+
+  it('match:get-profile 拿不到 puuid 就空着 —— 不塞假段位', async () => {
+    mocks.resolveLcuAuth.mockResolvedValue({ port: 1234 });
+    mocks.createLcuClient.mockReturnValue({} as AxiosInstance);
+    mocks.getCurrentSummoner.mockResolvedValue({
+      displayName: '林俊杰',
+      puuid: '',
+      tagLine: '18557'
+    });
+
+    await expect(invoke('match:get-profile')).resolves.toEqual({ ranked: [], positions: [] });
+    expect(mocks.fetchMatchProfile).not.toHaveBeenCalled();
+  });
+
   it('tools:fetch-region-users 库里认出了大区,就不用客户端现场读的那次', async () => {
     await invoke('tools:fetch-region-users');
 
     // 只查一次 —— 库里已经有大区了
     expect(mocks.fetchRegionUsers).toHaveBeenCalledTimes(1);
-    expect(mocks.fetchRegionUsers).toHaveBeenCalledWith('');
+    expect(mocks.fetchRegionUsers).toHaveBeenCalledWith('', undefined, {});
   });
 
   it('tools:fetch-region-users 库里没有大区,拿客户端读到的大区再查一次', async () => {
@@ -416,7 +466,28 @@ describe('IPC wiring', () => {
 
     expect(mocks.fetchRegionUsers).toHaveBeenCalledTimes(2);
     // 第二次带上客户端读到的大区编号
-    expect(mocks.fetchRegionUsers).toHaveBeenLastCalledWith('1');
+    expect(mocks.fetchRegionUsers).toHaveBeenLastCalledWith('1', undefined, {});
+  });
+
+  it('tools:fetch-region-users 把匹配条件原样交给后端', async () => {
+    await invoke('tools:fetch-region-users', {}, {
+      positions: ['mid', 'support'],
+      tierGap: 2,
+      includeHigher: true,
+      higherTierGap: 3
+    });
+
+    expect(mocks.fetchRegionUsers).toHaveBeenLastCalledWith('', undefined, {
+      positions: ['mid', 'support'],
+      tierGap: 2,
+      includeHigher: true,
+      higherTierGap: 3
+    });
+  });
+
+  it('tools:fetch-region-users 匹配条件类型不对时抛错', async () => {
+    await expect(invoke('tools:fetch-region-users', {}, { tierGap: 'wide' })).rejects.toThrow();
+    await expect(invoke('tools:fetch-region-users', {}, { higherTierGap: 'wide' })).rejects.toThrow();
   });
 
   it('match:get-settlement 没有结算时返回 null', async () => {
@@ -750,7 +821,7 @@ describe('IPC wiring', () => {
       'Alice',
       [1, 2, 3],
       [],
-      { summonerTag: '', gameZone: '' }
+      { summonerTag: '', gameZone: '', ranked: [], positions: [] }
     );
     expect(mocks.writeSyncState).toHaveBeenCalledOnce();
   });
@@ -771,7 +842,7 @@ describe('IPC wiring', () => {
       '林俊杰',
       [1],
       [],
-      { summonerTag: '18557', gameZone: '1' }
+      { summonerTag: '18557', gameZone: '1', ranked: [], positions: [] }
     );
   });
 
@@ -817,8 +888,63 @@ describe('IPC wiring', () => {
       'Alice',
       [1],
       topChampions,
-      { summonerTag: '', gameZone: '' }
+      { summonerTag: '', gameZone: '', ranked: [], positions: [] }
     );
+  });
+
+  it('backend:sync forwards the rank and the positions to the backend', async () => {
+    mocks.syncOwnedSkins.mockResolvedValue({ added: 0, updated: 0, totalOwned: 0 });
+    const ranked = [
+      {
+        queueType: 'RANKED_SOLO_5x5',
+        tier: 'GOLD',
+        division: 'II',
+        leaguePoints: 40,
+        wins: 10,
+        losses: 8
+      }
+    ];
+    const positions = [{ position: 'mid' as const, matchCount: 7 }];
+
+    await invoke('backend:sync', {}, {
+      puuid: 'p'.padEnd(32, 'x'),
+      summonerName: 'Alice',
+      ownedSkinIds: [1],
+      ranked,
+      positions
+    });
+
+    expect(mocks.syncOwnedSkins).toHaveBeenCalledWith(
+      'p'.padEnd(32, 'x'),
+      'Alice',
+      [1],
+      [],
+      { summonerTag: '', gameZone: '', ranked, positions }
+    );
+  });
+
+  it('backend:sync rejects a malformed ranked list', async () => {
+    await expect(
+      invoke('backend:sync', {}, {
+        puuid: 'p'.padEnd(32, 'x'),
+        summonerName: 'Alice',
+        ownedSkinIds: [1],
+        ranked: [{ tier: 3 }]
+      })
+    ).rejects.toThrow(/ranked/);
+    expect(mocks.syncOwnedSkins).not.toHaveBeenCalled();
+  });
+
+  it('backend:sync rejects a malformed positions list', async () => {
+    await expect(
+      invoke('backend:sync', {}, {
+        puuid: 'p'.padEnd(32, 'x'),
+        summonerName: 'Alice',
+        ownedSkinIds: [1],
+        positions: [{ matchCount: 3 }]
+      })
+    ).rejects.toThrow(/positions/);
+    expect(mocks.syncOwnedSkins).not.toHaveBeenCalled();
   });
 
   it('backend:sync rejects a malformed top champions list', async () => {

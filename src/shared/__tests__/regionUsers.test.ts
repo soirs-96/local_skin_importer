@@ -1,6 +1,25 @@
 import { describe, it, expect } from 'vitest';
 import { describeRegion, displayName, emptyRegionText } from '../regionUsers';
-import type { RegionUsersResult } from '../regionUsers';
+import type { RegionUser, RegionUsersResult } from '../regionUsers';
+
+/** 一个同区用户 —— 分数和位置都是匹配时才有,这里默认都没有。 */
+function user(overrides: Partial<RegionUser> = {}): RegionUser {
+  return {
+    id: 1,
+    nickname: '林俊杰',
+    gameId: '18557',
+    avatarUrl: '',
+    skinCount: 3,
+    rank: null,
+    rankScoreDiff: null,
+    collectionScore: null,
+    collectionDiff: null,
+    positions: [],
+    positionLabels: [],
+    vip: false,
+    ...overrides
+  };
+}
 
 function result(overrides: Partial<RegionUsersResult> = {}): RegionUsersResult {
   return {
@@ -8,6 +27,12 @@ function result(overrides: Partial<RegionUsersResult> = {}): RegionUsersResult {
     myZoneKnown: true,
     totalInZone: 12,
     userCount: 0,
+    myRank: null,
+    myCollectionScore: null,
+    myPositions: [],
+    myPositionLabels: [],
+    myVip: false,
+    myVipUntil: null,
     users: [],
     ...overrides
   };
@@ -37,21 +62,15 @@ describe('describeRegion', () => {
 
 describe('displayName', () => {
   it('优先用昵称', () => {
-    expect(
-      displayName({ id: 1, nickname: '林俊杰', gameId: '18557', avatarUrl: '', skinCount: 3 })
-    ).toBe('林俊杰');
+    expect(displayName(user({ nickname: '林俊杰' }))).toBe('林俊杰');
   });
 
   it('没昵称就退回游戏ID', () => {
-    expect(displayName({ id: 1, nickname: '', gameId: '18557', avatarUrl: '', skinCount: 0 })).toBe(
-      '18557'
-    );
+    expect(displayName(user({ nickname: '' }))).toBe('18557');
   });
 
   it('两个都没有也给个能看的名字', () => {
-    expect(displayName({ id: 1, nickname: '', gameId: '', avatarUrl: '', skinCount: 0 })).toBe(
-      '无名召唤师'
-    );
+    expect(displayName(user({ nickname: '', gameId: '' }))).toBe('无名召唤师');
   });
 });
 

@@ -83,6 +83,9 @@
       <div v-if="topChampionsLabel" class="sync-result">
         本命英雄 {{ topChampions.length }} 个({{ topChampionsLabel }})—— 收藏册按熟练度把它们排在前面
       </div>
+      <div v-if="matchProfileLabel" class="sync-result">
+        {{ matchProfileLabel }} —— 找搭子时按这个匹配
+      </div>
     </el-card>
 
     <button type="button" class="version-entry" @click="openDevPanel">{{ APP_VERSION }}</button>
@@ -104,11 +107,14 @@ import { useLogStore, type LogLevel } from '../stores/log';
 import type {
   FetchSkinsResult,
   LcuStatus,
+  MatchProfile,
   OwnedDataSource,
   SyncOutcome,
   SyncResult,
   TopChampion
 } from '../../../preload/index';
+import { positionCodeLabel } from '../../../shared/matchProfile';
+import { formatRankDisplay } from '../../../shared/rankLabels';
 
 type LcuState = 'disconnected' | 'running' | 'error';
 
@@ -140,6 +146,12 @@ const catalogFiltered = ref<boolean>(true);
  * 结构化克隆不了,会报 "An object could not be cloned"。
  */
 const topChampions = shallowRef<TopChampion[]>([]);
+/**
+ * 排位段位 + 主玩位置 —— 同步时一起报给后端,后端靠这两样筛同区搭子。
+ *
+ * shallowRef: 跟本命英雄同理,这份对象要整个丢进 IPC。
+ */
+const matchProfile = shallowRef<MatchProfile>({ ranked: [], positions: [] });
 
 const ownedSourceLabel = computed<string>(() => {
   if (ownedSource.value === 'inventory') return '实时读取自游戏客户端';
@@ -185,6 +197,20 @@ const topChampionsLabel = computed<string>(() =>
     .filter((name) => name !== '')
     .join('、')
 );
+
+/** 一行说清楚「我的段位 + 我主玩什么位」—— 找搭子时按这个匹配。 */
+const matchProfileLabel = computed<string>(() => {
+  const parts: string[] = [];
+  const solo = matchProfile.value.ranked.find((r) => r.queueType === 'RANKED_SOLO_5x5');
+  const flex = matchProfile.value.ranked.find((r) => r.queueType === 'RANKED_FLEX_5x5');
+  const rank = solo ?? flex;
+  if (rank) parts.push(`段位 ${formatRankDisplay(rank.tier, rank.division)}`);
+  const positions = matchProfile.value.positions
+    .map((p) => positionCodeLabel(p.position))
+    .filter((label) => label !== '');
+  if (positions.length > 0) parts.push(`主玩 ${positions.join('、')}`);
+  return parts.join(' · ');
+});
 
 function pushLog(level: LogLevel, msg: string): void {
   log.push(level, msg);
@@ -269,6 +295,24 @@ async function onFetchTopChampions(): Promise<void> {
   }
 }
 
+/**
+ * 取排位段位 + 主玩位置。
+ *
+ * 跟皮肤一起报给后端 —— 后端靠这两样筛「分数差不多、位置对得上」的搭子。
+ * 取不到不影响同步:后端保持库里的旧值不动,匹配那边少一半条件而已。
+ */
+async function onFetchMatchProfile(): Promise<void> {
+  try {
+    matchProfile.value = await window.api.getMatchProfile();
+    pushLog(
+      'INFO',
+      `段位 ${matchProfile.value.ranked.length} 条 · 主玩位置 ${matchProfile.value.positions.length} 个`
+    );
+  } catch (e: unknown) {
+    pushLog('WARN', `读取段位/位置失败: ${describeError(e)}`);
+  }
+}
+
 async function onSync(options: { auto?: boolean } = {}): Promise<void> {
   const isAuto = options.auto === true;
   if (!lastFetchedSkins.value) {
@@ -293,6 +337,9 @@ async function onSync(options: { auto?: boolean } = {}): Promise<void> {
       summonerName: summoner.displayName,
       ownedSkinIds,
       topChampions: topChampions.value,
+      // 段位 + 主玩位置 —— 后端拿来筛同区搭子
+      ranked: matchProfile.value.ranked,
+      positions: matchProfile.value.positions,
       mode: isAuto ? 'auto' : 'manual',
       // 昵称 / 召唤师ID / 大区一起上去 —— 后端顺手回填小程序,用户不用手填
       summonerTag: summoner.tagLine,
@@ -340,6 +387,7 @@ onMounted(async () => {
   if (lcuStatus.value.running) {
     await onFetchSkins();
     await onFetchTopChampions();
+    await onFetchMatchProfile();
     if (loggedIn.value) {
       await onSync({ auto: true });
     }

@@ -17,10 +17,13 @@ import {
 } from './match/recommendationService';
 import { clearLlmApiKey, getLlmStatus, saveLlmApiKey } from './llm';
 import { autoAcceptService } from './match/autoAccept';
+import { fetchMatchProfile } from './match/positionStats';
 import { writeAutoAcceptPrefs } from './autoAcceptState';
 import * as devLogger from './devLogger';
 import { MATCH_STATE_CHANNEL } from '../shared/match';
 import type { TopChampion } from '../shared/match';
+import type { MatchProfile, PositionReport, RankedReport } from '../shared/matchProfile';
+import type { RegionUsersQuery } from '../shared/regionUsers';
 import { SETTLEMENT_CHANNEL } from '../shared/settlement';
 import type { LocalSettlement } from '../shared/settlement';
 
@@ -71,6 +74,10 @@ interface SyncPayload {
   ownedSkinIds: number[];
   /** 本命英雄(熟练度前 N)—— 后端收藏册按它排序 */
   topChampions?: TopChampion[];
+  /** 排位段位 —— 后端拿来筛「分数差不多」的搭子 */
+  ranked?: RankedReport[];
+  /** 主玩位置 —— 后端拿来筛「一起打这个位」的搭子 */
+  positions?: PositionReport[];
   /** auto = 启动自动同步(60s 节流);manual = 用户手点(10s 节流) */
   mode?: 'auto' | 'manual';
   /** Riot ID 的标签(# 后面那串)—— 后端回填小程序的「游戏ID」 */
@@ -181,6 +188,12 @@ function assertSyncPayload(p: unknown): asserts p is SyncPayload {
   if (obj.topChampions !== undefined && !isTopChampionList(obj.topChampions)) {
     throw new Error('invalid topChampions');
   }
+  if (obj.ranked !== undefined && !isRankedReportList(obj.ranked)) {
+    throw new Error('invalid ranked');
+  }
+  if (obj.positions !== undefined && !isPositionReportList(obj.positions)) {
+    throw new Error('invalid positions');
+  }
   if (obj.summonerTag !== undefined && typeof obj.summonerTag !== 'string') {
     throw new Error('invalid summonerTag');
   }
@@ -201,6 +214,43 @@ function isTopChampionList(value: unknown): value is TopChampion[] {
       typeof obj.championPoints === 'number'
     );
   });
+}
+
+/** 段位名单:每条至少要有队列、段位名。 */
+function isRankedReportList(value: unknown): value is RankedReport[] {
+  if (!Array.isArray(value)) return false;
+  return value.every((item) => {
+    if (typeof item !== 'object' || item === null) return false;
+    const obj = item as Record<string, unknown>;
+    return typeof obj.queueType === 'string' && typeof obj.tier === 'string';
+  });
+}
+
+/** 位置名单:每条至少要有位置代码。 */
+function isPositionReportList(value: unknown): value is PositionReport[] {
+  if (!Array.isArray(value)) return false;
+  return value.every((item) => {
+    if (typeof item !== 'object' || item === null) return false;
+    const obj = item as Record<string, unknown>;
+    return typeof obj.position === 'string';
+  });
+}
+
+/** 匹配条件:全可选,空 = 后端默认。 */
+function assertRegionUsersQuery(p: unknown): asserts p is RegionUsersQuery {
+  if (typeof p !== 'object' || p === null) throw new Error('invalid payload');
+  const obj = p as Record<string, unknown>;
+  if (obj.positions !== undefined) {
+    if (!Array.isArray(obj.positions) || !obj.positions.every((x) => typeof x === 'string')) {
+      throw new Error('invalid positions');
+    }
+  }
+  for (const key of ['tierGap', 'higherTierGap', 'collectionGap'] as const) {
+    if (obj[key] !== undefined && typeof obj[key] !== 'number') throw new Error(`invalid ${key}`);
+  }
+  for (const key of ['includeHigher', 'includeUnknown'] as const) {
+    if (obj[key] !== undefined && typeof obj[key] !== 'boolean') throw new Error(`invalid ${key}`);
+  }
 }
 
 function assertRedeemPayload(p: unknown): asserts p is RedeemPayload {
@@ -346,7 +396,9 @@ export function registerIpcHandlers(): void {
         payload.topChampions ?? [],
         {
           summonerTag: payload.summonerTag ?? '',
-          gameZone: payload.gameZone ?? ''
+          gameZone: payload.gameZone ?? '',
+          ranked: payload.ranked ?? [],
+          positions: payload.positions ?? []
         }
       );
       // 只在成功后记时间戳 —— 失败不能算「已同步」
@@ -432,6 +484,24 @@ export function registerIpcHandlers(): void {
       const summoner = await lcu.getCurrentSummoner(client);
       if (!summoner.puuid) return [];
       return await getTopChampions(client, summoner.puuid);
+    } catch (error: unknown) {
+      throw normalizeLcuError(error);
+    }
+  });
+
+  /**
+   * 读一份「段位 + 主玩位置」。
+   *
+   * 同步皮肤时一起报给后端 —— 后端靠这两样筛同区搭子。
+   * 读不到就返回空的两份(段位/位置都没有),后端保持库里的旧值不动。
+   */
+  ipcMain.handle('match:get-profile', async (): Promise<MatchProfile> => {
+    try {
+      const lcuAuth = await lcu.resolveLcuAuth();
+      const client = lcu.createLcuClient(lcuAuth);
+      const summoner = await lcu.getCurrentSummoner(client);
+      if (!summoner.puuid) return { ranked: [], positions: [] };
+      return await fetchMatchProfile(client, summoner.puuid);
     } catch (error: unknown) {
       throw normalizeLcuError(error);
     }
@@ -581,13 +651,15 @@ export function registerIpcHandlers(): void {
    * 客户端现场读的大区只是兜底(还没同步过皮肤时),所以两条并行:
    * 库里认出来了就不用再等客户端那次。
    */
-  ipcMain.handle('tools:fetch-region-users', async () => {
+  ipcMain.handle('tools:fetch-region-users', async (_event, payload?: RegionUsersQuery) => {
+    if (payload !== undefined) assertRegionUsersQuery(payload);
+    const query: RegionUsersQuery = payload ?? {};
     const localZonePromise = detectLocalZone();
-    const first = await fetchRegionUsers('');
+    const first = await fetchRegionUsers('', undefined, query);
     if (first.myZone) return first;
     const localZone = await localZonePromise;
     if (!localZone) return first;
-    return await fetchRegionUsers(localZone);
+    return await fetchRegionUsers(localZone, undefined, query);
   });
 }
 

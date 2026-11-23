@@ -92,4 +92,97 @@ describe('fetchRegionUsers', () => {
 
     await expect(fetchRegionUsers()).rejects.toThrow(/登录已过期/);
   });
+
+  it('匹配条件按查询参数发给后端', async () => {
+    vi.mocked(getStoredToken).mockReturnValue('jwt');
+    vi.mocked(axios.get).mockResolvedValue({ data: { code: 200, data: { users: [] } } });
+
+    await fetchRegionUsers('艾欧尼亚', 30, {
+      positions: ['mid', 'support'],
+      tierGap: 2,
+      includeHigher: true,
+      higherTierGap: 3,
+      collectionGap: 0.5
+    });
+
+    const params = vi.mocked(axios.get).mock.calls[0][1]?.params as Record<string, unknown>;
+    expect(params.gameZone).toBe('艾欧尼亚');
+    expect(params.positions).toBe('mid,support');
+    expect(params.tierGap).toBe(2);
+    expect(params.includeHigher).toBe(true);
+    expect(params.higherTierGap).toBe(3);
+    expect(params.collectionGap).toBe(0.5);
+  });
+
+  it('没选位置就不带 positions 参数', async () => {
+    vi.mocked(getStoredToken).mockReturnValue('jwt');
+    vi.mocked(axios.get).mockResolvedValue({ data: { code: 200, data: { users: [] } } });
+
+    await fetchRegionUsers('', 30, { positions: [] });
+
+    const params = vi.mocked(axios.get).mock.calls[0][1]?.params as Record<string, unknown>;
+    expect(params.positions).toBeUndefined();
+  });
+
+  it('段位 / 收藏分 / 位置都照后端给的整理出来', async () => {
+    vi.mocked(getStoredToken).mockReturnValue('jwt');
+    vi.mocked(axios.get).mockResolvedValue({
+      data: {
+        code: 200,
+        data: {
+          myZone: '艾欧尼亚',
+          myZoneKnown: true,
+          totalInZone: 3,
+          userCount: 1,
+          myRank: {
+            queueType: 'RANKED_SOLO_5x5',
+            tier: 'GOLD',
+            division: 'II',
+            score: 23400,
+            label: '黄金II'
+          },
+          myCollectionScore: 900,
+          myPositions: ['mid'],
+          myPositionLabels: ['中单'],
+          myVip: true,
+          myVipUntil: '2026-12-01T00:00:00',
+          users: [
+            {
+              id: 7,
+              nickname: '林俊杰',
+              gameId: '18557',
+              skinCount: 12,
+              rank: {
+                queueType: 'RANKED_SOLO_5x5',
+                tier: 'GOLD',
+                division: 'I',
+                score: 24500,
+                label: '黄金I'
+              },
+              rankScoreDiff: 1100,
+              collectionScore: 1200,
+              collectionDiff: 300,
+              positions: ['mid', 'support'],
+              positionLabels: ['中单', '辅助'],
+              vip: true
+            }
+          ]
+        }
+      }
+    });
+
+    const result = await fetchRegionUsers();
+
+    expect(result.myVip).toBe(true);
+    expect(result.myRank?.label).toBe('黄金II');
+    expect(result.myCollectionScore).toBe(900);
+    expect(result.myPositionLabels).toEqual(['中单']);
+    const user = result.users[0];
+    expect(user.rank?.label).toBe('黄金I');
+    expect(user.rankScoreDiff).toBe(1100);
+    expect(user.collectionScore).toBe(1200);
+    expect(user.collectionDiff).toBe(300);
+    expect(user.positionLabels).toEqual(['中单', '辅助']);
+    expect(user.vip).toBe(true);
+  });
 });

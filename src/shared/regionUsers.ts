@@ -5,6 +5,22 @@
  * 两边对同一份数据的理解不能分叉。
  */
 
+import type { PositionCode } from './matchProfile';
+
+/** 一条排位段位。 */
+export interface RankProfile {
+  queueType: string;
+  tier: string;
+  division: string;
+  leaguePoints: number;
+  wins: number;
+  losses: number;
+  /** 后端折算的可比数值分 */
+  score: number;
+  /** 「黄金 III」这种展示串 */
+  label: string;
+}
+
 /** 同区的一个召唤师。 */
 export interface RegionUser {
   /** 站内用户 id */
@@ -17,6 +33,20 @@ export interface RegionUser {
   avatarUrl: string;
   /** 站内已同步的皮肤数 */
   skinCount: number;
+  /** 他的段位;null = 没同步过段位 */
+  rank: RankProfile | null;
+  /** 他跟我的段位分差;null = 我或他没段位 */
+  rankScoreDiff: number | null;
+  /** 他的站内收藏分(稀有度加权) */
+  collectionScore: number | null;
+  /** 他跟我的收藏分差 */
+  collectionDiff: number | null;
+  /** 他的主玩位置代码 */
+  positions: PositionCode[];
+  /** 他的主玩位置中文名 */
+  positionLabels: string[];
+  /** 他是不是 VIP */
+  vip: boolean;
 }
 
 /** 同区用户列表的完整响应。 */
@@ -29,8 +59,40 @@ export interface RegionUsersResult {
   totalInZone: number;
   /** 本次返回的人数 */
   userCount: number;
-  /** 同区用户;按站内皮肤数从多到少 */
+  /** 我的段位;null = 还没同步过段位 */
+  myRank: RankProfile | null;
+  /** 我的站内收藏分 */
+  myCollectionScore: number | null;
+  /** 我的主玩位置代码 */
+  myPositions: PositionCode[];
+  /** 我的主玩位置中文名 */
+  myPositionLabels: string[];
+  /** 我是不是 VIP */
+  myVip: boolean;
+  /** VIP 到期时间;null = 非 VIP */
+  myVipUntil: string | null;
+  /** 同区用户;按「分数差不多」排 */
   users: RegionUser[];
+}
+
+/** 拉同区用户时的筛选条件 —— 全可选,空 = 后端默认。 */
+export interface RegionUsersQuery {
+  /** 我要一起打的位置 */
+  positions?: PositionCode[];
+  /** 段位窗口:允许跨几个大段位(0 = 只同段位) */
+  tierGap?: number;
+  /**
+   * 只看比自己分高的人 —— VIP 专属。
+   *
+   * 打开后段位窗口变成单边的:往上看几个大段位由 {@link RegionUsersQuery.higherTierGap} 决定。
+   */
+  includeHigher?: boolean;
+  /** VIP 模式下往上看几个大段位(0 = 只同段位但分数更高) */
+  higherTierGap?: number;
+  /** 收藏分的相对差上限(0..1) */
+  collectionGap?: number;
+  /** 没有段位数据的人要不要带上 */
+  includeUnknown?: boolean;
 }
 
 /** 一次拉多少个人 —— 三十个够一屏。 */

@@ -1,6 +1,7 @@
 import axios from 'axios';
 import { getStoredToken, clearStoredToken } from './auth';
 import type { TopChampion } from '../shared/match';
+import type { PositionReport, RankedReport } from '../shared/matchProfile';
 
 const BACKEND_BASE_URL = 'http://101.34.210.254';
 const AXIOS_TIMEOUT_MS = 10_000;
@@ -59,6 +60,10 @@ export interface SyncProfile {
   summonerTag?: string;
   /** 大区编号(腾讯那套)—— 认不出来就空着 */
   gameZone?: string;
+  /** 排位段位 —— 后端拿它筛「分数差不多」的搭子 */
+  ranked?: RankedReport[];
+  /** 主玩位置 —— 后端拿它筛「一起打这个位」的搭子 */
+  positions?: PositionReport[];
 }
 
 export async function syncOwnedSkins(
@@ -75,13 +80,17 @@ export async function syncOwnedSkins(
   // 本命英雄跟皮肤一起传 —— 后端一次请求就把两样都存了,
   // 收藏册的排序直接按这份名单来。
   // 昵称/召唤师ID/大区也一起传 —— 后端顺手回填小程序的用户资料。
+  // 段位和位置也一起传 —— 后端靠这两样筛「分数差不多、位置对得上」的搭子。
+  // 空数组表示「这次没读到」,后端保持库里的旧值不动。
   const body = {
     puuid,
     summonerName,
     ownedSkinIds,
     topChampions,
     summonerTag: profile.summonerTag ?? '',
-    gameZone: profile.gameZone ?? ''
+    gameZone: profile.gameZone ?? '',
+    ranked: profile.ranked ?? [],
+    positions: profile.positions ?? []
   };
 
   for (let attempt = 0; attempt < MAX_ATTEMPTS; attempt++) {

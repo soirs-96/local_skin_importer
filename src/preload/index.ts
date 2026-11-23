@@ -22,11 +22,22 @@ import type {
 import type { ChampionIndexEntry } from '../shared/recommendation';
 import type { DevLogLine } from '../shared/dev';
 import type { AutoAcceptState } from '../shared/autoAccept';
-import type { RegionUser, RegionUsersResult } from '../shared/regionUsers';
+import type {
+  RegionUser,
+  RegionUsersQuery,
+  RegionUsersResult
+} from '../shared/regionUsers';
+import type { MatchProfile, PositionReport, RankedReport } from '../shared/matchProfile';
 import type { LcuDiagnosis, LcuFailureCode } from '../main/lcu/types';
 
 export type { AutoAcceptState, AutoAcceptStatus } from '../shared/autoAccept';
-export type { RegionUser, RegionUsersResult } from '../shared/regionUsers';
+export type { RegionUser, RegionUsersQuery, RegionUsersResult } from '../shared/regionUsers';
+export type {
+  MatchProfile,
+  PositionCode,
+  PositionReport,
+  RankedReport
+} from '../shared/matchProfile';
 
 export type {
   ChampSelectMember,
@@ -115,6 +126,10 @@ export interface SyncPayload {
   ownedSkinIds: number[];
   /** 本命英雄(熟练度前 15)—— 后端收藏册按它把英雄排到前面 */
   topChampions?: TopChampion[];
+  /** 排位段位 —— 后端拿来筛「分数差不多」的搭子 */
+  ranked?: RankedReport[];
+  /** 主玩位置 —— 后端拿来筛「一起打这个位」的搭子 */
+  positions?: PositionReport[];
   /** auto = 启动自动同步(60s 节流);manual = 用户手点(10s 节流) */
   mode?: 'auto' | 'manual';
   /** Riot ID 的标签(# 后面那串)—— 后端回填小程序的「游戏ID」 */
@@ -222,6 +237,8 @@ const api = {
   refreshMatchState: (): Promise<MatchSnapshot> => invoke('match:refresh'),
   /** 取熟练度最高的 15 个英雄(本命英雄),同步时一起传给后端 */
   getTopChampions: (): Promise<TopChampion[]> => invoke('match:get-top-champions'),
+  /** 读一份「段位 + 主玩位置」—— 同步时一起报给后端,后端靠它筛搭子 */
+  getMatchProfile: (): Promise<MatchProfile> => invoke('match:get-profile'),
   /**
    * 查一个召唤师的资料(名字#标签 或 游戏 ID)。
    * 只有资料 —— 战绩在下面那个接口。
@@ -260,7 +277,8 @@ const api = {
   setAutoAcceptDelay: (delaySeconds: number): Promise<AutoAcceptState> =>
     invoke('tools:set-auto-accept-delay', { delaySeconds }),
   /** 拉同大区的用户(找人双排) */
-  fetchRegionUsers: (): Promise<RegionUsersResult> => invoke('tools:fetch-region-users'),
+  fetchRegionUsers: (query?: RegionUsersQuery): Promise<RegionUsersResult> =>
+    invoke('tools:fetch-region-users', query ?? {}),
 
   // ---- 局末结算 ------------------------------------------------------------
   /** 取完整的那份结算;null = 还没打过一局 */
