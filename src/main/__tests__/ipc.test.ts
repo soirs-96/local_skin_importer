@@ -78,7 +78,8 @@ const mocks = vi.hoisted(() => {
     autoAcceptGetState: vi.fn(),
     autoAcceptSetEnabled: vi.fn(),
     autoAcceptSetDelay: vi.fn(),
-    writeAutoAcceptPrefs: vi.fn()
+    writeAutoAcceptPrefs: vi.fn(),
+    fetchRegionUsers: vi.fn()
   };
 });
 
@@ -137,6 +138,10 @@ vi.mock('../catalog', () => ({
   fetchCatalog: mocks.fetchCatalog,
   fetchMyOwned: mocks.fetchMyOwned,
   fetchCatalogSkinBySkinId: mocks.fetchCatalogSkinBySkinId
+}));
+
+vi.mock('../regionUsers', () => ({
+  fetchRegionUsers: mocks.fetchRegionUsers
 }));
 
 vi.mock('../rating', () => ({
@@ -290,6 +295,14 @@ describe('IPC wiring', () => {
     mocks.autoAcceptSetEnabled.mockReset();
     mocks.autoAcceptSetDelay.mockReset();
     mocks.writeAutoAcceptPrefs.mockReset();
+    mocks.fetchRegionUsers.mockReset();
+    mocks.fetchRegionUsers.mockResolvedValue({
+      myZone: '艾欧尼亚',
+      myZoneKnown: true,
+      totalInZone: 3,
+      userCount: 0,
+      users: []
+    });
     mocks.getFocusedWindow.mockReset();
     mocks.clipboardWriteText.mockReset();
     mocks.readSyncState.mockReturnValue({ lastSyncAt: null });
@@ -342,7 +355,7 @@ describe('IPC wiring', () => {
     ]);
   });
 
-  it('registers all 31 ipc channels on call to registerIpcHandlers', () => {
+  it('registers all 32 ipc channels on call to registerIpcHandlers', () => {
     expect(mocks.ipcMainHandle.mock.calls.map(([channel]) => channel)).toEqual([
       'lcu:check-status',
       'lcu:fetch-skins',
@@ -374,8 +387,36 @@ describe('IPC wiring', () => {
       'llm:clear-key',
       'tools:get-auto-accept',
       'tools:set-auto-accept',
-      'tools:set-auto-accept-delay'
+      'tools:set-auto-accept-delay',
+      'tools:fetch-region-users'
     ]);
+  });
+
+  it('tools:fetch-region-users 库里认出了大区,就不用客户端现场读的那次', async () => {
+    await invoke('tools:fetch-region-users');
+
+    // 只查一次 —— 库里已经有大区了
+    expect(mocks.fetchRegionUsers).toHaveBeenCalledTimes(1);
+    expect(mocks.fetchRegionUsers).toHaveBeenCalledWith('');
+  });
+
+  it('tools:fetch-region-users 库里没有大区,拿客户端读到的大区再查一次', async () => {
+    mocks.fetchRegionUsers.mockResolvedValueOnce({
+      myZone: null,
+      myZoneKnown: false,
+      totalInZone: 0,
+      userCount: 0,
+      users: []
+    });
+    mocks.resolveLcuAuth.mockResolvedValue({ port: 1234 });
+    mocks.createLcuClient.mockReturnValue({});
+    mocks.fetchAreaId.mockResolvedValue(1);
+
+    await invoke('tools:fetch-region-users');
+
+    expect(mocks.fetchRegionUsers).toHaveBeenCalledTimes(2);
+    // 第二次带上客户端读到的大区编号
+    expect(mocks.fetchRegionUsers).toHaveBeenLastCalledWith('1');
   });
 
   it('match:get-settlement 没有结算时返回 null', async () => {

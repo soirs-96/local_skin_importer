@@ -3,6 +3,7 @@ import { BrowserWindow, Notification, clipboard, ipcMain } from 'electron';
 import * as lcu from './lcu';
 import * as auth from './auth';
 import { syncOwnedSkins, shouldSkipSync, minIntervalFor } from './backend';
+import { fetchRegionUsers } from './regionUsers';
 import { fetchCatalog, fetchMyOwned } from './catalog';
 import { buildSettlementView } from './match/settlement';
 import { fetchMyRatings, fetchSkinRatingStats, submitSkinRating } from './rating';
@@ -387,7 +388,6 @@ export function registerIpcHandlers(): void {
     clipboard.writeText(text);
     return { ok: true as const };
   });
-
   // 开发日志控制台。渲染进程打开控制台时来挂上,顺手把之前的历史捞回去。
   ipcMain.handle('dev:console-attach', async (_event, afterSeq?: number) => {
     devLogger.attachConsole();
@@ -573,4 +573,36 @@ export function registerIpcHandlers(): void {
     writeAutoAcceptPrefs({ delaySeconds: seconds });
     return autoAcceptService.setDelay(seconds);
   });
+
+  /**
+   * 拉同大区的用户(找人双排)。
+   *
+   * 大区以库里同步时上报的为准 —— 那是权威值。
+   * 客户端现场读的大区只是兜底(还没同步过皮肤时),所以两条并行:
+   * 库里认出来了就不用再等客户端那次。
+   */
+  ipcMain.handle('tools:fetch-region-users', async () => {
+    const localZonePromise = detectLocalZone();
+    const first = await fetchRegionUsers('');
+    if (first.myZone) return first;
+    const localZone = await localZonePromise;
+    if (!localZone) return first;
+    return await fetchRegionUsers(localZone);
+  });
+}
+
+/**
+ * 现场从游戏客户端读大区编号。读不到就空着 —— 大区不是这功能的必需项,
+ * 库里同步过的话后端自己能认出来。
+ */
+async function detectLocalZone(): Promise<string> {
+  try {
+    const lcuAuth = await lcu.resolveLcuAuth();
+    const client = lcu.createLcuClient(lcuAuth);
+    const areaId = await lcu.fetchAreaId(client);
+    return areaId === null ? '' : String(areaId);
+  } catch {
+    // 客户端没开 —— 空着,后端会用自己的口径
+    return '';
+  }
 }

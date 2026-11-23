@@ -22,9 +22,11 @@ import type {
 import type { ChampionIndexEntry } from '../shared/recommendation';
 import type { DevLogLine } from '../shared/dev';
 import type { AutoAcceptState } from '../shared/autoAccept';
+import type { RegionUser, RegionUsersResult } from '../shared/regionUsers';
 import type { LcuDiagnosis, LcuFailureCode } from '../main/lcu/types';
 
 export type { AutoAcceptState, AutoAcceptStatus } from '../shared/autoAccept';
+export type { RegionUser, RegionUsersResult } from '../shared/regionUsers';
 
 export type {
   ChampSelectMember,
@@ -190,7 +192,7 @@ const api = {
   fetchMyOwned: (): Promise<OwnedSnapshot> => invoke('catalog:fetch-owned'),
   /** 打开 Chromium 开发者工具(开发者面板用) */
   openDevTools: (): Promise<{ ok: true }> => invoke('dev:open-devtools'),
-  /** 把一段文本写进系统剪贴板(开发者面板的「复制诊断信息」用) */
+  /** 把一段文本写进系统剪贴板(复制诊断信息 / 游戏ID 用) */
   copyText: (text: string): Promise<{ ok: true }> => invoke('dev:copy-text', text),
 
   // ---- 开发日志控制台 --------------------------------------------------------
@@ -257,6 +259,8 @@ const api = {
   /** 设置接受前要等多久(秒) */
   setAutoAcceptDelay: (delaySeconds: number): Promise<AutoAcceptState> =>
     invoke('tools:set-auto-accept-delay', { delaySeconds }),
+  /** 拉同大区的用户(找人双排) */
+  fetchRegionUsers: (): Promise<RegionUsersResult> => invoke('tools:fetch-region-users'),
 
   // ---- 局末结算 ------------------------------------------------------------
   /** 取完整的那份结算;null = 还没打过一局 */
