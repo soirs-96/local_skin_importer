@@ -30,8 +30,7 @@ import type {
 import type {
   MatchProfile,
   PositionReport,
-  RankedReport,
-  RecentMatchReport
+  RankedReport
 } from '../shared/matchProfile';
 import type { LcuDiagnosis, LcuFailureCode } from '../main/lcu/types';
 import { LOBBY_EVENT_CHANNEL } from '../shared/lobby';
@@ -150,8 +149,6 @@ export interface SyncPayload {
   ranked?: RankedReport[];
   /** 主玩位置 —— 后端拿来筛「一起打这个位」的搭子 */
   positions?: PositionReport[];
-  /** 近 10 场排位 —— 后端拿来算大厅的「近期评分」和「近 10 场主玩位置」 */
-  recentMatches?: RecentMatchReport[];
   /** auto = 启动自动同步(60s 节流);manual = 用户手点(10s 节流) */
   mode?: 'auto' | 'manual';
   /** Riot ID 的标签(# 后面那串)—— 后端回填小程序的「游戏ID」 */
@@ -314,9 +311,14 @@ const api = {
   /** 把一个人拉进房间;撞不到接口就降级成复制游戏ID。 */
   inviteLobbyPlayer: (nickname: string, gameId: string): Promise<LobbyInviteResult> =>
     invoke('lobby:invite', { nickname, gameId }),
-  /** 悬浮卡片:某个人近 10 场排位的档案 */
-  getLobbyPlayerProfile: (userId: number): Promise<LobbyPlayerProfile> =>
-    invoke('lobby:player-profile', { userId }),
+  /**
+   * 悬浮卡片:某个人近 10 场排位的档案。
+   *
+   * <p>走「最近战绩」那条路(腾讯的对局服务),跟「战绩查询」页同一套评分。
+   * 需要游戏客户端开着 —— 腾讯的会话令牌是从客户端拿的。
+   */
+  getLobbyPlayerProfile: (query: { nickname: string; gameId: string }): Promise<LobbyPlayerProfile> =>
+    invoke('lobby:player-profile', query),
   /** 订阅主进程推来的大厅状态,返回取消订阅的函数 */
   onLobbyState: (cb: (state: LobbyState) => void): (() => void) => {
     const listener = (_e: Electron.IpcRendererEvent, state: LobbyState): void => {

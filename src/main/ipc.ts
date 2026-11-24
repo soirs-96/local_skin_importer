@@ -20,10 +20,11 @@ import { autoAcceptService } from './match/autoAccept';
 import { fetchMatchProfile } from './match/positionStats';
 import { writeAutoAcceptPrefs } from './autoAcceptState';
 import { lobbyService } from './lobby/service';
+import { fetchLobbyPlayerProfile } from './lobby/profile';
 import * as devLogger from './devLogger';
 import { MATCH_STATE_CHANNEL } from '../shared/match';
 import type { TopChampion } from '../shared/match';
-import type { MatchProfile, PositionReport, RankedReport, RecentMatchReport } from '../shared/matchProfile';
+import type { MatchProfile, PositionReport, RankedReport } from '../shared/matchProfile';
 import type { RegionUsersQuery } from '../shared/regionUsers';
 import { SETTLEMENT_CHANNEL } from '../shared/settlement';
 import type { LocalSettlement } from '../shared/settlement';
@@ -81,9 +82,10 @@ interface LobbyInvitePayload {
   gameId: string;
 }
 
-/** 悬浮卡片要看的那个人的 id。 */
+/** 悬浮卡片要查的那个人 —— 拼成「名字#标签」去搜。 */
 interface LobbyPlayerProfilePayload {
-  userId: number;
+  nickname: string;
+  gameId: string;
 }
 
 interface AutoAcceptDelayPayload {
@@ -100,8 +102,6 @@ interface SyncPayload {
   ranked?: RankedReport[];
   /** 主玩位置 —— 后端拿来筛「一起打这个位」的搭子 */
   positions?: PositionReport[];
-  /** 近 10 场排位 —— 后端拿来算大厅的「近期评分」和「近 10 场主玩位置」 */
-  recentMatches?: RecentMatchReport[];
   /** auto = 启动自动同步(60s 节流);manual = 用户手点(10s 节流) */
   mode?: 'auto' | 'manual';
   /** Riot ID 的标签(# 后面那串)—— 后端回填小程序的「游戏ID」 */
@@ -218,9 +218,6 @@ function assertSyncPayload(p: unknown): asserts p is SyncPayload {
   if (obj.positions !== undefined && !isPositionReportList(obj.positions)) {
     throw new Error('invalid positions');
   }
-  if (obj.recentMatches !== undefined && !isRecentMatchReportList(obj.recentMatches)) {
-    throw new Error('invalid recentMatches');
-  }
   if (obj.summonerTag !== undefined && typeof obj.summonerTag !== 'string') {
     throw new Error('invalid summonerTag');
   }
@@ -260,30 +257,6 @@ function isPositionReportList(value: unknown): value is PositionReport[] {
     if (typeof item !== 'object' || item === null) return false;
     const obj = item as Record<string, unknown>;
     return typeof obj.position === 'string';
-  });
-}
-
-/** 近 10 场排位:每条至少要有 gameId 和分数。 */
-function isRecentMatchReportList(value: unknown): value is RecentMatchReport[] {
-  if (!Array.isArray(value)) return false;
-  return value.every((item) => {
-    if (typeof item !== 'object' || item === null) return false;
-    const obj = item as Record<string, unknown>;
-    return (
-      typeof obj.gameId === 'string' &&
-      typeof obj.championId === 'number' &&
-      typeof obj.championName === 'string' &&
-      typeof obj.position === 'string' &&
-      typeof obj.queueType === 'string' &&
-      typeof obj.kills === 'number' &&
-      typeof obj.deaths === 'number' &&
-      typeof obj.assists === 'number' &&
-      typeof obj.minionKills === 'number' &&
-      typeof obj.durationS === 'number' &&
-      typeof obj.win === 'boolean' &&
-      typeof obj.score === 'number' &&
-      typeof obj.playedAtMs === 'number'
-    );
   });
 }
 
@@ -453,8 +426,7 @@ export function registerIpcHandlers(): void {
           summonerTag: payload.summonerTag ?? '',
           gameZone: payload.gameZone ?? '',
           ranked: payload.ranked ?? [],
-          positions: payload.positions ?? [],
-          recentMatches: payload.recentMatches ?? []
+          positions: payload.positions ?? []
         }
       );
       // 只在成功后记时间戳 —— 失败不能算「已同步」
@@ -556,7 +528,7 @@ export function registerIpcHandlers(): void {
       const lcuAuth = await lcu.resolveLcuAuth();
       const client = lcu.createLcuClient(lcuAuth);
       const summoner = await lcu.getCurrentSummoner(client);
-      if (!summoner.puuid) return { ranked: [], positions: [], recentMatches: [] };
+      if (!summoner.puuid) return { ranked: [], positions: [] };
       return await fetchMatchProfile(client, summoner.puuid);
     } catch (error: unknown) {
       throw normalizeLcuError(error);
@@ -750,13 +722,20 @@ export function registerIpcHandlers(): void {
     return await lobbyService.invite(payload.nickname, payload.gameId);
   });
 
-  /** 悬浮卡片:某个玩家近 10 场排位的档案。 */
+  /**
+   * 悬浮卡片:某个玩家近 10 场排位的档案。
+   *
+   * <p>走「最近战绩」那条路(腾讯的对局服务)—— 跟「战绩查询」页同一套评分。
+   * 需要游戏客户端开着:腾讯的会话令牌是从客户端拿的。
+   */
   ipcMain.handle('lobby:player-profile', async (_event, payload: LobbyPlayerProfilePayload) => {
     if (typeof payload !== 'object' || payload === null) throw new Error('invalid payload');
-    if (typeof payload.userId !== 'number' || !Number.isFinite(payload.userId)) {
-      throw new Error('invalid userId');
-    }
-    return await lobbyService.playerProfile(payload.userId);
+    if (typeof payload.nickname !== 'string') throw new Error('invalid nickname');
+    if (typeof payload.gameId !== 'string') throw new Error('invalid gameId');
+    return await fetchLobbyPlayerProfile(matchPoller, {
+      nickname: payload.nickname,
+      gameId: payload.gameId
+    });
   });
 }
 

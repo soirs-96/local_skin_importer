@@ -151,7 +151,7 @@ const topChampions = shallowRef<TopChampion[]>([]);
  *
  * shallowRef: 跟本命英雄同理,这份对象要整个丢进 IPC。
  */
-const matchProfile = shallowRef<MatchProfile>({ ranked: [], positions: [], recentMatches: [] });
+const matchProfile = shallowRef<MatchProfile>({ ranked: [], positions: [] });
 
 const ownedSourceLabel = computed<string>(() => {
   if (ownedSource.value === 'inventory') return '实时读取自游戏客户端';
@@ -340,8 +340,6 @@ async function onSync(options: { auto?: boolean } = {}): Promise<void> {
       // 段位 + 主玩位置 —— 后端拿来筛同区搭子
       ranked: matchProfile.value.ranked,
       positions: matchProfile.value.positions,
-      // 近 10 场排位 —— 大厅列表的「近 10 场主玩位置」和悬浮卡片的「近期评分」
-      recentMatches: matchProfile.value.recentMatches,
       mode: isAuto ? 'auto' : 'manual',
       // 昵称 / 召唤师ID / 大区一起上去 —— 后端顺手回填小程序,用户不用手填
       summonerTag: summoner.tagLine,

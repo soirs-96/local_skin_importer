@@ -58,64 +58,79 @@ export interface LobbyPlayer {
   collectionScore: number | null;
   positions: string[];
   positionLabels: string[];
-  /**
-   * 近 10 场**排位**的综合分 0~100;null = 这个人没上报过近 10 场。
-   *
-   * <p>只看排位表现(KDA / 补刀 / 胜负),跟皮肤评分没关系。
-   */
-  recentScore: number | null;
-  /** 近 10 场的场次;0 = 没上报过 */
-  recentMatchCount: number;
-  /** 近 10 场里的位置清单(按场次从多到少) */
-  recentPositions: string[];
-  recentPositionLabels: string[];
   vip: boolean;
   /** 上次出现在大厅的时间('yyyy-MM-dd HH:mm:ss');null = 从来过 */
   lastLobbyAt: string | null;
 }
 
 /** 悬浮卡片里的一场排位。 */
-export interface LobbyRecentMatch {
+export interface LobbyProfileMatch {
   gameId: string;
   championId: number;
   championName: string;
-  position: string;
+  /** 位置(中文);空串 = 认不出来 */
   positionLabel: string;
-  queueType: string;
   kills: number;
   deaths: number;
   assists: number;
   minionKills: number;
-  durationS: number;
-  win: boolean;
-  /** 这场的表现分 0~100 */
+  /** 这一局的分 0~10 */
   score: number;
+  win: boolean;
   /** 对局时间(epoch 毫秒) */
   playedAtMs: number;
+}
+
+/** 五个维度的平均值 —— 跟战绩查询页那套评分是一个口径。 */
+export interface LobbyProfileMetrics {
+  /** 参团率 0~1 */
+  kp: number;
+  /** 经济份额 0~1 */
+  goldShare: number;
+  /** 伤害份额 0~1 */
+  damageShare: number;
+  /** 补刀份额 0~1 */
+  csShare: number;
+  /** KDA */
+  kda: number;
+}
+
+/** 四个计分维度各自的平均子分,0~1。 */
+export interface LobbyProfileBreakdown {
+  participation: number;
+  economy: number;
+  damage: number;
+  kda: number;
 }
 
 /**
  * 某个玩家近 10 场排位的档案 —— 大厅列表里鼠标悬浮出来的那张卡片。
  *
- * <p>数据来自各人桌面端的同步上报(后端没有别的办法拿到别人的对局历史)。
+ * <p>数据来自「最近战绩」(腾讯的对局服务),跟「战绩查询」页**同一套评分**
+ * (`shared/scoring.ts`):表现分 0~10,按各位置的基准值折算 —— 只看排位表现,
+ * 跟皮肤评分没关系。
  */
 export interface LobbyPlayerProfile {
-  userId: number;
-  /** 统计到的场次 */
-  matchCount: number;
-  winCount: number;
-  /** 胜率 0~1 */
-  winRate: number;
-  /** 近期分 0~100;null = 没上报过 */
+  /** 表现分 0~10 —— 近 N 场排位的均分;null = 没有排位数据 */
   score: number | null;
-  avgKda: number | null;
-  avgCs: number | null;
-  topPosition: string | null;
-  topPositionLabel: string | null;
-  positions: { position: string; label: string; count: number }[];
+  /** 计入的排位场次 */
+  games: number;
+  /** 排位胜场 */
+  wins: number;
+  /** 比同场平均高/低多少分(负数 = 低于同场那几个人) */
+  vsAverage: number;
+  /** 五个维度的平均值 */
+  metrics: LobbyProfileMetrics;
+  /** 四个计分维度各自的平均子分,0~1 */
+  breakdown: LobbyProfileBreakdown;
+  /** 打得最多的位置(中文);空串 = 没有排位数据 */
+  positionLabel: string;
+  /** 位置分布(打得多的在前) */
+  byPosition: { label: string; score: number; games: number }[];
+  /** 近期常用英雄 */
   champions: { championId: number; championName: string; count: number }[];
-  /** 近 10 场明细,新的在前 */
-  matches: LobbyRecentMatch[];
+  /** 近 N 场明细,新的在前 */
+  matches: LobbyProfileMatch[];
 }
 
 /** 顶栏的三个数字。 */
@@ -282,15 +297,12 @@ export function lobbyPlayerName(player: LobbyPlayer): string {
 }
 
 /**
- * 列表里显示的主玩位置。
+ * 列表里显示的上报主玩位置。
  *
- * <p>优先用「近 10 场」的位置 —— 那是他最近真在打的位;
- * 没有近 10 场数据(没同步过)就退回上报的位置。两边都没有就是空。
+ * <p>这是**历史累计**的位置(后端按 `t_user_position_stat` 统计的)——
+ * 最近那 10 场的位置在悬浮卡片里,拉到之前先用这份顶着。
  */
 export function lobbyPlayerPositions(player: LobbyPlayer): { codes: string[]; labels: string[] } {
-  if (player.recentPositions.length > 0) {
-    return { codes: player.recentPositions, labels: player.recentPositionLabels };
-  }
   return { codes: player.positions, labels: player.positionLabels };
 }
 

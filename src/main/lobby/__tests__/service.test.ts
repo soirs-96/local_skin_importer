@@ -49,7 +49,6 @@ const mocks = vi.hoisted(() => {
     writeLobbyPrefs: vi.fn(() => ({ publicVisible: true })),
     fetchLobbyPlayers: vi.fn(),
     fetchLobbyHistory: vi.fn(),
-    fetchLobbyPlayerProfile: vi.fn(),
     normalizeSnapshot: vi.fn((snapshot: unknown) => snapshot),
     invitePlayer: vi.fn()
   };
@@ -70,7 +69,6 @@ vi.mock('../../match/poller', () => ({
 vi.mock('../api', () => ({
   fetchLobbyPlayers: mocks.fetchLobbyPlayers,
   fetchLobbyHistory: mocks.fetchLobbyHistory,
-  fetchLobbyPlayerProfile: mocks.fetchLobbyPlayerProfile,
   normalizeSnapshot: mocks.normalizeSnapshot
 }));
 
@@ -187,16 +185,5 @@ describe('LobbyService 登录之后重连', () => {
     expect(mocks.FakeLobbyClient.instances).toHaveLength(2);
     expect(mocks.FakeLobbyClient.instances[1].stopped).toBe(false);
     service.stop();
-  });
-});
-
-describe('LobbyService 悬浮档案', () => {
-  it('按人取近 10 场档案', async () => {
-    const profile = { userId: 7, matchCount: 3 };
-    mocks.fetchLobbyPlayerProfile.mockResolvedValue(profile);
-
-    const service = new LobbyService();
-    await expect(service.playerProfile(7)).resolves.toEqual(profile);
-    expect(mocks.fetchLobbyPlayerProfile).toHaveBeenCalledWith(7);
   });
 });

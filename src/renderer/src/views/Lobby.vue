@@ -87,6 +87,7 @@
           <div class="card-header">
             <span class="hx-diamond hx-diamond--blue" />
             <span class="hx-label">玩家列表</span>
+            <span class="status-text">右侧数字 = 近 10 场排位表现分</span>
             <el-radio-group v-model="scope" size="small">
               <el-radio-button value="all">全部</el-radio-button>
               <el-radio-button value="same">同大区</el-radio-button>
@@ -129,8 +130,8 @@
                 <span v-if="positionLabelsOf(p).length"> · {{ positionLabelsOf(p).join('、') }}</span>
               </span>
             </div>
-            <span class="player-score" :class="{ 'is-empty': p.recentScore === null }">
-              {{ p.recentScore === null ? '—' : p.recentScore }}
+            <span class="player-score" :class="{ 'is-empty': scoreOf(p) === null }">
+              {{ scoreOf(p) ?? '—' }}
             </span>
             <div class="player-actions">
               <el-button class="hx-gold" size="small" text @click="onCopy(p)">复制ID</el-button>
@@ -232,6 +233,7 @@ onMounted(async () => {
 onUnmounted(() => {
   unsubscribe?.();
   cancelClose();
+  if (prefetchTimer) clearTimeout(prefetchTimer);
 });
 
 const me = computed<LobbyMe | null>(() => state.value?.snapshot?.me ?? null);
@@ -260,6 +262,17 @@ watch(messages, async () => {
   await nextTick();
   const box = chatBox.value;
   if (box) box.scrollTop = box.scrollHeight;
+});
+
+/**
+ * 列表一变就去把每个人的近 10 场排位拉回来。
+ *
+ * <p>延 1.2 秒再发 —— 刚进大厅时列表还在陆续来,不用每一批都触发一轮。
+ */
+let prefetchTimer: ReturnType<typeof setTimeout> | null = null;
+watch(visibleOnline, (players) => {
+  if (prefetchTimer) clearTimeout(prefetchTimer);
+  prefetchTimer = setTimeout(() => enqueuePrefetch(players), 1200);
 });
 
 function onTogglePublic(value: string | number | boolean): void {
@@ -354,30 +367,81 @@ const cardPos = computed<{ left: number; top: number }>(() => {
   return { left, top };
 });
 
+/**
+ * 拉一个人的近 10 场排位档案。
+ *
+ * <p>数据走「最近战绩」那条路(腾讯的对局服务)—— 跟「战绩查询」页同一套评分。
+ * 需要游戏客户端开着:腾讯的会话令牌是从客户端拿的。
+ *
+ * @param force  已经失败过的人再试一次(悬浮时用)—— 后台预取失败就不再重试了。
+ */
+async function loadProfile(player: LobbyPlayer, force = false): Promise<void> {
+  const userId = player.userId;
+  if (profileCache.has(userId)) return;
+  if (pendingUserIds.value.includes(userId)) return;
+  if (force) errorsByUser.delete(userId);
+  pendingUserIds.value = [...pendingUserIds.value, userId];
+  try {
+    const profile = await window.api.getLobbyPlayerProfile({
+      nickname: lobbyPlayerName(player),
+      gameId: player.gameId
+    });
+    profileCache.set(userId, profile);
+    errorsByUser.delete(userId);
+  } catch (e: unknown) {
+    errorsByUser.set(userId, (e as { message?: string }).message ?? '拉取近期战绩失败');
+  } finally {
+    pendingUserIds.value = pendingUserIds.value.filter((id) => id !== userId);
+  }
+}
+
+/**
+ * 后台把列表里每个人的近 10 场排位拉回来。
+ *
+ * <p>列表要显示「近 10 场主玩位置」和表现分,只靠悬浮才拉的话列表永远是空的。
+ * 腾讯网关慢,一次只放两个在飞,不然自己先卡住。
+ */
+const PREFETCH_CONCURRENCY = 2;
+/** 队列上限 —— 人再多也不一次全发出去。 */
+const PREFETCH_LIMIT = 30;
+
+const prefetchQueue = ref<LobbyPlayer[]>([]);
+let inflight = 0;
+
+function enqueuePrefetch(players: LobbyPlayer[]): void {
+  const queued = new Set(prefetchQueue.value.map((p) => p.userId));
+  for (const player of players) {
+    if (queued.size >= PREFETCH_LIMIT) break;
+    if (profileCache.has(player.userId)) continue;
+    // 失败过的人不再自动重试 —— 免得列表一动就重发一遍。
+    // 悬浮时还是能手动再试一次。
+    if (errorsByUser.has(player.userId)) continue;
+    if (pendingUserIds.value.includes(player.userId)) continue;
+    queued.add(player.userId);
+    prefetchQueue.value = [...prefetchQueue.value, player];
+  }
+  pumpPrefetch();
+}
+
+function pumpPrefetch(): void {
+  while (inflight < PREFETCH_CONCURRENCY && prefetchQueue.value.length > 0) {
+    const player = prefetchQueue.value[0];
+    prefetchQueue.value = prefetchQueue.value.slice(1);
+    inflight += 1;
+    void loadProfile(player).finally(() => {
+      inflight -= 1;
+      pumpPrefetch();
+    });
+  }
+}
+
 function onRowEnter(player: LobbyPlayer, event: MouseEvent): void {
   cancelClose();
   const el = event.currentTarget as HTMLElement | null;
   anchorRect.value = el ? el.getBoundingClientRect() : null;
   hoverPlayer.value = player;
   hoverUserId.value = player.userId;
-  if (profileCache.has(player.userId)) return;
-  if (pendingUserIds.value.includes(player.userId)) return;
-  pendingUserIds.value = [...pendingUserIds.value, player.userId];
-  void window.api
-    .getLobbyPlayerProfile(player.userId)
-    .then((profile) => {
-      profileCache.set(player.userId, profile);
-      errorsByUser.delete(player.userId);
-    })
-    .catch((e: unknown) => {
-      errorsByUser.set(
-        player.userId,
-        (e as { message?: string }).message ?? '拉取近期档案失败'
-      );
-    })
-    .finally(() => {
-      pendingUserIds.value = pendingUserIds.value.filter((id) => id !== player.userId);
-    });
+  void loadProfile(player, true);
 }
 
 function onRowLeave(): void {
@@ -401,9 +465,20 @@ function cancelClose(): void {
   }
 }
 
-/** 列表里显示的主玩位置 —— 优先用近 10 场里打得最多的那个位。 */
+/**
+ * 列表里显示的主玩位置。
+ *
+ * <p>近 10 场排位里打得最多的那个位;还没拉到就退回后端统计的历史主玩位置。
+ */
 function positionLabelsOf(player: LobbyPlayer): string[] {
+  const profile = profileCache.get(player.userId);
+  if (profile?.positionLabel) return [profile.positionLabel];
   return lobbyPlayerPositions(player).labels.slice(0, 2);
+}
+
+/** 列表里显示的表现分(0~10);null = 还没拉到。 */
+function scoreOf(player: LobbyPlayer): number | null {
+  return profileCache.get(player.userId)?.score ?? null;
 }
 
 /** 没头像时的占位字 —— 取名字第一个字。 */

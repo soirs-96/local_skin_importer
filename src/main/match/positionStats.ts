@@ -3,7 +3,6 @@ import { resolvePosition } from '../../shared/gameLabels';
 import { normalizeQueueType, toPositionCode } from '../../shared/matchProfile';
 import type { MatchProfile, PositionReport, RankedReport } from '../../shared/matchProfile';
 import { getRankedEntries } from './ranked';
-import { buildRecentReports } from './recentProfile';
 import { extractGames, parseMatchEntry } from './recentMatches';
 import { emptyStaticData, parseLcuChampions, parseLcuItems } from './staticData';
 import type { StaticData } from './staticData';
@@ -31,7 +30,7 @@ const MATCHES_END = 19;
 /** 客户端本地物品表 —— 判位置只要角色任务道具的名字。 */
 const ITEMS_PATH = '/lol-game-data/assets/v1/items.json';
 
-/** 客户端本地英雄表 —— 近 10 场要显示中文英雄名。 */
+/** 客户端本地英雄表 —— 解析对局时用它把英雄编号翻成中文名。 */
 const CHAMPIONS_PATH = '/lol-game-data/assets/v1/champion-summary.json';
 
 /** 只报这两个队列 —— 大乱斗和匹配没有段位,报了也没用。写法跟 normalizeQueueType 的输出一致。 */
@@ -113,12 +112,9 @@ export function summarizePositions(
 }
 
 /**
- * 读一份「段位 + 主玩位置 + 近 10 场排位」。
+ * 读一份「段位 + 主玩位置」。
  *
  * 段位和位置互不依赖,各自失败就少一半 —— 读不到位置不该把段位也丢了。
- *
- * 对局历史**只打一次**:位置统计和近 10 场用的是同一份数据。
- * 那个端点限流,打两次就容易被限。
  */
 export async function fetchMatchProfile(
   client: AxiosInstance,
@@ -132,8 +128,7 @@ export async function fetchMatchProfile(
   const staticData = matchData?.staticData ?? emptyStaticData();
   return {
     ranked,
-    positions: summarizePositions(games, staticData, puuid),
-    recentMatches: buildRecentReports(games, staticData, puuid)
+    positions: summarizePositions(games, staticData, puuid)
   };
 }
 

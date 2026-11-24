@@ -21,7 +21,7 @@
       </div>
       <div class="score-box">
         <span class="score-value">{{ scoreText }}</span>
-        <span class="score-label">近期分</span>
+        <span class="score-label">表现分</span>
       </div>
     </div>
 
@@ -29,36 +29,66 @@
 
     <div v-else-if="error" class="state-row state-row--error">{{ error }}</div>
 
-    <div v-else-if="!profile || profile.matchCount === 0" class="state-row">
-      这个人还没上报过近 10 场排位。
+    <div v-else-if="!profile || profile.games === 0" class="state-row">
+      没查到这个人的排位记录。
     </div>
 
     <template v-else>
+      <div class="headline">
+        <div class="headline-meta">
+          <div class="meta-row">
+            <span class="meta-key">同场对比</span>
+            <span class="meta-val" :class="vsClass">{{ vsText }}</span>
+          </div>
+          <div class="meta-row">
+            <span class="meta-key">主位置</span>
+            <span class="meta-val">{{ mainPositionText }}</span>
+          </div>
+        </div>
+      </div>
+
       <div class="stat-row">
         <div class="stat-cell">
           <span class="stat-value">{{ winRateText }}</span>
           <span class="stat-label">胜率</span>
         </div>
         <div class="stat-cell">
-          <span class="stat-value">{{ profile.matchCount }}</span>
-          <span class="stat-label">场次</span>
+          <span class="stat-value">{{ profile.games }}</span>
+          <span class="stat-label">排位场次</span>
         </div>
         <div class="stat-cell">
           <span class="stat-value">{{ kdaText }}</span>
           <span class="stat-label">平均KDA</span>
         </div>
         <div class="stat-cell">
-          <span class="stat-value">{{ csText }}</span>
-          <span class="stat-label">平均补刀</span>
+          <span class="stat-value">{{ profile.wins }}</span>
+          <span class="stat-label">胜场</span>
         </div>
       </div>
 
-      <div v-if="profile.positions.length > 0" class="section">
-        <div class="section-title hx-label">主玩位置</div>
-        <div class="chip-row">
-          <span v-for="p in profile.positions" :key="p.position" class="chip">
-            {{ p.label }}<i class="chip-count">{{ p.count }}</i>
+      <div class="dims">
+        <div v-for="dim in dims" :key="dim.key" class="dim-row">
+          <span class="dim-name">{{ dim.name }}</span>
+          <span class="dim-bar">
+            <span class="dim-fill" :style="{ width: dim.pct + '%' }" />
           </span>
+          <span class="dim-val">{{ dim.value }}</span>
+        </div>
+        <div class="dim-row dim-row--muted">
+          <span class="dim-name">补刀份额</span>
+          <span class="dim-bar dim-bar--empty" />
+          <span class="dim-val">{{ csShareText }}</span>
+        </div>
+      </div>
+
+      <div v-if="profile.byPosition.length > 1" class="section">
+        <div class="section-title hx-label">位置分布</div>
+        <div class="pos-list">
+          <div v-for="row in profile.byPosition" :key="row.label" class="pos-row">
+            <span class="pos-name">{{ row.label }}</span>
+            <span class="pos-score">{{ row.score.toFixed(1) }}</span>
+            <span class="pos-games">{{ row.games }} 场</span>
+          </div>
         </div>
       </div>
 
@@ -97,13 +127,19 @@
             <span class="match-pos">{{ m.positionLabel || '—' }}</span>
             <span class="match-kda">{{ m.kills }}/{{ m.deaths }}/{{ m.assists }}</span>
             <span class="match-cs">{{ m.minionKills }}</span>
-            <span class="match-score">{{ m.score }}</span>
+            <span class="match-score">{{ m.score.toFixed(1) }}</span>
           </div>
         </div>
       </div>
     </template>
 
-    <div class="card-foot">近期分只看近 10 场「排位」的表现,跟皮肤评分无关。</div>
+    <p class="note">
+      表现分按<strong>该位置的基准值</strong>折算 —— 辅助的经济份额天生低,不会因此吃亏。
+      同场对比是他跟他同场那几个人比出来的差值。
+    </p>
+    <div class="card-foot">
+      数据来自腾讯的对局服务(跟「战绩查询」页同一套评分),需要游戏客户端开着。
+    </div>
   </div>
 </template>
 
@@ -111,8 +147,8 @@
 /**
  * 大厅列表的悬浮档案卡。
  *
- * <p>内容全部来自「近 10 场排位」—— 桌面端同步时上报,后端存下来。
- * 这里不掺任何皮肤评分维度。
+ * <p>内容来自「最近战绩」—— 走腾讯的对局服务,跟「战绩查询」页同一套评分
+ * (`shared/scoring.ts`)。表现分 0~10,只看排位表现,跟皮肤评分无关。
  */
 
 import { computed } from 'vue';
@@ -141,30 +177,94 @@ const playerName = computed<string>(
 
 const initial = computed<string>(() => (playerName.value ? playerName.value.slice(0, 1) : '?'));
 
-/** 近期分 —— 没数据就写「—」,不写 0。 */
+/** 表现分 —— 没数据就写「—」,不写 0。 */
 const scoreText = computed<string>(() => {
   const score = props.profile?.score;
   if (score === null || score === undefined) return '—';
-  return String(score);
+  return score.toFixed(1);
+});
+
+/** 同场对比:他跟同场那几个人比出来的差值。 */
+const vsText = computed<string>(() => {
+  const value = props.profile?.vsAverage ?? 0;
+  if (value > 0.05) return `比同场平均高 +${value.toFixed(1)}`;
+  if (value < -0.05) return `比同场平均低 ${value.toFixed(1)}`;
+  return '跟同场平均持平';
+});
+
+const vsClass = computed<string>(() => {
+  const value = props.profile?.vsAverage ?? 0;
+  if (value > 0.05) return 'is-up';
+  if (value < -0.05) return 'is-down';
+  return '';
+});
+
+const mainPositionText = computed<string>(() => {
+  const profile = props.profile;
+  if (!profile || !profile.positionLabel) return '位置未识别';
+  const main = profile.byPosition[0];
+  return main && main.games > 0 ? `${profile.positionLabel} · ${main.games} 场` : profile.positionLabel;
 });
 
 const winRateText = computed<string>(() => {
   const profile = props.profile;
-  if (!profile || profile.matchCount === 0) return '—';
-  return `${Math.round(profile.winRate * 100)}%`;
+  if (!profile || profile.games === 0) return '—';
+  return `${Math.round((profile.wins / profile.games) * 100)}%`;
 });
 
 const kdaText = computed<string>(() => {
-  const kda = props.profile?.avgKda;
+  const kda = props.profile?.metrics.kda;
   if (kda === null || kda === undefined) return '—';
   return kda.toFixed(1);
 });
 
-const csText = computed<string>(() => {
-  const cs = props.profile?.avgCs;
-  if (cs === null || cs === undefined) return '—';
-  return cs.toFixed(1);
+interface DimRow {
+  key: string;
+  name: string;
+  /** 条形长度 0~100 */
+  pct: number;
+  /** 右边的原始值 */
+  value: string;
+}
+
+/** 四个计分维度 —— 条形是子分(0~1),右边是原始指标。 */
+const dims = computed<DimRow[]>(() => {
+  const profile = props.profile;
+  if (!profile) return [];
+  const m = profile.metrics;
+  const b = profile.breakdown;
+  return [
+    {
+      key: 'kp',
+      name: '参团率',
+      pct: Math.round(b.participation * 100),
+      value: `${Math.round(m.kp * 100)}%`
+    },
+    {
+      key: 'gold',
+      name: '经济份额',
+      pct: Math.round(b.economy * 100),
+      value: `${Math.round(m.goldShare * 100)}%`
+    },
+    {
+      key: 'damage',
+      name: '伤害份额',
+      pct: Math.round(b.damage * 100),
+      value: `${Math.round(m.damageShare * 100)}%`
+    },
+    {
+      key: 'kda',
+      name: 'KDA',
+      pct: Math.round(b.kda * 100),
+      value: m.kda.toFixed(1)
+    }
+  ];
 });
+
+/** 补刀份额只展示,不进分数。 */
+const csShareText = computed<string>(
+  () => `${Math.round((props.profile?.metrics.csShare ?? 0) * 100)}%`
+);
 
 /** 英雄头像走本机客户端的图 —— 编号是 Riot 的,每台机器都有。 */
 function championIcon(championId: number): string {
@@ -188,6 +288,8 @@ function championIcon(championId: number): string {
   display: flex;
   align-items: center;
   gap: 10px;
+  padding-bottom: 12px;
+  border-bottom: 1px solid var(--hx-line);
 }
 .avatar {
   width: 38px;
@@ -243,10 +345,11 @@ function championIcon(championId: number): string {
   gap: 2px;
 }
 .score-value {
-  font-size: 24px;
+  font-size: 26px;
   line-height: 1;
-  color: var(--hx-blue-bright);
+  color: var(--hx-gold-bright);
   font-family: monospace;
+  text-shadow: 0 0 14px var(--hx-gold-glow);
 }
 .score-label {
   font-size: 10px;
@@ -265,10 +368,41 @@ function championIcon(championId: number): string {
   background: var(--hx-tint-danger-soft);
   color: var(--hx-danger);
 }
+.headline {
+  display: flex;
+  align-items: center;
+  gap: 28px;
+  padding-top: 12px;
+}
+.headline-meta {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.meta-row {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  font-size: 12px;
+}
+.meta-key {
+  color: var(--hx-text-faint);
+  font-size: 11px;
+  letter-spacing: 0.12em;
+}
+.meta-val {
+  color: var(--hx-text);
+}
+.meta-val.is-up {
+  color: var(--hx-blue);
+}
+.meta-val.is-down {
+  color: var(--hx-danger);
+}
 .stat-row {
   display: flex;
   gap: 8px;
-  margin-top: 14px;
+  margin-top: 12px;
 }
 .stat-cell {
   flex: 1;
@@ -289,11 +423,72 @@ function championIcon(championId: number): string {
   letter-spacing: 0.1em;
   color: var(--hx-text-faint);
 }
+.dims {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 14px 0 0;
+}
+.dim-row {
+  display: grid;
+  grid-template-columns: 64px 1fr 56px;
+  align-items: center;
+  gap: 10px;
+}
+.dim-name {
+  font-size: 12px;
+  color: var(--hx-text-dim);
+}
+.dim-bar {
+  height: 6px;
+  background: var(--hx-panel-3);
+  overflow: hidden;
+}
+.dim-bar--empty {
+  background: transparent;
+}
+.dim-fill {
+  display: block;
+  height: 100%;
+  background: linear-gradient(90deg, var(--hx-blue-deep), var(--hx-blue));
+}
+.dim-val {
+  font-family: monospace;
+  font-size: 12px;
+  color: var(--hx-text);
+  text-align: right;
+}
+.dim-row--muted .dim-name,
+.dim-row--muted .dim-val {
+  color: var(--hx-text-faint);
+}
 .section {
   margin-top: 14px;
 }
 .section-title {
   margin-bottom: 6px;
+}
+.pos-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 18px;
+}
+.pos-row {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  font-size: 12px;
+}
+.pos-name {
+  color: var(--hx-text-dim);
+}
+.pos-score {
+  font-family: monospace;
+  color: var(--hx-gold);
+}
+.pos-games {
+  font-size: 11px;
+  color: var(--hx-text-faint);
 }
 .chip-row {
   display: flex;
@@ -381,14 +576,23 @@ function championIcon(championId: number): string {
   font-family: monospace;
 }
 .match-score {
-  width: 24px;
+  width: 30px;
   flex-shrink: 0;
   text-align: right;
   color: var(--hx-blue);
   font-family: monospace;
 }
+.note {
+  margin: 14px 0 0;
+  font-size: 11px;
+  line-height: 1.7;
+  color: var(--hx-text-faint);
+}
+.note strong {
+  color: var(--hx-text-dim);
+}
 .card-foot {
-  margin-top: 12px;
+  margin-top: 8px;
   padding-top: 8px;
   border-top: 1px solid var(--hx-line);
   font-size: 10px;

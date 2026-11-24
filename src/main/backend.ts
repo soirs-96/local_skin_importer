@@ -1,7 +1,7 @@
 import axios from 'axios';
 import { getStoredToken, clearStoredToken } from './auth';
 import type { TopChampion } from '../shared/match';
-import type { PositionReport, RankedReport, RecentMatchReport } from '../shared/matchProfile';
+import type { PositionReport, RankedReport } from '../shared/matchProfile';
 
 const BACKEND_BASE_URL = 'http://101.34.210.254';
 const AXIOS_TIMEOUT_MS = 10_000;
@@ -64,8 +64,6 @@ export interface SyncProfile {
   ranked?: RankedReport[];
   /** 主玩位置 —— 后端拿它筛「一起打这个位」的搭子 */
   positions?: PositionReport[];
-  /** 近 10 场排位 —— 大厅列表的「近 10 场主玩位置」和悬浮卡片的「近期评分」 */
-  recentMatches?: RecentMatchReport[];
 }
 
 export async function syncOwnedSkins(
@@ -83,8 +81,6 @@ export async function syncOwnedSkins(
   // 收藏册的排序直接按这份名单来。
   // 昵称/召唤师ID/大区也一起传 —— 后端顺手回填小程序的用户资料。
   // 段位和位置也一起传 —— 后端靠这两样筛「分数差不多、位置对得上」的搭子。
-  // 近 10 场排位也一起传 —— 大厅的「近 10 场主玩位置」和悬浮卡片的「近期评分」
-  // 全靠它(别人的对局历史在后端拿不到,只能各人自己报)。
   // 空数组表示「这次没读到」,后端保持库里的旧值不动。
   const body = {
     puuid,
@@ -94,8 +90,7 @@ export async function syncOwnedSkins(
     summonerTag: profile.summonerTag ?? '',
     gameZone: profile.gameZone ?? '',
     ranked: profile.ranked ?? [],
-    positions: profile.positions ?? [],
-    recentMatches: profile.recentMatches ?? []
+    positions: profile.positions ?? []
   };
 
   for (let attempt = 0; attempt < MAX_ATTEMPTS; attempt++) {

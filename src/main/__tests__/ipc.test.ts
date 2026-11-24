@@ -265,7 +265,7 @@ type ExposedApi = {
   setLobbyPublic: (publicVisible: boolean) => unknown;
   sendLobbyMessage: (text: string) => unknown;
   inviteLobbyPlayer: (nickname: string, gameId: string) => unknown;
-  getLobbyPlayerProfile: (userId: number) => unknown;
+  getLobbyPlayerProfile: (query: { nickname: string; gameId: string }) => unknown;
 };
 
 function handlerFor(channel: string): Handler {
@@ -343,7 +343,7 @@ describe('IPC wiring', () => {
       users: []
     });
     mocks.fetchMatchProfile.mockReset();
-    mocks.fetchMatchProfile.mockResolvedValue({ ranked: [], positions: [], recentMatches: [] });
+    mocks.fetchMatchProfile.mockResolvedValue({ ranked: [], positions: [] });
     mocks.getFocusedWindow.mockReset();
     mocks.clipboardWriteText.mockReset();
     mocks.readSyncState.mockReturnValue({ lastSyncAt: null });
@@ -378,7 +378,7 @@ describe('IPC wiring', () => {
     api.setLobbyPublic(true);
     api.sendLobbyMessage('来两把');
     api.inviteLobbyPlayer('林俊杰', '18557');
-    api.getLobbyPlayerProfile(7);
+    api.getLobbyPlayerProfile({ nickname: '林俊杰', gameId: '18557' });
 
     expect(mocks.ipcRendererInvoke.mock.calls).toEqual([
       ['lcu:check-status'],
@@ -402,7 +402,7 @@ describe('IPC wiring', () => {
       ['lobby:set-public', { publicVisible: true }],
       ['lobby:send', { text: '来两把' }],
       ['lobby:invite', { nickname: '林俊杰', gameId: '18557' }],
-      ['lobby:player-profile', { userId: 7 }]
+      ['lobby:player-profile', { nickname: '林俊杰', gameId: '18557' }]
     ]);
   });
 
@@ -488,8 +488,7 @@ describe('IPC wiring', () => {
 
     await expect(invoke('match:get-profile')).resolves.toEqual({
       ranked: [],
-      positions: [],
-      recentMatches: []
+      positions: []
     });
     expect(mocks.fetchMatchProfile).not.toHaveBeenCalled();
   });
@@ -877,7 +876,7 @@ describe('IPC wiring', () => {
       'Alice',
       [1, 2, 3],
       [],
-      { summonerTag: '', gameZone: '', ranked: [], positions: [], recentMatches: [] }
+      { summonerTag: '', gameZone: '', ranked: [], positions: [] }
     );
     expect(mocks.writeSyncState).toHaveBeenCalledOnce();
   });
@@ -898,7 +897,7 @@ describe('IPC wiring', () => {
       '林俊杰',
       [1],
       [],
-      { summonerTag: '18557', gameZone: '1', ranked: [], positions: [], recentMatches: [] }
+      { summonerTag: '18557', gameZone: '1', ranked: [], positions: [] }
     );
   });
 
@@ -944,7 +943,7 @@ describe('IPC wiring', () => {
       'Alice',
       [1],
       topChampions,
-      { summonerTag: '', gameZone: '', ranked: [], positions: [], recentMatches: [] }
+      { summonerTag: '', gameZone: '', ranked: [], positions: [] }
     );
   });
 
@@ -975,7 +974,7 @@ describe('IPC wiring', () => {
       'Alice',
       [1],
       [],
-      { summonerTag: '', gameZone: '', ranked, positions, recentMatches: [] }
+      { summonerTag: '', gameZone: '', ranked, positions }
     );
   });
 
