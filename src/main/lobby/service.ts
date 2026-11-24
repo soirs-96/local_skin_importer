@@ -30,6 +30,18 @@ import {
 
 const BACKEND_BASE_URL = 'http://101.34.210.254';
 
+/**
+ * WS 的备用入口 —— 跟 REST 分开。
+ *
+ * <p>同一个后端在 nginx 上有两个入口:IP(101.34.210.254)和域名(www.sxdtaz.cn),
+ * 是两套 server 块。IP 那套没开 WebSocket 的 Upgrade 转发时,后端收到的是普通 GET,
+ * Spring 的握手检查直接回 400("Unexpected server response: 400")。
+ * 域名那套是 chat 小程序一直在用的(`wss://www.sxdtaz.cn/api/ws/chat`),通着。
+ *
+ * <p>所以两个都写上,客户端握手失败会自己换 —— 不用等运维改 nginx 配置。
+ */
+const LOBBY_WS_FALLBACK_URLS = ['https://www.sxdtaz.cn'];
+
 /** 降级轮询:列表 3 秒一次,聊天 2 秒一次。 */
 const POLL_PLAYERS_MS = 3_000;
 const POLL_HISTORY_MS = 2_000;
@@ -89,6 +101,7 @@ export class LobbyService {
         return token;
       },
       baseUrl: BACKEND_BASE_URL,
+      fallbackBaseUrls: LOBBY_WS_FALLBACK_URLS,
       onFrame: (frame) => this.handleFrame(frame),
       onStatus: (status) => this.handleStatus(status)
     });

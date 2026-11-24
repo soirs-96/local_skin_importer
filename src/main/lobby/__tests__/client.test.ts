@@ -108,6 +108,60 @@ describe('LobbyClient', () => {
     client.stop();
   });
 
+  it('握手 400 就换下一个入口', async () => {
+    const sockets: ReturnType<typeof fakeSocket>[] = [];
+    const urls: string[] = [];
+    const client = new LobbyClient({
+      baseUrl: 'http://a.test',
+      fallbackBaseUrls: ['https://b.test'],
+      // 退避调到 1ms —— 测试不用真等一秒
+      baseBackoffMs: 1,
+      maxBackoffMs: 2,
+      resolveToken: async () => 'jwt',
+      createSocket: (u) => {
+        urls.push(u);
+        const s = fakeSocket();
+        sockets.push(s);
+        return s;
+      },
+      onFrame: () => {}
+    });
+    client.start();
+    await vi.waitFor(() => expect(urls.length).toBe(1));
+    expect(urls[0]).toContain('a.test');
+    // 握手回 400 —— 请求到了后端但不是一次协议升级(nginx 没转 Upgrade 头)
+    sockets[0].handlers.get('unexpected-response')?.({}, { statusCode: 400, headers: {} });
+    await vi.waitFor(() => expect(urls.length).toBe(2));
+    expect(urls[1]).toContain('b.test');
+  });
+
+  it('握手 403 不换入口 —— token 不认,换地址也没用', async () => {
+    const sockets: ReturnType<typeof fakeSocket>[] = [];
+    const urls: string[] = [];
+    const statuses: string[] = [];
+    const client = new LobbyClient({
+      baseUrl: 'http://a.test',
+      fallbackBaseUrls: ['https://b.test'],
+      baseBackoffMs: 1,
+      maxBackoffMs: 2,
+      resolveToken: async () => 'jwt',
+      createSocket: (u) => {
+        urls.push(u);
+        const s = fakeSocket();
+        sockets.push(s);
+        return s;
+      },
+      onFrame: () => {},
+      onStatus: (s) => statuses.push(s)
+    });
+    client.start();
+    await vi.waitFor(() => expect(urls.length).toBe(1));
+    sockets[0].handlers.get('unexpected-response')?.({}, { statusCode: 403, headers: {} });
+    expect(statuses).toContain('unauthorized');
+    await new Promise((r) => setTimeout(r, 20));
+    expect(urls.length).toBe(1);
+  });
+
   it('说一句话就是一条 say 帧', async () => {
     const socket = fakeSocket();
     const client = new LobbyClient({

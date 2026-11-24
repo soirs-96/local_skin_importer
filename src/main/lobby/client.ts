@@ -23,6 +23,15 @@ export interface LobbyClientOptions {
   resolveToken: () => Promise<string>;
   /** 后端地址;ws:// + 后端根地址 + 路径 */
   baseUrl: string;
+  /**
+   * 备用后端地址 —— 主地址握手失败就按顺序换。
+   *
+   * <p>为什么需要:同一个后端在 nginx 上有两个入口(IP 和域名),
+   * 两套 server 块。IP 那套不一定开了 WebSocket 的 Upgrade 转发 ——
+   * nginx 不转的话后端收到的是普通 GET,Spring 的握手检查直接回 400。
+   * 域名那套是 chat 小程序一直在用的,通着。**谁先通用谁**,别让大厅卡死在降级模式。
+   */
+  fallbackBaseUrls?: string[];
   /** 造 socket 的口子,测试用假实现顶掉 */
   createSocket?: LobbySocketFactory;
   onFrame: (frame: LobbyServerFrame) => void;
@@ -51,6 +60,40 @@ function toText(raw: unknown): string {
   return '';
 }
 
+/**
+ * 握手失败的响应正文。
+ *
+ * <p>nginx 的错误页会直接写明原因("400 Request Header Or Cookie Too Large"、
+ * "The plain HTTP request was sent to HTTPS port" 之类),
+ * Spring 的 400 正文是空的 —— 正文空 + 状态码 400 = 请求到了后端但不是一次协议升级。
+ *
+ * <p>只读前 500 字节:错误页再大也不会超过这个量,读多了是给自己找麻烦。
+ */
+async function readErrorBody(res: unknown): Promise<string> {
+  const stream = res as {
+    on?: (event: string, handler: (...args: unknown[]) => void) => void;
+    setEncoding?: (encoding: string) => void;
+  };
+  if (!stream || typeof stream.on !== 'function') return '';
+  return await new Promise<string>((resolve) => {
+    let buf = '';
+    const done = (): void => resolve(buf.trim());
+    stream.on?.('data', (chunk: unknown) => {
+      const text =
+        typeof chunk === 'string'
+          ? chunk
+          : Buffer.isBuffer(chunk)
+            ? chunk.toString('utf8')
+            : '';
+      buf += text;
+      if (buf.length > 500) buf = buf.slice(0, 500);
+    });
+    stream.on?.('end', done);
+    stream.on?.('error', done);
+    stream.on?.('close', done);
+  });
+}
+
 export class LobbyClient {
   private socket: LobbySocket | null = null;
   private stopped = true;
@@ -62,7 +105,10 @@ export class LobbyClient {
   private publicVisible = true;
 
   private readonly resolveToken: () => Promise<string>;
-  private readonly baseUrl: string;
+  /** 后端入口列表 —— 第一个是主入口,后面是备的。 */
+  private readonly baseUrls: string[];
+  /** 当前轮到第几个入口。 */
+  private hostIndex = 0;
   private readonly createSocket: LobbySocketFactory;
   private readonly onFrame: (frame: LobbyServerFrame) => void;
   private readonly onStatus?: (status: LobbyClientStatus) => void;
@@ -71,7 +117,9 @@ export class LobbyClient {
 
   constructor(options: LobbyClientOptions) {
     this.resolveToken = options.resolveToken;
-    this.baseUrl = options.baseUrl.replace(/^http/, 'ws').replace(/\/$/, '');
+    this.baseUrls = [options.baseUrl, ...(options.fallbackBaseUrls ?? [])].map((u) =>
+      u.replace(/^http/, 'ws').replace(/\/$/, '')
+    );
     this.createSocket = options.createSocket ?? defaultSocketFactory;
     this.onFrame = options.onFrame;
     this.onStatus = options.onStatus;
@@ -172,7 +220,7 @@ export class LobbyClient {
     }
     if (this.stopped) return;
 
-    const url = `${this.baseUrl}/api/ws/lobby?token=${encodeURIComponent(token)}`;
+    const url = `${this.baseUrls[this.hostIndex]}/api/ws/lobby?token=${encodeURIComponent(token)}`;
     let socket: LobbySocket;
     try {
       socket = this.createSocket(url);
@@ -193,6 +241,17 @@ export class LobbyClient {
     socket.on('message', (raw: unknown) => {
       this.handleMessage(raw);
     });
+    // 一次连接只换一次入口 —— 'error' 和 'unexpected-response' 会连着来,
+    // 不加这道闸会一连退到最后一个入口。
+    let switched = false;
+    const switchHost = (): void => {
+      if (switched) return;
+      switched = true;
+      if (this.baseUrls.length <= 1) return;
+      this.hostIndex = (this.hostIndex + 1) % this.baseUrls.length;
+      console.warn(`[lobby] 换用下一个入口 ${this.baseUrls[this.hostIndex]}`);
+    };
+
     socket.on('error', (err: unknown) => {
       const text = err instanceof Error ? err.message : String(err);
       if (/40[13]|unauthorized|forbidden/i.test(text)) {
@@ -205,7 +264,40 @@ export class LobbyClient {
         return;
       }
       console.warn('[lobby] 连接报错', text);
+      switchHost();
+      this.setStatus('disconnected');
+      this.scheduleReconnect();
     });
+
+    /**
+     * 服务端没给 101(协议升级成功)—— 这条分支比 'error' 有用得多。
+     *
+     * <p>没有这个监听的话,ws 只会甩一句 "Unexpected server response: 400",
+     * 看不出是 nginx 没转 Upgrade 头、是 token 不认、还是路径不对。
+     * 这里把状态码和响应正文都打出来 —— nginx 的错误页会直接写明原因。
+     */
+    socket.on('unexpected-response', (_req: unknown, res: unknown) => {
+      const status = (res as { statusCode?: number }).statusCode ?? 0;
+      const server = (res as { headers?: Record<string, unknown> }).headers?.['server'];
+      // 状态码和响应头是同步拿到的,先打出来 —— 正文可能读不全
+      // (ws 会在这个监听返回后把请求销毁掉)。
+      console.warn(`[lobby] 握手被拒 status=${status}${server ? ` server=${server}` : ''}`);
+      void readErrorBody(res).then((body) => {
+        if (body) console.warn(`[lobby] 握手响应正文 ${body}`);
+      });
+      if (status === 401 || status === 403) {
+        this.setStatus('unauthorized');
+        this.stopHeartbeat();
+        this.stopped = true;
+        return;
+      }
+      // 400 = 请求到了后端但不是一次协议升级(多半是 nginx 没转 Upgrade 头)——
+      // 换个入口再试。
+      switchHost();
+      this.setStatus('disconnected');
+      this.scheduleReconnect();
+    });
+
     socket.on('close', () => {
       if (this.socket === socket) this.socket = null;
       this.stopHeartbeat();
