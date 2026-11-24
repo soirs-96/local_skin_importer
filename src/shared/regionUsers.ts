@@ -119,6 +119,19 @@ export function displayName(user: RegionUser): string {
   return user.nickname || user.gameId || '无名召唤师';
 }
 
+/**
+ * 复制给别人的那个串 —— 「昵称#标签」。
+ *
+ * <p>只复制数字标签没法直接粘到游戏里加好友 —— 名字和 # 得一起带走。
+ */
+export function regionUserRiotId(user: RegionUser): string {
+  const name = (user.nickname || '').trim();
+  const tag = (user.gameId || '').trim();
+  if (!name) return tag;
+  if (!tag) return name;
+  return `${name}#${tag}`;
+}
+
 /** 空列表时的一句话 —— 说清楚是「这个区还没别人」还是「区里有人但没留下游戏ID」。 */
 export function emptyRegionText(result: RegionUsersResult | null): string {
   if (!result) return '';

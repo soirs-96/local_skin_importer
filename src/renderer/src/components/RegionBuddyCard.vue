@@ -3,7 +3,7 @@
     <template #header>
       <div class="card-header">
         <span class="hx-diamond hx-diamond--blue" />
-        <span class="hx-label">同区开黑搭子</span>
+        <span class="hx-label">找搭子 · 同大区</span>
         <span class="status-text">{{ regionText || '同一个大区才组得到双排' }}</span>
         <el-button
           class="region-fetch"
@@ -16,6 +16,10 @@
         </el-button>
       </div>
     </template>
+
+    <p class="purpose-text">
+      按段位、收藏分、位置筛<strong>整个同区</strong>的人 —— 搜的是用户库,不只是现在在大厅里的那几个。
+    </p>
 
     <div v-if="regionError" class="warn-row">
       {{ regionError }}
@@ -108,7 +112,6 @@
           <span class="region-id">{{ u.gameId }}</span>
           <span v-if="matchMetaOf(u)" class="region-meta">{{ matchMetaOf(u) }}</span>
         </div>
-        <span class="region-skins">{{ u.skinCount }} 款皮肤</span>
         <el-button class="hx-gold region-copy" size="small" text @click="onCopyGameId(u)">
           复制ID
         </el-button>
@@ -119,35 +122,42 @@
       点右上角拉同区的人 —— 只有同一个大区的召唤师才组得到双排。
     </div>
 
-    <div class="tip-row">
-      <p class="tip-line">它是怎么认大区的:</p>
-      <ul class="tip-list">
-        <li>你同步过一次皮肤,大区就记下来了 —— 直接用它。</li>
-        <li>还没同步过,但游戏客户端开着的话,会现场读一次。</li>
-        <li>两个都认不出来,就先去同步一次皮肤。</li>
-      </ul>
-      <p class="tip-line">怎么才算「分数差不多」:</p>
-      <ul class="tip-list">
-        <li>段位 —— 你和他在段位窗口内(段位范围里选)。</li>
-        <li>站内收藏分 —— 皮肤越稀有分越高,差得太多也不拉。</li>
-        <li>位置 —— 选了位置就只看主玩那个位置的人。</li>
-        <li>「拉高分段」是 VIP 权益 —— 开通后能专门捞比你分高的人,段位范围变成「往上看几段」。</li>
-      </ul>
-    </div>
+    <el-collapse v-model="openTips" class="tip-collapse">
+      <el-collapse-item title="怎么用 · 大区是怎么认的" name="tips">
+        <p class="tip-line">它是怎么认大区的:</p>
+        <ul class="tip-list">
+          <li>你同步过一次皮肤,大区就记下来了 —— 直接用它。</li>
+          <li>还没同步过,但游戏客户端开着的话,会现场读一次。</li>
+          <li>两个都认不出来,就先去同步一次皮肤。</li>
+        </ul>
+        <p class="tip-line">怎么才算「分数差不多」:</p>
+        <ul class="tip-list">
+          <li>段位 —— 你和他在段位窗口内(段位范围里选)。</li>
+          <li>站内收藏分 —— 皮肤越稀有分越高,差得太多也不拉。</li>
+          <li>位置 —— 选了位置就只看主玩那个位置的人。</li>
+          <li>「拉高分段」是 VIP 权益 —— 开通后能专门捞比你分高的人,段位范围变成「往上看几段」。</li>
+        </ul>
+      </el-collapse-item>
+    </el-collapse>
   </el-card>
 </template>
 
 <script setup lang="ts">
 /**
- * 「同区开黑搭子」卡片。
+ * 「找搭子 · 同大区」卡片。
  *
- * <p>从 Tools.vue 抽出来的 —— 大厅页和实用功能页都要用它,
- * 抄两份的话两边迟早会走偏。
+ * <p>只挂在实用功能页 —— 大厅页不要这块:那边是「现在在大厅里的人」,
+ * 这边是「搜整个同区用户库」。两件事混在一页,后者会把前者衬得像在摊名单。
  */
 
 import { computed, ref } from 'vue';
 import { ElNotification } from 'element-plus';
-import { describeRegion, displayName, emptyRegionText } from '../../../shared/regionUsers';
+import {
+  describeRegion,
+  displayName,
+  emptyRegionText,
+  regionUserRiotId
+} from '../../../shared/regionUsers';
 import type { RegionUser, RegionUsersQuery, RegionUsersResult } from '../../../shared/regionUsers';
 import { POSITION_CODE_LABELS } from '../../../shared/matchProfile';
 import type { PositionCode } from '../../../shared/matchProfile';
@@ -178,6 +188,8 @@ const COLLECTION_GAP_OPTIONS: { value: number; label: string }[] = [
 const regionResult = ref<RegionUsersResult | null>(null);
 const regionLoading = ref(false);
 const regionError = ref('');
+/** 说明默认收起 —— 那几段字是给人问的时候看的,不是常驻占版面。 */
+const openTips = ref<string[]>([]);
 
 const selectedPositions = ref<PositionCode[]>([]);
 // 默认跨 1 段:「差不多」但不至于把同区的人筛得一个不剩。
@@ -272,11 +284,16 @@ async function onFetchRegion(): Promise<void> {
   }
 }
 
-/** 复制游戏ID —— 加好友直接粘。 */
+/**
+ * 复制 Riot ID —— 「昵称#标签」。
+ *
+ * <p>只给数字标签没法直接粘到游戏里加好友 —— 名字和 # 得一起带走。
+ */
 async function onCopyGameId(user: RegionUser): Promise<void> {
-  if (!user.gameId) return;
-  await window.api.copyText(user.gameId);
-  ElNotification({ type: 'success', message: `已复制 ${user.gameId}`, duration: 2000 });
+  const riotId = regionUserRiotId(user);
+  if (!riotId) return;
+  await window.api.copyText(riotId);
+  ElNotification({ type: 'success', message: `已复制 ${riotId}`, duration: 2000 });
 }
 
 /** 没头像时的占位字 —— 取名字第一个字。 */
@@ -305,8 +322,19 @@ function initialOf(user: RegionUser): string {
   color: var(--hx-gold);
   font-size: 12px;
 }
-.tip-row {
-  padding-top: 10px;
+/* 一句话说清这块是干什么的 —— 别让人猜 */
+.purpose-text {
+  margin: 0 0 12px;
+  font-size: 12px;
+  line-height: 1.8;
+  color: var(--hx-text-dim);
+}
+.purpose-text strong {
+  color: var(--hx-blue);
+  font-weight: 600;
+}
+.tip-collapse {
+  margin-top: 12px;
   border-top: 1px solid var(--hx-line);
 }
 .tip-line {
@@ -419,11 +447,6 @@ function initialOf(user: RegionUser): string {
   font-size: 12px;
   color: var(--hx-text-faint);
   font-family: monospace;
-}
-.region-skins {
-  flex-shrink: 0;
-  font-size: 12px;
-  color: var(--hx-text-dim);
 }
 .region-copy {
   flex-shrink: 0;

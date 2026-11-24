@@ -87,8 +87,7 @@
           <div class="card-header">
             <span class="hx-diamond hx-diamond--blue" />
             <span class="hx-label">玩家列表</span>
-            <span class="status-text">右侧数字 = 近 10 场排位表现分</span>
-            <el-radio-group v-model="scope" size="small">
+            <el-radio-group v-model="scope" size="small" class="scope-group">
               <el-radio-button value="all">全部</el-radio-button>
               <el-radio-button value="same">同大区</el-radio-button>
             </el-radio-group>
@@ -98,6 +97,7 @@
         <div class="player-scroll">
           <div class="section-label">
             {{ scope === 'same' ? '同大区在线' : '在线' }} ({{ visibleOnline.length }})
+            <span class="section-hint">数字 = 近 10 场排位表现分</span>
           </div>
           <div v-if="visibleOnline.length === 0" class="player-empty">
             现在没人在大厅里。
@@ -189,9 +189,6 @@
       @enter="cancelClose"
       @leave="scheduleClose"
     />
-
-    <!-- 同区搭子:按分数筛同区的人(老功能,搬进大厅) -->
-    <RegionBuddyCard />
   </div>
 </template>
 
@@ -199,12 +196,12 @@
 import { computed, nextTick, onMounted, onUnmounted, reactive, ref, watch } from 'vue';
 import { ElNotification } from 'element-plus';
 import LobbyProfileCard from '../components/LobbyProfileCard.vue';
-import RegionBuddyCard from '../components/RegionBuddyCard.vue';
 import {
   isLobbyInvitable,
   lobbyLastSeenText,
   lobbyPlayerName,
   lobbyPlayerPositions,
+  lobbyPlayerRiotId,
   lobbyStatusOf,
   lobbyStatusText
 } from '../../../shared/lobby';
@@ -290,10 +287,16 @@ async function onSend(): Promise<void> {
   draft.value = '';
 }
 
+/**
+ * 复制 Riot ID —— 「昵称#标签」。
+ *
+ * <p>只给数字标签没用:游戏里加好友要的是完整的那个串。
+ */
 async function onCopy(player: LobbyPlayer): Promise<void> {
-  if (!player.gameId) return;
-  await window.api.copyText(player.gameId);
-  ElNotification({ type: 'success', message: `已复制 ${player.gameId}`, duration: 2000 });
+  const riotId = lobbyPlayerRiotId(player);
+  if (!riotId) return;
+  await window.api.copyText(riotId);
+  ElNotification({ type: 'success', message: `已复制 ${riotId}`, duration: 2000 });
 }
 
 async function onInvite(player: LobbyPlayer): Promise<void> {
@@ -627,6 +630,18 @@ function initialOf(player: LobbyPlayer): string {
   letter-spacing: 0.12em;
   color: var(--hx-text-faint);
   text-transform: uppercase;
+}
+/* 分数那列的说明 —— 跟着列表标题走,别塞进卡头挤成一团 */
+.section-hint {
+  margin-left: 8px;
+  font-size: 10px;
+  letter-spacing: 0;
+  text-transform: none;
+  color: var(--hx-text-faint);
+}
+/* 全部/同大区 靠右,卡头只留标题 */
+.scope-group {
+  margin-left: auto;
 }
 .section-label:first-of-type {
   margin-top: 0;

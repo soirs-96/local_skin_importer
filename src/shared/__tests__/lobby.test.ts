@@ -7,6 +7,7 @@ import {
   lobbyLastSeenText,
   lobbyPlayerName,
   lobbyPlayerPositions,
+  lobbyPlayerRiotId,
   lobbyStatusOf,
   lobbyStatusText,
   mergeMessages
@@ -106,6 +107,24 @@ describe('lobbyPlayerName', () => {
 
   it('两个都没有就换个说法', () => {
     expect(lobbyPlayerName(player({ nickname: '', gameId: '' }))).toBe('无名召唤师');
+  });
+});
+
+describe('lobbyPlayerRiotId', () => {
+  it('昵称和标签拼一起 —— 光有数字标签没法加好友', () => {
+    expect(lobbyPlayerRiotId(player())).toBe('林俊杰#18557');
+  });
+
+  it('没昵称就只有标签', () => {
+    expect(lobbyPlayerRiotId(player({ nickname: '', gameId: '84174' }))).toBe('84174');
+  });
+
+  it('没标签就只有昵称', () => {
+    expect(lobbyPlayerRiotId(player({ gameId: '' }))).toBe('林俊杰');
+  });
+
+  it('两个都没有就是空串 —— 别复制出「#」', () => {
+    expect(lobbyPlayerRiotId(player({ nickname: '', gameId: '' }))).toBe('');
   });
 });
 

@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { describeRegion, displayName, emptyRegionText } from '../regionUsers';
+import { describeRegion, displayName, emptyRegionText, regionUserRiotId } from '../regionUsers';
 import type { RegionUser, RegionUsersResult } from '../regionUsers';
 
 /** 一个同区用户 —— 分数和位置都是匹配时才有,这里默认都没有。 */
@@ -71,6 +71,24 @@ describe('displayName', () => {
 
   it('两个都没有也给个能看的名字', () => {
     expect(displayName(user({ nickname: '', gameId: '' }))).toBe('无名召唤师');
+  });
+});
+
+describe('regionUserRiotId', () => {
+  it('昵称和标签拼一起 —— 光有数字标签没法加好友', () => {
+    expect(regionUserRiotId(user())).toBe('林俊杰#18557');
+  });
+
+  it('没昵称就只有标签', () => {
+    expect(regionUserRiotId(user({ nickname: '' }))).toBe('18557');
+  });
+
+  it('没标签就只有昵称', () => {
+    expect(regionUserRiotId(user({ gameId: '' }))).toBe('林俊杰');
+  });
+
+  it('两个都没有就是空串 —— 别复制出「#」', () => {
+    expect(regionUserRiotId(user({ nickname: '', gameId: '' }))).toBe('');
   });
 });
 

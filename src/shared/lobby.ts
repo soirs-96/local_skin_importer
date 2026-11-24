@@ -297,6 +297,19 @@ export function lobbyPlayerName(player: LobbyPlayer): string {
 }
 
 /**
+ * 复制给别人的那个串 —— 「昵称#标签」。
+ *
+ * <p>只复制数字标签没法直接粘到游戏里加好友 —— 名字和 # 得一起带走。
+ */
+export function lobbyPlayerRiotId(player: LobbyPlayer): string {
+  const name = (player.nickname || '').trim();
+  const tag = (player.gameId || '').trim();
+  if (!name) return tag;
+  if (!tag) return name;
+  return `${name}#${tag}`;
+}
+
+/**
  * 列表里显示的上报主玩位置。
  *
  * <p>这是**历史累计**的位置(后端按 `t_user_position_stat` 统计的)——
