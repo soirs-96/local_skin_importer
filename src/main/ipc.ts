@@ -23,7 +23,7 @@ import { lobbyService } from './lobby/service';
 import * as devLogger from './devLogger';
 import { MATCH_STATE_CHANNEL } from '../shared/match';
 import type { TopChampion } from '../shared/match';
-import type { MatchProfile, PositionReport, RankedReport } from '../shared/matchProfile';
+import type { MatchProfile, PositionReport, RankedReport, RecentMatchReport } from '../shared/matchProfile';
 import type { RegionUsersQuery } from '../shared/regionUsers';
 import { SETTLEMENT_CHANNEL } from '../shared/settlement';
 import type { LocalSettlement } from '../shared/settlement';
@@ -81,6 +81,11 @@ interface LobbyInvitePayload {
   gameId: string;
 }
 
+/** 悬浮卡片要看的那个人的 id。 */
+interface LobbyPlayerProfilePayload {
+  userId: number;
+}
+
 interface AutoAcceptDelayPayload {
   delaySeconds: number;
 }
@@ -95,6 +100,8 @@ interface SyncPayload {
   ranked?: RankedReport[];
   /** 主玩位置 —— 后端拿来筛「一起打这个位」的搭子 */
   positions?: PositionReport[];
+  /** 近 10 场排位 —— 后端拿来算大厅的「近期评分」和「近 10 场主玩位置」 */
+  recentMatches?: RecentMatchReport[];
   /** auto = 启动自动同步(60s 节流);manual = 用户手点(10s 节流) */
   mode?: 'auto' | 'manual';
   /** Riot ID 的标签(# 后面那串)—— 后端回填小程序的「游戏ID」 */
@@ -211,6 +218,9 @@ function assertSyncPayload(p: unknown): asserts p is SyncPayload {
   if (obj.positions !== undefined && !isPositionReportList(obj.positions)) {
     throw new Error('invalid positions');
   }
+  if (obj.recentMatches !== undefined && !isRecentMatchReportList(obj.recentMatches)) {
+    throw new Error('invalid recentMatches');
+  }
   if (obj.summonerTag !== undefined && typeof obj.summonerTag !== 'string') {
     throw new Error('invalid summonerTag');
   }
@@ -250,6 +260,30 @@ function isPositionReportList(value: unknown): value is PositionReport[] {
     if (typeof item !== 'object' || item === null) return false;
     const obj = item as Record<string, unknown>;
     return typeof obj.position === 'string';
+  });
+}
+
+/** 近 10 场排位:每条至少要有 gameId 和分数。 */
+function isRecentMatchReportList(value: unknown): value is RecentMatchReport[] {
+  if (!Array.isArray(value)) return false;
+  return value.every((item) => {
+    if (typeof item !== 'object' || item === null) return false;
+    const obj = item as Record<string, unknown>;
+    return (
+      typeof obj.gameId === 'string' &&
+      typeof obj.championId === 'number' &&
+      typeof obj.championName === 'string' &&
+      typeof obj.position === 'string' &&
+      typeof obj.queueType === 'string' &&
+      typeof obj.kills === 'number' &&
+      typeof obj.deaths === 'number' &&
+      typeof obj.assists === 'number' &&
+      typeof obj.minionKills === 'number' &&
+      typeof obj.durationS === 'number' &&
+      typeof obj.win === 'boolean' &&
+      typeof obj.score === 'number' &&
+      typeof obj.playedAtMs === 'number'
+    );
   });
 }
 
@@ -419,7 +453,8 @@ export function registerIpcHandlers(): void {
           summonerTag: payload.summonerTag ?? '',
           gameZone: payload.gameZone ?? '',
           ranked: payload.ranked ?? [],
-          positions: payload.positions ?? []
+          positions: payload.positions ?? [],
+          recentMatches: payload.recentMatches ?? []
         }
       );
       // 只在成功后记时间戳 —— 失败不能算「已同步」
@@ -521,7 +556,7 @@ export function registerIpcHandlers(): void {
       const lcuAuth = await lcu.resolveLcuAuth();
       const client = lcu.createLcuClient(lcuAuth);
       const summoner = await lcu.getCurrentSummoner(client);
-      if (!summoner.puuid) return { ranked: [], positions: [] };
+      if (!summoner.puuid) return { ranked: [], positions: [], recentMatches: [] };
       return await fetchMatchProfile(client, summoner.puuid);
     } catch (error: unknown) {
       throw normalizeLcuError(error);
@@ -713,6 +748,15 @@ export function registerIpcHandlers(): void {
     if (typeof payload.nickname !== 'string') throw new Error('invalid nickname');
     if (typeof payload.gameId !== 'string') throw new Error('invalid gameId');
     return await lobbyService.invite(payload.nickname, payload.gameId);
+  });
+
+  /** 悬浮卡片:某个玩家近 10 场排位的档案。 */
+  ipcMain.handle('lobby:player-profile', async (_event, payload: LobbyPlayerProfilePayload) => {
+    if (typeof payload !== 'object' || payload === null) throw new Error('invalid payload');
+    if (typeof payload.userId !== 'number' || !Number.isFinite(payload.userId)) {
+      throw new Error('invalid userId');
+    }
+    return await lobbyService.playerProfile(payload.userId);
   });
 }
 

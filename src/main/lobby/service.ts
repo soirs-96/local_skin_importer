@@ -13,7 +13,7 @@
 import { BrowserWindow } from 'electron';
 import { getStoredToken } from '../auth';
 import { matchPoller } from '../match/poller';
-import { fetchLobbyHistory, fetchLobbyPlayers, normalizeSnapshot } from './api';
+import { fetchLobbyHistory, fetchLobbyPlayerProfile, fetchLobbyPlayers, normalizeSnapshot } from './api';
 import { LobbyClient } from './client';
 import { invitePlayer } from './invite';
 import { readLobbyPrefs, writeLobbyPrefs } from './prefs';
@@ -24,6 +24,7 @@ import {
   mergeMessages,
   type LobbyInviteResult,
   type LobbyMessage,
+  type LobbyPlayerProfile,
   type LobbyServerFrame,
   type LobbyState
 } from '../../shared/lobby';
@@ -171,6 +172,15 @@ export class LobbyService {
   /** 拉一个人进房间。 */
   async invite(nickname: string, gameId: string): Promise<LobbyInviteResult> {
     return await invitePlayer(nickname, gameId);
+  }
+
+  /**
+   * 悬浮卡片:某个玩家近 10 场排位的档案。
+   *
+   * <p>走 REST 单独取 —— 列表里几十个人,没必要把明细都塞进每 3 秒一次的轮询里。
+   */
+  async playerProfile(userId: number): Promise<LobbyPlayerProfile> {
+    return await fetchLobbyPlayerProfile(userId);
   }
 
   /**

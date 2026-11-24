@@ -1,11 +1,15 @@
 import type { AxiosInstance } from 'axios';
 import { resolvePosition } from '../../shared/gameLabels';
-import { toPositionCode } from '../../shared/matchProfile';
+import { normalizeQueueType, toPositionCode } from '../../shared/matchProfile';
 import type { MatchProfile, PositionReport, RankedReport } from '../../shared/matchProfile';
 import { getRankedEntries } from './ranked';
+import { buildRecentReports } from './recentProfile';
 import { extractGames, parseMatchEntry } from './recentMatches';
-import { emptyStaticData, parseLcuItems } from './staticData';
+import { emptyStaticData, parseLcuChampions, parseLcuItems } from './staticData';
 import type { StaticData } from './staticData';
+
+// 队列归一搬到 shared 了(大厅那边也要用)—— 这里原样再导出,老的调用方不用改。
+export { normalizeQueueType };
 
 /**
  * 同步时上报给后端的「排位 + 主玩位置」。
@@ -27,6 +31,9 @@ const MATCHES_END = 19;
 /** 客户端本地物品表 —— 判位置只要角色任务道具的名字。 */
 const ITEMS_PATH = '/lol-game-data/assets/v1/items.json';
 
+/** 客户端本地英雄表 —— 近 10 场要显示中文英雄名。 */
+const CHAMPIONS_PATH = '/lol-game-data/assets/v1/champion-summary.json';
+
 /** 只报这两个队列 —— 大乱斗和匹配没有段位,报了也没用。写法跟 normalizeQueueType 的输出一致。 */
 const REPORTED_QUEUES = new Set(['RANKED_SOLO_5x5', 'RANKED_FLEX_5x5']);
 
@@ -36,20 +43,6 @@ function str(v: unknown): string {
 
 function num(v: unknown): number {
   return typeof v === 'number' && Number.isFinite(v) ? v : 0;
-}
-
-/**
- * 队列串归一 —— 后端认 `RANKED_SOLO_5x5` / `RANKED_FLEX_5x5`。
- *
- * 客户端有时候给 `RANKED_SOLO_5X5`(X 大写),统一成后端那一套。
- */
-export function normalizeQueueType(raw: string): string {
-  const upper = raw.trim().toUpperCase();
-  if (upper === 'RANKED_SOLO_5X5') return 'RANKED_SOLO_5x5';
-  if (upper === 'RANKED_FLEX_5X5') return 'RANKED_FLEX_5x5';
-  // 同一个灵活排位,有的客户端版本叫 SR。
-  if (upper === 'RANKED_FLEX_SR') return 'RANKED_FLEX_5x5';
-  return upper;
 }
 
 /**
@@ -120,19 +113,34 @@ export function summarizePositions(
 }
 
 /**
- * 读一份「段位 + 主玩位置」。
+ * 读一份「段位 + 主玩位置 + 近 10 场排位」。
  *
  * 段位和位置互不依赖,各自失败就少一半 —— 读不到位置不该把段位也丢了。
+ *
+ * 对局历史**只打一次**:位置统计和近 10 场用的是同一份数据。
+ * 那个端点限流,打两次就容易被限。
  */
 export async function fetchMatchProfile(
   client: AxiosInstance,
   puuid: string
 ): Promise<MatchProfile> {
-  const [ranked, positions] = await Promise.all([
+  const [ranked, matchData] = await Promise.all([
     fetchRanked(client, puuid),
-    fetchPositions(client, puuid)
+    fetchMatches(client, puuid)
   ]);
-  return { ranked, positions };
+  const games = matchData?.games ?? [];
+  const staticData = matchData?.staticData ?? emptyStaticData();
+  return {
+    ranked,
+    positions: summarizePositions(games, staticData, puuid),
+    recentMatches: buildRecentReports(games, staticData, puuid)
+  };
+}
+
+/** 对局历史 + 判位置要用的那点静态数据。 */
+interface MatchData {
+  games: unknown[];
+  staticData: StaticData;
 }
 
 async function fetchRanked(client: AxiosInstance, puuid: string): Promise<RankedReport[]> {
@@ -150,9 +158,15 @@ async function fetchRanked(client: AxiosInstance, puuid: string): Promise<Ranked
   }
 }
 
-async function fetchPositions(client: AxiosInstance, puuid: string): Promise<PositionReport[]> {
+/**
+ * 读对局历史(外加判位置要用的那点静态数据)。
+ *
+ * <p>读不到就返回 null —— 位置和近 10 场都没有,不能拿空数组冒充「他没打过」。
+ */
+async function fetchMatches(client: AxiosInstance, puuid: string): Promise<MatchData | null> {
   try {
-    const [itemsRes, matchesRes] = await Promise.all([
+    const [championsRes, itemsRes, matchesRes] = await Promise.all([
+      client.get(CHAMPIONS_PATH, { timeout: 10_000 }).catch(() => null),
       client.get(ITEMS_PATH, { timeout: 10_000 }).catch(() => null),
       client
         .get(MATCHES_PATH, {
@@ -161,14 +175,18 @@ async function fetchPositions(client: AxiosInstance, puuid: string): Promise<Pos
         })
         .catch(() => null)
     ]);
-    if (!matchesRes) return [];
+    if (!matchesRes) return null;
 
-    // 只借 items.json 判角色任务道具 —— 不为了判位置把整份静态数据
-    // (含 6MB 的皮肤目录)拉一遍。
-    const staticData = { ...emptyStaticData(), items: parseLcuItems(itemsRes?.data) };
-    return summarizePositions(extractGames(matchesRes.data), staticData, puuid);
+    // 只借 items.json 判角色任务道具、champion-summary.json 拿中文英雄名 ——
+    // 不为了判位置把整份静态数据(含 6MB 的皮肤目录)拉一遍。
+    const staticData = {
+      ...emptyStaticData(),
+      champions: championsRes ? parseLcuChampions(championsRes.data) : emptyStaticData().champions,
+      items: parseLcuItems(itemsRes?.data)
+    };
+    return { games: extractGames(matchesRes.data), staticData };
   } catch {
     // 对局历史端点限流,读不到就当没有位置
-    return [];
+    return null;
   }
 }

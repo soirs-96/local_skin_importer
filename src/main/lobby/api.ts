@@ -11,6 +11,8 @@ import {
   type LobbyMe,
   type LobbyMessage,
   type LobbyPlayer,
+  type LobbyPlayerProfile,
+  type LobbyRecentMatch,
   type LobbySnapshot,
   type LobbyStats
 } from '../../shared/lobby';
@@ -57,6 +59,10 @@ function normalizePlayer(raw: unknown): LobbyPlayer {
     collectionScore: numOrNull(p.collectionScore),
     positions: strArray(p.positions),
     positionLabels: strArray(p.positionLabels),
+    recentScore: numOrNull(p.recentScore),
+    recentMatchCount: num(p.recentMatchCount),
+    recentPositions: strArray(p.recentPositions),
+    recentPositionLabels: strArray(p.recentPositionLabels),
     vip: p.vip === true,
     lastLobbyAt: str(p.lastLobbyAt) || null
   };
@@ -150,6 +156,70 @@ export async function fetchLobbyHistory(limit = LOBBY_HISTORY_LIMIT): Promise<Lo
   } catch (e) {
     throw normalizeLobbyError(e);
   }
+}
+
+/** 某个玩家近 10 场排位的档案 —— 悬浮卡片用。 */
+export async function fetchLobbyPlayerProfile(userId: number): Promise<LobbyPlayerProfile> {
+  try {
+    const raw = await getEnveloped<unknown>(`/api/lobby/player/${userId}/recent`);
+    return normalizeProfile(raw);
+  } catch (e) {
+    throw normalizeLobbyError(e);
+  }
+}
+
+function normalizeProfile(raw: unknown): LobbyPlayerProfile {
+  const p = (raw ?? {}) as Record<string, unknown>;
+  return {
+    userId: num(p.userId),
+    matchCount: num(p.matchCount),
+    winCount: num(p.winCount),
+    winRate: num(p.winRate),
+    score: numOrNull(p.score),
+    avgKda: numOrNull(p.avgKda),
+    avgCs: numOrNull(p.avgCs),
+    topPosition: str(p.topPosition) || null,
+    topPositionLabel: str(p.topPositionLabel) || null,
+    positions: Array.isArray(p.positions)
+      ? p.positions
+          .filter((x): x is Record<string, unknown> => typeof x === 'object' && x !== null)
+          .map((x) => ({
+            position: str(x.position),
+            label: str(x.label),
+            count: num(x.count)
+          }))
+      : [],
+    champions: Array.isArray(p.champions)
+      ? p.champions
+          .filter((x): x is Record<string, unknown> => typeof x === 'object' && x !== null)
+          .map((x) => ({
+            championId: num(x.championId),
+            championName: str(x.championName),
+            count: num(x.count)
+          }))
+      : [],
+    matches: Array.isArray(p.matches) ? p.matches.map(normalizeRecentMatch) : []
+  };
+}
+
+function normalizeRecentMatch(raw: unknown): LobbyRecentMatch {
+  const m = (raw ?? {}) as Record<string, unknown>;
+  return {
+    gameId: str(m.gameId),
+    championId: num(m.championId),
+    championName: str(m.championName),
+    position: str(m.position),
+    positionLabel: str(m.positionLabel),
+    queueType: str(m.queueType),
+    kills: num(m.kills),
+    deaths: num(m.deaths),
+    assists: num(m.assists),
+    minionKills: num(m.minionKills),
+    durationS: num(m.durationS),
+    win: m.win === true,
+    score: num(m.score),
+    playedAtMs: num(m.playedAtMs)
+  };
 }
 
 /** token 过期就清掉 —— 留着只会让「已登录」的假象一直挂着。 */

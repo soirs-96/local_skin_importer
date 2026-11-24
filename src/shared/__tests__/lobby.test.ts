@@ -6,6 +6,7 @@ import {
   isLobbyInvitable,
   lobbyLastSeenText,
   lobbyPlayerName,
+  lobbyPlayerPositions,
   lobbyStatusOf,
   lobbyStatusText,
   mergeMessages
@@ -28,6 +29,10 @@ function player(over: Partial<LobbyPlayer> = {}): LobbyPlayer {
     collectionScore: 520,
     positions: ['mid'],
     positionLabels: ['中单'],
+    recentScore: 72,
+    recentMatchCount: 10,
+    recentPositions: ['mid', 'adc'],
+    recentPositionLabels: ['中单', 'ADC'],
     vip: false,
     lastLobbyAt: null,
     ...over
@@ -105,6 +110,37 @@ describe('lobbyPlayerName', () => {
 
   it('两个都没有就换个说法', () => {
     expect(lobbyPlayerName(player({ nickname: '', gameId: '' }))).toBe('无名召唤师');
+  });
+});
+
+describe('lobbyPlayerPositions', () => {
+  it('有近 10 场就优先用它 —— 那是他最近真在打的位', () => {
+    const positions = lobbyPlayerPositions(
+      player({ positions: ['jungle'], positionLabels: ['打野'] })
+    );
+    expect(positions.codes).toEqual(['mid', 'adc']);
+    expect(positions.labels).toEqual(['中单', 'ADC']);
+  });
+
+  it('没有近 10 场就退回上报的位置', () => {
+    const positions = lobbyPlayerPositions(
+      player({
+        positions: ['jungle'],
+        positionLabels: ['打野'],
+        recentPositions: [],
+        recentPositionLabels: []
+      })
+    );
+    expect(positions.codes).toEqual(['jungle']);
+    expect(positions.labels).toEqual(['打野']);
+  });
+
+  it('两边都没有就是空 —— 不编位置', () => {
+    const positions = lobbyPlayerPositions(
+      player({ positions: [], positionLabels: [], recentPositions: [], recentPositionLabels: [] })
+    );
+    expect(positions.codes).toEqual([]);
+    expect(positions.labels).toEqual([]);
   });
 });
 

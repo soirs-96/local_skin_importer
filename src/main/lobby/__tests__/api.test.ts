@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import axios from 'axios';
-import { fetchLobbyHistory, fetchLobbyPlayers } from '../api';
+import { fetchLobbyHistory, fetchLobbyPlayerProfile, fetchLobbyPlayers } from '../api';
 import { getStoredToken } from '../../auth';
 
 vi.mock('axios');
@@ -70,6 +70,40 @@ describe('大厅 REST', () => {
     expect(snap.offline).toEqual([]);
     expect(snap.stats.online).toBe(0);
     expect(snap.me).toBeNull();
+  });
+
+  it('悬浮卡片:按人取近 10 场档案', async () => {
+    vi.mocked(getStoredToken).mockReturnValue('jwt');
+    vi.mocked(axios.get).mockResolvedValue({
+      data: {
+        code: 200,
+        data: {
+          userId: 7,
+          matchCount: 3,
+          winCount: 2,
+          winRate: 0.6667,
+          score: 71,
+          avgKda: 3.2,
+          avgCs: 6.8,
+          topPosition: 'mid',
+          topPositionLabel: '中单',
+          positions: [{ position: 'mid', label: '中单', count: 2 }],
+          champions: [{ championId: 1, championName: '安妮', count: 2 }],
+          matches: []
+        }
+      }
+    });
+
+    const profile = await fetchLobbyPlayerProfile(7);
+
+    expect(profile.score).toBe(71);
+    expect(profile.positions[0].label).toBe('中单');
+    expect(axios.get).toHaveBeenCalledWith(
+      expect.stringContaining('/api/lobby/player/7/recent'),
+      expect.objectContaining({
+        headers: expect.objectContaining({ Authorization: 'Bearer jwt' })
+      })
+    );
   });
 
   it('历史消息也整理成一样形状', async () => {

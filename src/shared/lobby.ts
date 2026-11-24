@@ -58,9 +58,64 @@ export interface LobbyPlayer {
   collectionScore: number | null;
   positions: string[];
   positionLabels: string[];
+  /**
+   * 近 10 场**排位**的综合分 0~100;null = 这个人没上报过近 10 场。
+   *
+   * <p>只看排位表现(KDA / 补刀 / 胜负),跟皮肤评分没关系。
+   */
+  recentScore: number | null;
+  /** 近 10 场的场次;0 = 没上报过 */
+  recentMatchCount: number;
+  /** 近 10 场里的位置清单(按场次从多到少) */
+  recentPositions: string[];
+  recentPositionLabels: string[];
   vip: boolean;
   /** 上次出现在大厅的时间('yyyy-MM-dd HH:mm:ss');null = 从来过 */
   lastLobbyAt: string | null;
+}
+
+/** 悬浮卡片里的一场排位。 */
+export interface LobbyRecentMatch {
+  gameId: string;
+  championId: number;
+  championName: string;
+  position: string;
+  positionLabel: string;
+  queueType: string;
+  kills: number;
+  deaths: number;
+  assists: number;
+  minionKills: number;
+  durationS: number;
+  win: boolean;
+  /** 这场的表现分 0~100 */
+  score: number;
+  /** 对局时间(epoch 毫秒) */
+  playedAtMs: number;
+}
+
+/**
+ * 某个玩家近 10 场排位的档案 —— 大厅列表里鼠标悬浮出来的那张卡片。
+ *
+ * <p>数据来自各人桌面端的同步上报(后端没有别的办法拿到别人的对局历史)。
+ */
+export interface LobbyPlayerProfile {
+  userId: number;
+  /** 统计到的场次 */
+  matchCount: number;
+  winCount: number;
+  /** 胜率 0~1 */
+  winRate: number;
+  /** 近期分 0~100;null = 没上报过 */
+  score: number | null;
+  avgKda: number | null;
+  avgCs: number | null;
+  topPosition: string | null;
+  topPositionLabel: string | null;
+  positions: { position: string; label: string; count: number }[];
+  champions: { championId: number; championName: string; count: number }[];
+  /** 近 10 场明细,新的在前 */
+  matches: LobbyRecentMatch[];
 }
 
 /** 顶栏的三个数字。 */
@@ -224,6 +279,19 @@ export function isLobbyInvitable(player: LobbyPlayer): boolean {
 /** 一行显示的名字。 */
 export function lobbyPlayerName(player: LobbyPlayer): string {
   return player.nickname || player.gameId || '无名召唤师';
+}
+
+/**
+ * 列表里显示的主玩位置。
+ *
+ * <p>优先用「近 10 场」的位置 —— 那是他最近真在打的位;
+ * 没有近 10 场数据(没同步过)就退回上报的位置。两边都没有就是空。
+ */
+export function lobbyPlayerPositions(player: LobbyPlayer): { codes: string[]; labels: string[] } {
+  if (player.recentPositions.length > 0) {
+    return { codes: player.recentPositions, labels: player.recentPositionLabels };
+  }
+  return { codes: player.positions, labels: player.positionLabels };
 }
 
 /**

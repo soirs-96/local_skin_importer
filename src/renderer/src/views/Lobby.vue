@@ -94,58 +94,100 @@
           </div>
         </template>
 
-        <div class="section-label">
-          {{ scope === 'same' ? '同大区在线' : '在线' }} ({{ visibleOnline.length }})
-        </div>
-        <div v-if="visibleOnline.length === 0" class="player-empty">
-          现在没人在大厅里。
-        </div>
-        <div v-for="p in visibleOnline" :key="p.userId" class="player-row">
-          <span class="status-dot" :class="'is-' + lobbyStatusOf(p.phase)" />
-          <div class="player-info">
-            <span class="player-name">
-              {{ lobbyPlayerName(p) }}
-              <span v-if="p.vip" class="vip-badge">VIP</span>
-            </span>
-            <span class="player-meta">
-              {{ p.gameId || '无游戏ID' }}
-              <span v-if="p.rankLabel"> · {{ p.rankLabel }}</span>
-              <span v-if="p.collectionScore !== null"> · 收藏分 {{ p.collectionScore }}</span>
-              <span v-if="p.positionLabels.length"> · {{ p.positionLabels.join('、') }}</span>
-            </span>
+        <div class="player-scroll">
+          <div class="section-label">
+            {{ scope === 'same' ? '同大区在线' : '在线' }} ({{ visibleOnline.length }})
           </div>
-          <span class="player-status">{{ lobbyStatusText(p.phase) }}</span>
-          <el-button class="hx-gold" size="small" text @click="onCopy(p)">复制ID</el-button>
-          <el-button
-            class="hx-gold"
-            size="small"
-            text
-            :disabled="!isLobbyInvitable(p)"
-            @click="onInvite(p)"
+          <div v-if="visibleOnline.length === 0" class="player-empty">
+            现在没人在大厅里。
+          </div>
+          <div
+            v-for="p in visibleOnline"
+            :key="p.userId"
+            class="player-row"
+            :class="{ 'is-hovered': hoverUserId === p.userId }"
+            @mouseenter="onRowEnter(p, $event)"
+            @mouseleave="onRowLeave"
           >
-            邀请
-          </el-button>
-        </div>
-
-        <div class="section-label">同区离线候选 ({{ offline.length }})</div>
-        <div v-if="offline.length === 0" class="player-empty">
-          没有同区的人最近来过大厅。
-        </div>
-        <div v-for="p in offline" :key="p.userId" class="player-row">
-          <span class="status-dot is-offline" />
-          <div class="player-info">
-            <span class="player-name">{{ lobbyPlayerName(p) }}</span>
-            <span class="player-meta">
-              {{ p.gameId || '无游戏ID' }}
-              <span v-if="p.rankLabel"> · {{ p.rankLabel }}</span>
-              <span v-if="p.lastLobbyAt"> · 上次在线 {{ lobbyLastSeenText(p.lastLobbyAt) }}</span>
+            <span class="status-dot" :class="'is-' + lobbyStatusOf(p.phase)" />
+            <img
+              v-if="p.avatarUrl"
+              class="player-avatar"
+              :src="p.avatarUrl"
+              :alt="lobbyPlayerName(p)"
+            />
+            <span v-else class="player-avatar player-avatar--empty">{{ initialOf(p) }}</span>
+            <div class="player-info">
+              <span class="player-name">
+                {{ lobbyPlayerName(p) }}
+                <span v-if="p.vip" class="vip-badge">VIP</span>
+                <span class="player-gameid">{{ p.gameId || '无游戏ID' }}</span>
+              </span>
+              <span class="player-meta">
+                {{ lobbyStatusText(p.phase) }}
+                <span v-if="p.rankLabel"> · {{ p.rankLabel }}</span>
+                <span v-if="positionLabelsOf(p).length"> · {{ positionLabelsOf(p).join('、') }}</span>
+              </span>
+            </div>
+            <span class="player-score" :class="{ 'is-empty': p.recentScore === null }">
+              {{ p.recentScore === null ? '—' : p.recentScore }}
             </span>
+            <div class="player-actions">
+              <el-button class="hx-gold" size="small" text @click="onCopy(p)">复制ID</el-button>
+              <el-button
+                class="hx-gold"
+                size="small"
+                text
+                :disabled="!isLobbyInvitable(p)"
+                @click="onInvite(p)"
+              >
+                邀请
+              </el-button>
+            </div>
           </div>
-          <span class="player-status">离线</span>
-          <el-button class="hx-gold" size="small" text @click="onCopy(p)">复制ID</el-button>
+
+          <div class="section-label">同区离线候选 ({{ offline.length }})</div>
+          <div v-if="offline.length === 0" class="player-empty">
+            没有同区的人最近来过大厅。
+          </div>
+          <div v-for="p in offline" :key="p.userId" class="player-row">
+            <span class="status-dot is-offline" />
+            <img
+              v-if="p.avatarUrl"
+              class="player-avatar"
+              :src="p.avatarUrl"
+              :alt="lobbyPlayerName(p)"
+            />
+            <span v-else class="player-avatar player-avatar--empty">{{ initialOf(p) }}</span>
+            <div class="player-info">
+              <span class="player-name">{{ lobbyPlayerName(p) }}</span>
+              <span class="player-meta">
+                {{ p.gameId || '无游戏ID' }}
+                <span v-if="p.rankLabel"> · {{ p.rankLabel }}</span>
+                <span v-if="p.lastLobbyAt"> · 上次在线 {{ lobbyLastSeenText(p.lastLobbyAt) }}</span>
+              </span>
+            </div>
+            <div class="player-actions">
+              <el-button class="hx-gold" size="small" text @click="onCopy(p)">复制ID</el-button>
+            </div>
+          </div>
         </div>
       </el-card>
     </div>
+
+    <!-- 悬浮档案卡:鼠标停在谁身上就看谁近 10 场排位的表现 -->
+    <LobbyProfileCard
+      v-if="hoverPlayer"
+      :visible="hoverUserId !== null"
+      :left="cardPos.left"
+      :top="cardPos.top"
+      :player="hoverPlayer"
+      :profile="hoveredProfile"
+      :loading="hoveredLoading"
+      :error="hoveredError"
+      @enter="cancelClose"
+      @leave="scheduleClose"
+    />
 
     <!-- 同区搭子:按分数筛同区的人(老功能,搬进大厅) -->
     <RegionBuddyCard />
@@ -153,17 +195,25 @@
 </template>
 
 <script setup lang="ts">
-import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue';
+import { computed, nextTick, onMounted, onUnmounted, reactive, ref, watch } from 'vue';
 import { ElNotification } from 'element-plus';
+import LobbyProfileCard from '../components/LobbyProfileCard.vue';
 import RegionBuddyCard from '../components/RegionBuddyCard.vue';
 import {
   isLobbyInvitable,
   lobbyLastSeenText,
   lobbyPlayerName,
+  lobbyPlayerPositions,
   lobbyStatusOf,
   lobbyStatusText
 } from '../../../shared/lobby';
-import type { LobbyMe, LobbyMessage, LobbyPlayer, LobbyState } from '../../../shared/lobby';
+import type {
+  LobbyMe,
+  LobbyMessage,
+  LobbyPlayer,
+  LobbyPlayerProfile,
+  LobbyState
+} from '../../../shared/lobby';
 
 const state = ref<LobbyState | null>(null);
 const draft = ref('');
@@ -181,6 +231,7 @@ onMounted(async () => {
 
 onUnmounted(() => {
   unsubscribe?.();
+  cancelClose();
 });
 
 const me = computed<LobbyMe | null>(() => state.value?.snapshot?.me ?? null);
@@ -243,6 +294,123 @@ async function onInvite(player: LobbyPlayer): Promise<void> {
   }
   ElNotification({ type: 'success', message: result.message, duration: 2000 });
 }
+
+// ---- 悬浮档案卡 ------------------------------------------------------------
+
+/** 卡片宽高跟 LobbyProfileCard 里写死的一致 —— 定位要按它算。 */
+const CARD_WIDTH = 344;
+const CARD_GAP = 12;
+
+/** 现在悬浮着的是谁。 */
+const hoverUserId = ref<number | null>(null);
+const hoverPlayer = ref<LobbyPlayer | null>(null);
+/** 悬浮那一行在窗口里的位置 —— 卡片按它摆。 */
+const anchorRect = ref<DOMRect | null>(null);
+
+/**
+ * 拉回来的档案按人缓存 —— 反复悬浮同一个人不用再问后端。
+ *
+ * <p>用 `reactive` 而不是普通 Map:普通 Map 改了不会通知视图,卡片就永远停在
+ * 「还没拉到」的状态。Vue 的 reactive 能追踪 Map 的 set/get。
+ */
+const profileCache = reactive(new Map<number, LobbyPlayerProfile>());
+/** 正在拉的人。 */
+const pendingUserIds = ref<number[]>([]);
+/** 拉失败的原因,按人记着。 */
+const errorsByUser = reactive(new Map<number, string>());
+
+/** 鼠标移出去之后延迟关闭 —— 中间那段空隙不该让卡片闪一下。 */
+let closeTimer: ReturnType<typeof setTimeout> | null = null;
+
+const hoveredProfile = computed<LobbyPlayerProfile | null>(() => {
+  if (hoverUserId.value === null) return null;
+  return profileCache.get(hoverUserId.value) ?? null;
+});
+
+const hoveredLoading = computed<boolean>(
+  () => hoverUserId.value !== null && pendingUserIds.value.includes(hoverUserId.value)
+);
+
+const hoveredError = computed<string | null>(() => {
+  if (hoverUserId.value === null) return null;
+  return errorsByUser.get(hoverUserId.value) ?? null;
+});
+
+/**
+ * 卡片摆哪儿。
+ *
+ * <p>列表在右边 —— 卡片默认往**左**开(跟 HexBox 一样),左边放不下才往右开。
+ */
+const cardPos = computed<{ left: number; top: number }>(() => {
+  const rect = anchorRect.value;
+  if (!rect) return { left: 0, top: 0 };
+  let left = rect.left - CARD_WIDTH - CARD_GAP;
+  if (left < 8) left = rect.right + CARD_GAP;
+  const maxLeft = window.innerWidth - CARD_WIDTH - 8;
+  if (left > maxLeft) left = Math.max(8, maxLeft);
+  let top = rect.top - 8;
+  const maxTop = window.innerHeight - 140;
+  if (top > maxTop) top = Math.max(8, maxTop);
+  return { left, top };
+});
+
+function onRowEnter(player: LobbyPlayer, event: MouseEvent): void {
+  cancelClose();
+  const el = event.currentTarget as HTMLElement | null;
+  anchorRect.value = el ? el.getBoundingClientRect() : null;
+  hoverPlayer.value = player;
+  hoverUserId.value = player.userId;
+  if (profileCache.has(player.userId)) return;
+  if (pendingUserIds.value.includes(player.userId)) return;
+  pendingUserIds.value = [...pendingUserIds.value, player.userId];
+  void window.api
+    .getLobbyPlayerProfile(player.userId)
+    .then((profile) => {
+      profileCache.set(player.userId, profile);
+      errorsByUser.delete(player.userId);
+    })
+    .catch((e: unknown) => {
+      errorsByUser.set(
+        player.userId,
+        (e as { message?: string }).message ?? '拉取近期档案失败'
+      );
+    })
+    .finally(() => {
+      pendingUserIds.value = pendingUserIds.value.filter((id) => id !== player.userId);
+    });
+}
+
+function onRowLeave(): void {
+  scheduleClose();
+}
+
+function scheduleClose(): void {
+  cancelClose();
+  closeTimer = setTimeout(() => {
+    hoverUserId.value = null;
+    hoverPlayer.value = null;
+    anchorRect.value = null;
+    closeTimer = null;
+  }, 140);
+}
+
+function cancelClose(): void {
+  if (closeTimer) {
+    clearTimeout(closeTimer);
+    closeTimer = null;
+  }
+}
+
+/** 列表里显示的主玩位置 —— 优先用近 10 场里打得最多的那个位。 */
+function positionLabelsOf(player: LobbyPlayer): string[] {
+  return lobbyPlayerPositions(player).labels.slice(0, 2);
+}
+
+/** 没头像时的占位字 —— 取名字第一个字。 */
+function initialOf(player: LobbyPlayer): string {
+  const name = lobbyPlayerName(player);
+  return name ? name.slice(0, 1) : '?';
+}
 </script>
 
 <style scoped>
@@ -251,7 +419,7 @@ async function onInvite(player: LobbyPlayer): Promise<void> {
   flex-direction: column;
   gap: 16px;
   padding: 20px;
-  max-width: 1100px;
+  max-width: 1180px;
   margin: 0 auto;
 }
 .card-header {
@@ -320,21 +488,28 @@ async function onInvite(player: LobbyPlayer): Promise<void> {
   font-size: 12px;
   color: var(--hx-text-dim);
 }
+/* 聊天在左,列表在右 —— 列表固定宽度,自己滚 */
 .lobby-body {
   display: flex;
   gap: 16px;
   align-items: flex-start;
 }
 .chat-card {
-  flex: 1 1 55%;
+  flex: 1 1 auto;
   min-width: 0;
 }
 .player-card {
-  flex: 1 1 45%;
+  flex: 0 0 380px;
   min-width: 0;
 }
+.player-scroll {
+  max-height: 620px;
+  overflow-y: auto;
+  margin-right: -6px;
+  padding-right: 6px;
+}
 .chat-box {
-  height: 320px;
+  height: 460px;
   overflow-y: auto;
   display: flex;
   flex-direction: column;
@@ -385,11 +560,14 @@ async function onInvite(player: LobbyPlayer): Promise<void> {
   display: flex;
   align-items: center;
   gap: 8px;
-  padding: 8px 0;
+  padding: 8px 6px 8px 0;
   border-bottom: 1px solid var(--hx-line);
 }
 .player-row:last-child {
   border-bottom: none;
+}
+.player-row.is-hovered {
+  background: var(--hx-tint-blue-faint);
 }
 .status-dot {
   width: 7px;
@@ -412,6 +590,22 @@ async function onInvite(player: LobbyPlayer): Promise<void> {
   background: var(--hx-text-faint);
   opacity: 0.5;
 }
+.player-avatar {
+  width: 30px;
+  height: 30px;
+  flex-shrink: 0;
+  object-fit: cover;
+  border: 1px solid var(--hx-line-strong);
+  border-radius: 50%;
+}
+.player-avatar--empty {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--hx-inset);
+  color: var(--hx-gold);
+  font-size: 13px;
+}
 .player-info {
   flex: 1;
   min-width: 0;
@@ -422,6 +616,15 @@ async function onInvite(player: LobbyPlayer): Promise<void> {
 .player-name {
   font-size: 13px;
   color: var(--hx-text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.player-gameid {
+  margin-left: 6px;
+  font-size: 11px;
+  color: var(--hx-text-faint);
+  font-family: monospace;
 }
 .player-meta {
   font-size: 11px;
@@ -431,10 +634,22 @@ async function onInvite(player: LobbyPlayer): Promise<void> {
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-.player-status {
+/* 近 10 场排位的综合分 —— 没有就写「—」,不写 0 */
+.player-score {
   flex-shrink: 0;
-  font-size: 11px;
-  color: var(--hx-text-dim);
+  min-width: 28px;
+  text-align: right;
+  font-size: 14px;
+  color: var(--hx-blue-bright);
+  font-family: monospace;
+}
+.player-score.is-empty {
+  color: var(--hx-text-faint);
+}
+.player-actions {
+  flex-shrink: 0;
+  display: flex;
+  gap: 2px;
 }
 .player-empty {
   padding: 4px 0;
