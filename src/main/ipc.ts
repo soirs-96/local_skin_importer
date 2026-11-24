@@ -19,6 +19,7 @@ import { clearLlmApiKey, getLlmStatus, saveLlmApiKey } from './llm';
 import { autoAcceptService } from './match/autoAccept';
 import { fetchMatchProfile } from './match/positionStats';
 import { writeAutoAcceptPrefs } from './autoAcceptState';
+import { lobbyService } from './lobby/service';
 import * as devLogger from './devLogger';
 import { MATCH_STATE_CHANNEL } from '../shared/match';
 import type { TopChampion } from '../shared/match';
@@ -62,6 +63,22 @@ interface PlayerGamesPayload {
 
 interface AutoAcceptPayload {
   enabled: boolean;
+}
+
+/** 「在大厅公开我的信息」开关。 */
+interface LobbyPublicPayload {
+  publicVisible: boolean;
+}
+
+/** 大厅里发的一句话。 */
+interface LobbySendPayload {
+  text: string;
+}
+
+/** 拉一个人进房间。 */
+interface LobbyInvitePayload {
+  nickname: string;
+  gameId: string;
 }
 
 interface AutoAcceptDelayPayload {
@@ -363,11 +380,15 @@ export function registerIpcHandlers(): void {
     assertRedeemPayload(payload);
     const token = await auth.redeemSyncCode(payload.code);
     auth.saveToken(token);
+    // 大厅之前连不上是因为没 token —— 现在有了,立刻重连,别让用户等退避计时器。
+    lobbyService.onLogin();
     return auth.getAuthStatus();
   });
 
   ipcMain.handle('auth:logout', async () => {
     auth.clearStoredToken();
+    // 大厅连接得跟着断 —— 不然人还挂在大厅在线名单里。
+    lobbyService.onLogout();
     return { ok: true as const };
   });
 
@@ -660,6 +681,38 @@ export function registerIpcHandlers(): void {
     const localZone = await localZonePromise;
     if (!localZone) return first;
     return await fetchRegionUsers(localZone, undefined, query);
+  });
+
+  // ---- 开黑大厅 ------------------------------------------------------------
+
+  /**
+   * 大厅状态。
+   *
+   * <p>大厅服务在应用启动时就起来了(退到托盘也保持连接)——
+   * 这里只是把当前状态取出来给渲染进程。
+   */
+  ipcMain.handle('lobby:get-state', () => lobbyService.getState());
+
+  /** 「在大厅公开我的信息」开关。 */
+  ipcMain.handle('lobby:set-public', async (_event, payload: LobbyPublicPayload) => {
+    if (typeof payload !== 'object' || payload === null) throw new Error('invalid payload');
+    if (typeof payload.publicVisible !== 'boolean') throw new Error('invalid publicVisible');
+    return lobbyService.setPublicVisible(payload.publicVisible);
+  });
+
+  /** 说一句话。 */
+  ipcMain.handle('lobby:send', async (_event, payload: LobbySendPayload) => {
+    if (typeof payload !== 'object' || payload === null) throw new Error('invalid payload');
+    if (typeof payload.text !== 'string') throw new Error('invalid text');
+    return lobbyService.say(payload.text);
+  });
+
+  /** 拉一个人进房间。 */
+  ipcMain.handle('lobby:invite', async (_event, payload: LobbyInvitePayload) => {
+    if (typeof payload !== 'object' || payload === null) throw new Error('invalid payload');
+    if (typeof payload.nickname !== 'string') throw new Error('invalid nickname');
+    if (typeof payload.gameId !== 'string') throw new Error('invalid gameId');
+    return await lobbyService.invite(payload.nickname, payload.gameId);
   });
 }
 

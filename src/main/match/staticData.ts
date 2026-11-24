@@ -62,6 +62,10 @@ export interface StaticData {
    * 来源是客户端的 `skins.json`(皮肤总目录,2000 多条)—— 这份清单是
    * 「皮肤序号 ↔ 皮肤 id」的**权威对照表**:换算出来的 id 拿它一校验
    * 就知道对不对,不用靠猜。
+   *
+   * ⚠️ 清单里**含炫彩** —— 客户端把炫彩和普通皮肤排在同一个 id 空间里
+   * (英雄编号 × 1000 + 序号,序号连续)。炫彩的条目嵌套在底图那款的
+   * `chromas` 数组里,解析时要一并收进来(见 `parseLcuSkins`)。
    */
   skinsByChampion: Map<number, number[]>;
   /** 皮肤 id → 那款皮肤(目录条目:中文名 + 美术资源路径)。 */
@@ -71,6 +75,9 @@ export interface StaticData {
    *
    * 客户端把炫彩和普通皮肤放在同一个 id 空间里:英雄编号 × 1000 + 序号,
    * 序号从 0 连续排到 K,普通皮肤和炫彩交替占位。
+   *
+   * 炫彩的条目**嵌套在底图那款的 `chromas` 数组里**(国服客户端实测),
+   * 底图就是挂着它的那一条。
    */
   chromaBaseSkinIds: Map<number, number>;
   /**
@@ -414,6 +421,17 @@ export function emptyStaticData(): StaticData {
  *     —— 客户端自己的数据,不用推;
  *   - **美术资源路径** —— splash / 未居中 splash / 载入画面,本机回环就能取到。
  *
+ * ⚠️ **炫彩不在顶层** —— 它挂在底图那一条的 `chromas` 数组里:
+ *
+ * ```json
+ * { "id": 119058, "name": "最高清算 德莱文", "skinClassification": "kChampion",
+ *   "chromas": [{ "id": 119067, "name": "最高清算 德莱文 至强",
+ *                 "skinClassification": "kRecolor", "chromaPath": "..." }] }
+ * ```
+ *
+ * 客户端给的皮肤序号把炫彩算在**同一个 id 空间**里(序号连续),所以炫彩的
+ * id 必须一并收进清单 —— 漏了,用了炫彩的那一局就换算不出皮肤 id。
+ *
  * ⚠️ `champion-summary.json` 里**没有**皮肤信息(国服实测 262 条,
  * 每条只有 id/name/alias/roles)—— 别拿它当皮肤对照表。
  */
@@ -462,17 +480,46 @@ export function parseLcuSkins(raw: unknown): {
         continue;
       }
       const index = id % 1000;
-      ids.push(id);
+      // 同一个 id 只进一次 —— 清单里的**位置**就是「序号」的换算依据,
+      // 重复一条会让位置整体错位,认到别的皮肤上。
+      if (!ids.includes(id)) ids.push(id);
 
       if (classification === 'kRecolor') {
         // 炫彩没有自己的立绘,游戏里显示的是底图皮肤那张图调了色
-        if (lastChampionSkinId > 0) chromaBaseSkinIds.set(id, lastChampionSkinId);
+        // ⚠️ 已经有归属就别改:嵌套在底图那条里的炫彩拿到的底图是**准的**
+        // (就是挂着它的那一条),别拿「上一条普通皮肤」这个猜测覆盖掉。
+        if (lastChampionSkinId > 0 && !chromaBaseSkinIds.has(id)) {
+          chromaBaseSkinIds.set(id, lastChampionSkinId);
+        }
         const chromaName = str(entry.name);
         if (chromaName) chromaNames.set(id, chromaName);
         continue;
       }
 
       lastChampionSkinId = id;
+      // ⚠️ **炫彩是嵌套在底图那一条里的**(`chromas` 数组),不是顶层条目。
+      // 国服客户端实测(2026-11-24,德莱文):
+      //   顶层只有普通皮肤(119000~119006、119012、119013、119020、119029、
+      //   119039、119048、119058、119068),炫彩全在底图那款的 `chromas` 里
+      //   (119007~119011 挂在 119003 下、119067 挂在 119058 下……)。
+      //
+      // 而客户端给的皮肤序号**把炫彩算在同一个 id 空间里**(英雄编号 × 1000 + 序号)，
+      // 序号连续 —— 所以炫彩的 id 必须进 id 空间。不进的话,用了炫彩的那一局
+      // 换算出来的 id 校验不过 → 「认不出来」→ 只能退到英雄默认皮肤。
+      const chromas = entry.chromas;
+      if (Array.isArray(chromas)) {
+        for (const chroma of chromas) {
+          if (!isRecord(chroma)) continue;
+          const chromaId = num(chroma.id);
+          // 炫彩跟底图同一个英雄 —— 不是就别收(别的分类混进来会撑坏 id 空间)
+          if (chromaId <= 0 || Math.floor(chromaId / 1000) !== championId) continue;
+          if (!ids.includes(chromaId)) ids.push(chromaId);
+          // 底图就是挂着它的那一条 —— 比「按 id 猜上一条普通皮肤」准
+          chromaBaseSkinIds.set(chromaId, id);
+          const chromaName = str(chroma.name);
+          if (chromaName) chromaNames.set(chromaId, chromaName);
+        }
+      }
       const splashPath = str(entry.splashPath) || null;
       // splash 文件名末尾的 `_N` 应当就是序号 —— 对不上说明这份数据不守
       // 「皮肤 id = 英雄编号 × 1000 + 序号」,这条皮肤的图不能用,别收进目录。
@@ -492,7 +539,8 @@ export function parseLcuSkins(raw: unknown): {
       });
     }
     // 这个英雄一条皮肤都没收到(整组都是别的分类)→ 不占位
-    if (ids.length > 0) byChampion.set(championId, ids);
+    // 排序:id 空间是「英雄编号 × 1000 + 序号」,序号从小到大 = id 从小到大
+    if (ids.length > 0) byChampion.set(championId, ids.sort((a, b) => a - b));
   }
 
   return { byChampion, infos, chromaBaseSkinIds, chromaNames };

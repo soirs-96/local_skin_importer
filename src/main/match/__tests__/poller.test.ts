@@ -61,10 +61,13 @@ vi.mock('../staticData', () => ({
     champions: new Map([[64, { name: '盲僧', iconUrl: null }]]),
     items: new Map(),
     runes: new Map(),
-    skinsByChampion: new Map(),
+    // 德莱文(119)的皮肤 id 空间 —— **含炫彩**:客户端把炫彩排在同一个
+    // id 空间里(英雄编号 × 1000 + 序号),序号连续。
+    // 119067 =「最高清算 德莱文 至强」炫彩(底图是 119058)。
+    skinsByChampion: new Map([[119, [119000, 119058, 119067]]]),
     skins: new Map(),
-    chromaBaseSkinIds: new Map(),
-    chromaNames: new Map()
+    chromaBaseSkinIds: new Map([[119067, 119058]]),
+    chromaNames: new Map([[119067, '最高清算 德莱文 至强']])
   })),
   emptyStaticData: vi.fn(() => ({
     version: null,
@@ -507,6 +510,93 @@ describe('MatchPoller 的局末检测', () => {
     expect(settlements[0].usedSkin.source).toBe('gameflow-selection');
     // 英雄名按英雄编号从静态数据里取(局末 Live Client 给的是占位符)
     expect(settlements[0].championName).toBe('盲僧');
+    poller.stop();
+  });
+
+  it('这局用的是炫彩 → 认出炫彩本身,底图另给(不是「没认出具体哪款皮肤」)', async () => {
+    // 2026-11-24 实测踩的坑:客户端的皮肤序号把炫彩算在同一个 id 空间里,
+    // 序号 67 → 119067 =「最高清算 德莱文 至强」炫彩。
+    // 皮肤清单里**必须含炫彩的 id**,否则换算出来的 id 校验不过 →
+    // 认不出来 → 只能退到英雄默认皮肤(弹窗上写着「没认出具体哪款皮肤」)。
+    const poller = new MatchPoller();
+    const settlements: LocalSettlement[] = [];
+    poller.subscribeSettlement((s) => settlements.push(s));
+
+    poller.start();
+    // 先在大厅里问一次 —— 静态数据(皮肤清单)得先加载上
+    await poller.refreshNow();
+    await flush();
+    settlements.length = 0;
+
+    wsFire({
+      uri: '/lol-gameflow/v1/session',
+      eventType: 'Update',
+      data: {
+        phase: 'InProgress',
+        gameData: {
+          teamOne: [{ championId: 119, puuid: 'puuid-1', teamOwner: true }],
+          playerChampionSelections: [{ championId: 119, puuid: 'puuid-1', selectedSkinIndex: 67 }]
+        }
+      }
+    });
+    await flush();
+
+    wsFire({
+      uri: '/lol-gameflow/v1/session',
+      eventType: 'Update',
+      data: { phase: 'PreEndOfGame' }
+    });
+    await flush();
+
+    expect(settlements).toHaveLength(1);
+    expect(settlements[0].usedSkin.riotSkinId).toBe(119067);
+    expect(settlements[0].usedSkin.source).toBe('gameflow-selection');
+    // 炫彩没有自己的立绘 → 底图另给,界面上显示「炫彩 · 至强」
+    expect(settlements[0].usedSkin.baseRiotSkinId).toBe(119058);
+    expect(settlements[0].usedSkin.chromaName).toBe('最高清算 德莱文 至强');
+    poller.stop();
+  });
+
+  it('局中记下的皮肤不会被「又开一局」抹掉', async () => {
+    const poller = new MatchPoller();
+    const settlements: LocalSettlement[] = [];
+    poller.subscribeSettlement((s) => settlements.push(s));
+
+    poller.start();
+    await poller.refreshNow();
+    await flush();
+    settlements.length = 0;
+
+    // 局中:选中记录里的皮肤序号 7 —— 记进「这一局用的皮肤」的缓存
+    wsFire({
+      uri: '/lol-gameflow/v1/session',
+      eventType: 'Update',
+      data: {
+        phase: 'InProgress',
+        gameData: {
+          teamOne: [{ championId: 64, puuid: 'puuid-1', teamOwner: true }],
+          playerChampionSelections: [{ championId: 64, puuid: 'puuid-1', selectedSkinIndex: 7 }]
+        }
+      }
+    });
+    await flush();
+
+    // 结算那一刻客户端报的序号不一样 —— 局中记下的那份才是这一局真用的皮肤
+    wsFire({
+      uri: '/lol-gameflow/v1/session',
+      eventType: 'Update',
+      data: {
+        phase: 'PreEndOfGame',
+        gameData: {
+          playerChampionSelections: [{ championId: 64, puuid: 'puuid-1', selectedSkinIndex: 9 }]
+        }
+      }
+    });
+    await flush();
+
+    expect(settlements).toHaveLength(1);
+    expect(settlements[0].usedSkin.riotSkinId).toBe(64007);
+    expect(settlements[0].usedSkin.source).toBe('gameflow-selection');
     poller.stop();
   });
 

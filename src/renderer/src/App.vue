@@ -104,7 +104,8 @@ const NAV_ITEMS = [
   { index: '01', label: '皮肤同步', path: '/sync' },
   { index: '02', label: '对局助手', path: '/match' },
   { index: '03', label: '战绩查询', path: '/players' },
-  { index: '04', label: '实用功能', path: '/tools' }
+  { index: '04', label: '实用功能', path: '/tools' },
+  { index: '05', label: '开黑大厅', path: '/lobby' }
 ];
 
 const isLogin = computed<boolean>(() => route.path === '/login');

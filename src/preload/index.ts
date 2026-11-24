@@ -29,6 +29,8 @@ import type {
 } from '../shared/regionUsers';
 import type { MatchProfile, PositionReport, RankedReport } from '../shared/matchProfile';
 import type { LcuDiagnosis, LcuFailureCode } from '../main/lcu/types';
+import { LOBBY_EVENT_CHANNEL } from '../shared/lobby';
+import type { LobbyInviteResult, LobbyState } from '../shared/lobby';
 
 export type { AutoAcceptState, AutoAcceptStatus } from '../shared/autoAccept';
 export type { RegionUser, RegionUsersQuery, RegionUsersResult } from '../shared/regionUsers';
@@ -62,6 +64,18 @@ export type {
 } from '../shared/match';
 
 export type { LcuChannelReport, LcuDiagnosis, LcuFailureCode } from '../main/lcu/types';
+
+export type {
+  LobbyChatFrame,
+  LobbyClientStatus,
+  LobbyInviteResult,
+  LobbyMe,
+  LobbyMessage,
+  LobbyPlayer,
+  LobbySnapshot,
+  LobbyState,
+  LobbyStats
+} from '../shared/lobby';
 
 export type { ChampionIndexEntry } from '../shared/recommendation';
 
@@ -279,6 +293,29 @@ const api = {
   /** 拉同大区的用户(找人双排) */
   fetchRegionUsers: (query?: RegionUsersQuery): Promise<RegionUsersResult> =>
     invoke('tools:fetch-region-users', query ?? {}),
+
+  // ---- 开黑大厅 ------------------------------------------------------------
+  /** 大厅当前状态(在线列表 / 聊天 / 连接状态)。 */
+  getLobbyState: (): Promise<LobbyState> => invoke('lobby:get-state'),
+  /** 「在大厅公开我的信息」开关。 */
+  setLobbyPublic: (publicVisible: boolean): Promise<LobbyState> =>
+    invoke('lobby:set-public', { publicVisible }),
+  /** 在大厅里说一句话。 */
+  sendLobbyMessage: (text: string): Promise<{ ok: boolean; message?: string }> =>
+    invoke('lobby:send', { text }),
+  /** 把一个人拉进房间;撞不到接口就降级成复制游戏ID。 */
+  inviteLobbyPlayer: (nickname: string, gameId: string): Promise<LobbyInviteResult> =>
+    invoke('lobby:invite', { nickname, gameId }),
+  /** 订阅主进程推来的大厅状态,返回取消订阅的函数 */
+  onLobbyState: (cb: (state: LobbyState) => void): (() => void) => {
+    const listener = (_e: Electron.IpcRendererEvent, state: LobbyState): void => {
+      cb(state);
+    };
+    ipcRenderer.on(LOBBY_EVENT_CHANNEL, listener);
+    return () => {
+      ipcRenderer.removeListener(LOBBY_EVENT_CHANNEL, listener);
+    };
+  },
 
   // ---- 局末结算 ------------------------------------------------------------
   /** 取完整的那份结算;null = 还没打过一局 */

@@ -80,7 +80,9 @@ const mocks = vi.hoisted(() => {
     autoAcceptSetDelay: vi.fn(),
     writeAutoAcceptPrefs: vi.fn(),
     fetchRegionUsers: vi.fn(),
-    fetchMatchProfile: vi.fn()
+    fetchMatchProfile: vi.fn(),
+    lobbyOnLogin: vi.fn(),
+    lobbyOnLogout: vi.fn()
   };
 });
 
@@ -99,7 +101,9 @@ vi.mock('electron', () => ({
   },
   clipboard: { writeText: mocks.clipboardWriteText },
   // 系统通知 —— isSupported 返回 false,测试里不发通知
-  Notification: { isSupported: vi.fn(() => false) }
+  Notification: { isSupported: vi.fn(() => false) },
+  // 大厅的本地设置要读 userData
+  app: { getPath: vi.fn(() => process.cwd()) }
 }));
 
 vi.mock('../lcu', () => ({
@@ -212,6 +216,27 @@ vi.mock('../autoAcceptState', () => ({
   writeAutoAcceptPrefs: mocks.writeAutoAcceptPrefs
 }));
 
+// 大厅服务会真的去连后端,单测里必须换掉。
+vi.mock('../lobby/service', () => ({
+  lobbyService: {
+    start: vi.fn(),
+    stop: vi.fn(),
+    getState: vi.fn(() => ({
+      status: 'disconnected',
+      degraded: false,
+      publicVisible: true,
+      snapshot: null,
+      messages: [],
+      error: null
+    })),
+    setPublicVisible: vi.fn(),
+    say: vi.fn(() => ({ ok: true })),
+    invite: vi.fn(),
+    onLogin: mocks.lobbyOnLogin,
+    onLogout: mocks.lobbyOnLogout
+  }
+}));
+
 // Importing the preload module is itself the behavior under test: it exposes the bridge.
 await import('../../preload/index');
 
@@ -235,6 +260,10 @@ type ExposedApi = {
   setAutoAcceptDelay: (delaySeconds: number) => unknown;
   fetchMyRatings: () => unknown;
   fetchSkinRatingStats: (skinId: number) => unknown;
+  getLobbyState: () => unknown;
+  setLobbyPublic: (publicVisible: boolean) => unknown;
+  sendLobbyMessage: (text: string) => unknown;
+  inviteLobbyPlayer: (nickname: string, gameId: string) => unknown;
 };
 
 function handlerFor(channel: string): Handler {
@@ -262,6 +291,8 @@ describe('IPC wiring', () => {
     mocks.resolveOwnedSkinIds.mockReset();
     mocks.redeemSyncCode.mockReset();
     mocks.saveToken.mockReset();
+    mocks.lobbyOnLogin.mockReset();
+    mocks.lobbyOnLogout.mockReset();
     mocks.getAuthStatus.mockReset();
     mocks.clearStoredToken.mockReset();
     mocks.getStoredToken.mockReset();
@@ -341,6 +372,10 @@ describe('IPC wiring', () => {
     api.setAutoAcceptDelay(5);
     api.fetchMyRatings();
     api.fetchSkinRatingStats(42);
+    api.getLobbyState();
+    api.setLobbyPublic(true);
+    api.sendLobbyMessage('来两把');
+    api.inviteLobbyPlayer('林俊杰', '18557');
 
     expect(mocks.ipcRendererInvoke.mock.calls).toEqual([
       ['lcu:check-status'],
@@ -359,11 +394,15 @@ describe('IPC wiring', () => {
       ['tools:set-auto-accept', { enabled: true }],
       ['tools:set-auto-accept-delay', { delaySeconds: 5 }],
       ['rating:my-list'],
-      ['rating:skin-stats', 42]
+      ['rating:skin-stats', 42],
+      ['lobby:get-state'],
+      ['lobby:set-public', { publicVisible: true }],
+      ['lobby:send', { text: '来两把' }],
+      ['lobby:invite', { nickname: '林俊杰', gameId: '18557' }]
     ]);
   });
 
-  it('registers all 33 ipc channels on call to registerIpcHandlers', () => {
+  it('registers all 37 ipc channels on call to registerIpcHandlers', () => {
     expect(mocks.ipcMainHandle.mock.calls.map(([channel]) => channel)).toEqual([
       'lcu:check-status',
       'lcu:fetch-skins',
@@ -397,7 +436,11 @@ describe('IPC wiring', () => {
       'tools:get-auto-accept',
       'tools:set-auto-accept',
       'tools:set-auto-accept-delay',
-      'tools:fetch-region-users'
+      'tools:fetch-region-users',
+      'lobby:get-state',
+      'lobby:set-public',
+      'lobby:send',
+      'lobby:invite'
     ]);
   });
 
@@ -791,11 +834,15 @@ describe('IPC wiring', () => {
     expect(mocks.redeemSyncCode).toHaveBeenCalledWith('482931');
     expect(mocks.saveToken).toHaveBeenCalledWith('jwt-token');
     expect(mocks.getAuthStatus).toHaveBeenCalledOnce();
+    // 登录完得让大厅立刻重连 —— 不然用户得干等退避计时器(最长 30 秒)。
+    expect(mocks.lobbyOnLogin).toHaveBeenCalledOnce();
   });
 
   it('auth:logout clears the token and acknowledges success', async () => {
     await expect(invoke('auth:logout')).resolves.toEqual({ ok: true });
     expect(mocks.clearStoredToken).toHaveBeenCalledOnce();
+    // 大厅连接也得跟着断 —— 不然人还挂在大厅在线名单里。
+    expect(mocks.lobbyOnLogout).toHaveBeenCalledOnce();
   });
 
   it('auth:get-status delegates to getAuthStatus', async () => {
@@ -1242,5 +1289,38 @@ describe('IPC wiring', () => {
     ).rejects.toThrow('invalid delaySeconds');
     expect(mocks.writeAutoAcceptPrefs).not.toHaveBeenCalled();
     expect(mocks.autoAcceptSetDelay).not.toHaveBeenCalled();
+  });
+
+  it('lobby:get-state 把大厅服务当前的状态原样返回', async () => {
+    await expect(invoke('lobby:get-state')).resolves.toMatchObject({
+      status: 'disconnected',
+      degraded: false,
+      publicVisible: true
+    });
+  });
+
+  it('lobby:set-public 开关必须是布尔', async () => {
+    await expect(invoke('lobby:set-public', {}, { publicVisible: 'yes' })).rejects.toThrow(
+      'invalid publicVisible'
+    );
+  });
+
+  it('lobby:send 把这句话交给大厅服务', async () => {
+    await expect(invoke('lobby:send', {}, { text: '来两把大乱斗' })).resolves.toEqual({
+      ok: true
+    });
+  });
+
+  it('lobby:send 文本不是字符串就拒掉', async () => {
+    await expect(invoke('lobby:send', {}, { text: 42 })).rejects.toThrow('invalid text');
+  });
+
+  it('lobby:invite 昵称和游戏ID都必须是字符串', async () => {
+    await expect(invoke('lobby:invite', {}, { nickname: '林俊杰' })).rejects.toThrow(
+      'invalid gameId'
+    );
+    await expect(invoke('lobby:invite', {}, { nickname: 1, gameId: '18557' })).rejects.toThrow(
+      'invalid nickname'
+    );
   });
 });

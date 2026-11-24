@@ -6,6 +6,7 @@ const Sync = () => import('../views/Sync.vue');
 const Match = () => import('../views/Match.vue');
 const Players = () => import('../views/Players.vue');
 const Tools = () => import('../views/Tools.vue');
+const Lobby = () => import('../views/Lobby.vue');
 
 const routes: RouteRecordRaw[] = [
   { path: '/', redirect: '/sync' },
@@ -13,7 +14,8 @@ const routes: RouteRecordRaw[] = [
   { path: '/sync', name: 'sync', component: Sync },
   { path: '/match', name: 'match', component: Match },
   { path: '/players', name: 'players', component: Players },
-  { path: '/tools', name: 'tools', component: Tools }
+  { path: '/tools', name: 'tools', component: Tools },
+  { path: '/lobby', name: 'lobby', component: Lobby }
 ];
 
 export const router = createRouter({

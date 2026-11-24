@@ -431,6 +431,16 @@ export class MatchPoller {
     return this.snapshot;
   }
 
+  /**
+   * 游戏客户端的原始阶段串(`None` / `Lobby` / `InProgress` / …)。
+   *
+   * <p>大厅的状态灯要用它 —— **复用这一份,不再另开一路读**。
+   * `MatchState` 那四档表达不了「结算中」,所以这里给的是原始串。
+   */
+  getPhase(): string {
+    return this.phase;
+  }
+
   subscribe(listener: MatchSnapshotListener): () => void {
     this.listeners.add(listener);
     return () => {
@@ -544,14 +554,22 @@ export class MatchPoller {
         this.gameflowSkinChampionId = self.selfChampionId;
       }
       // 国服最准的一条:`playerChampionSelections` 里「我」那条的皮肤序号
-      if (inGame && self.selectionSkinIndex >= 0 && self.selectionChampionId > 0) {
+      const hasSelection =
+        inGame && self.selectionSkinIndex >= 0 && self.selectionChampionId > 0;
+      if (hasSelection) {
         this.gameflowSelectionSkinIndex = self.selectionSkinIndex;
         this.gameflowSelectionChampionId = self.selectionChampionId;
-        // 事件流里带了选中记录 —— 存进「这一局用的皮肤」的缓存。
-        // 结束段那几秒里选中记录才冒出来,这一条比再去问一次客户端还快。
+      }
+      // ⚠️ 顺序要紧:**阶段先处理,皮肤后记**。
+      //    阶段跳回「对局中 / 选人」= 又开了一局,那一段会把上一局记的皮肤作废。
+      //    皮肤先记的话,刚记下的**这一局**会被当成上一局的抹掉 ——
+      //    抹掉的那一瞬间没有别的来源能补,皮肤就再也认不出来了(实测丢在这)。
+      if (phase) this.onPhaseChange(phase);
+      // 事件流里带了选中记录 —— 存进「这一局用的皮肤」的缓存。
+      // 结束段那几秒里选中记录才冒出来,这一条比再去问一次客户端还快。
+      if (hasSelection) {
         this.rememberLiveGameSkin(self.selectionChampionId, self.selectionSkinIndex, gameId);
       }
-      if (phase) this.onPhaseChange(phase);
     }
     if (isAcceleratedEvent(event)) {
       this.wake();
@@ -706,6 +724,8 @@ export class MatchPoller {
     if (!isEnd && (phase === 'InProgress' || phase === 'ChampSelect')) {
       this.sawGamePhaseSinceSettlement = true;
       // 又开了一局 —— 上一局记下来的皮肤作废,别带进这一局。
+      // ⚠️ 这一局的皮肤是**在这之后**才记的(顺序见 `handleWsEvent`),
+      //    所以这里抹掉的确定是上一局的那份。
       this.liveGameSkin = null;
       this.liveGameSkinTriedAt = 0;
     }

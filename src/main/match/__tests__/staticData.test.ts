@@ -116,6 +116,65 @@ describe('parseLcuSkins', () => {
     expect(chromaNames.get(200009)).toBe('战场BOSS 卑尔维斯 拒绝之尾');
   });
 
+  it('炫彩嵌在底图那条的 chromas 里 → 也要进 id 空间(用了炫彩才认得出来)', () => {
+    // 国服客户端实测形状(2026-11-24,德莱文):顶层只有普通皮肤,
+    // 炫彩挂在底图那款的 `chromas` 数组里。
+    const { byChampion, infos, chromaBaseSkinIds, chromaNames } = parseLcuSkins([
+      {
+        id: 119058,
+        name: '最高清算 德莱文',
+        skinClassification: 'kChampion',
+        splashPath: '/x/draven_splash_centered_58.jpg',
+        chromas: [
+          {
+            id: 119067,
+            name: '最高清算 德莱文 至强',
+            skinClassification: 'kRecolor',
+            chromaPath: '/x/Draven/Skins/Skin58/ChromaPreview.png'
+          }
+        ]
+      }
+    ]);
+    // 炫彩的 id 必须跟普通皮肤在同一个 id 空间里(客户端的序号是连续的)
+    expect(byChampion.get(119)).toEqual([119058, 119067]);
+    // 炫彩没有自己的立绘 → 不进皮肤目录
+    expect(infos.has(119058)).toBe(true);
+    expect(infos.has(119067)).toBe(false);
+    // 底图就是挂着它的那一条
+    expect(chromaBaseSkinIds.get(119067)).toBe(119058);
+    expect(chromaNames.get(119067)).toBe('最高清算 德莱文 至强');
+  });
+
+  it('炫彩不是同一个英雄的 → 不收(别的分类混进来会撑坏 id 空间)', () => {
+    const { byChampion, chromaBaseSkinIds } = parseLcuSkins([
+      {
+        id: 119058,
+        name: '最高清算 德莱文',
+        skinClassification: 'kChampion',
+        chromas: [{ id: 200009, name: '别人的炫彩', skinClassification: 'kRecolor' }]
+      }
+    ]);
+    expect(byChampion.get(119)).toEqual([119058]);
+    expect(chromaBaseSkinIds.has(200009)).toBe(false);
+  });
+
+  it('同一个炫彩既挂在底图的 chromas 里、又是顶层条目 → 只占一个位,底图取准的那个', () => {
+    // 重复占位会让「序号 → 清单位置」的换算整体错位,认到别的皮肤上
+    const { byChampion, chromaBaseSkinIds } = parseLcuSkins([
+      {
+        id: 119003,
+        name: '底图',
+        skinClassification: 'kChampion',
+        chromas: [{ id: 119007, name: '底图 炫彩', skinClassification: 'kRecolor' }]
+      },
+      { id: 119004, name: '另一款', skinClassification: 'kChampion' },
+      { id: 119007, name: '底图 炫彩', skinClassification: 'kRecolor' }
+    ]);
+    expect(byChampion.get(119)).toEqual([119003, 119004, 119007]);
+    // 底图是「挂着它的那一条」,不是「上一条普通皮肤」(那是 119004,猜的)
+    expect(chromaBaseSkinIds.get(119007)).toBe(119003);
+  });
+
   it('炫彩排在底图前面 → 没有底图可归属', () => {
     const { chromaBaseSkinIds } = parseLcuSkins([
       {

@@ -7,6 +7,7 @@ import { registerIconProtocol, registerIconScheme } from './match/iconAssets';
 import { autoAcceptService } from './match/autoAccept';
 import { matchPoller } from './match/poller';
 import { matchTaskRunner } from './match/matchTaskRunner';
+import { lobbyService } from './lobby/service';
 import { readAutoAcceptPrefs } from './autoAcceptState';
 
 // 自定义协议要先登记成特权协议,这一步必须发生在 app ready 之前
@@ -97,6 +98,9 @@ app.whenReady().then(() => {
   // 局末结算要在**任何页面**都能弹出来 —— 轮询器不能等用户打开对局页才启动。
   // (代价:游戏客户端没开时,凭据解析会每 10 秒重试一次 —— 那是既有行为。)
   matchPoller.start();
+  // 大厅的应用启动就起来 —— presence 反映的是「应用在跑」,
+  // 退到托盘也保持连接(退出应用才下线)。
+  lobbyService.start();
   // 后台的「战绩查询」靠它干活 —— 查询动作得在这台装了游戏客户端的电脑上做。
   matchTaskRunner.start();
   // 上次开着就接着开 —— 自动接受这种事,重启一次就得重设一遍太烦人。
@@ -112,4 +116,10 @@ app.whenReady().then(() => {
 
 app.on('window-all-closed', () => {
   if (process.platform !== 'darwin') app.quit();
+});
+
+// 退出前先把大厅连接关掉 —— 让服务端立刻把人从在线名单里摘掉,
+// 而不是等它自己发现 TCP 断了(最坏要等 presence 的 90 秒 TTL)。
+app.on('before-quit', () => {
+  lobbyService.stop();
 });
