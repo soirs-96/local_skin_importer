@@ -148,7 +148,7 @@
 import { computed, ref } from 'vue';
 import { ElNotification } from 'element-plus';
 import { describeRegion, displayName, emptyRegionText } from '../../../shared/regionUsers';
-import type { RegionUser, RegionUsersResult } from '../../../shared/regionUsers';
+import type { RegionUser, RegionUsersQuery, RegionUsersResult } from '../../../shared/regionUsers';
 import { POSITION_CODE_LABELS } from '../../../shared/matchProfile';
 import type { PositionCode } from '../../../shared/matchProfile';
 
@@ -254,14 +254,17 @@ async function onFetchRegion(): Promise<void> {
   regionLoading.value = true;
   regionError.value = '';
   try {
-    regionResult.value = await window.api.fetchRegionUsers({
-      positions: selectedPositions.value,
+    // 位置数组要**复制一份**再过 IPC —— ref 里取出来的是 Vue 的 reactive 代理,
+    // 结构化克隆不了那个代理,Electron 会直接抛 "An object could not be cloned"。
+    const query: RegionUsersQuery = {
+      positions: [...selectedPositions.value],
       tierGap: tierGap.value,
       // 开「拉高分段」时段位范围变成单边的:往上看的段数跟这里同一个滑杆。
       higherTierGap: tierGap.value,
       collectionGap: collectionGap.value,
       includeHigher: includeHigher.value
-    });
+    };
+    regionResult.value = await window.api.fetchRegionUsers(query);
   } catch (e: unknown) {
     regionError.value = (e as { message?: string }).message ?? '拉取同区用户失败';
   } finally {
