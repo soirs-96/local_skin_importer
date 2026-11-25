@@ -32,6 +32,7 @@ import type {
   PositionReport,
   RankedReport
 } from '../shared/matchProfile';
+import type { BindingInfo } from '../shared/binding';
 import type { LcuDiagnosis, LcuFailureCode } from '../main/lcu/types';
 import { LOBBY_EVENT_CHANNEL } from '../shared/lobby';
 import type { LobbyInviteResult, LobbyPlayerProfile, LobbyState } from '../shared/lobby';
@@ -68,6 +69,9 @@ export type {
 } from '../shared/match';
 
 export type { LcuChannelReport, LcuDiagnosis, LcuFailureCode } from '../main/lcu/types';
+
+export type { BindingInfo } from '../shared/binding';
+export { PUID_MISMATCH_MARKER, parseSyncError } from '../shared/syncErrors';
 
 export type {
   LobbyChatFrame,
@@ -222,6 +226,13 @@ const api = {
   logout: (): Promise<{ ok: true }> => invoke('auth:logout'),
   getAuthStatus: (): Promise<AuthStatus> => invoke('auth:get-status'),
   sync: (payload: SyncPayload): Promise<SyncOutcome> => invoke('backend:sync', payload),
+  /**
+   * 改绑 —— 绑错了 LOL 账号时换绑到另一个账号。
+   * 破坏性操作:后端会清掉旧账号已同步的皮肤数据。
+   */
+  rebind: (payload: SyncPayload): Promise<SyncOutcome> => invoke('backend:rebind', payload),
+  /** 当前绑的是哪个 LOL 账号 */
+  getBindingInfo: (): Promise<BindingInfo> => invoke('backend:binding-info'),
   fetchCatalog: (): Promise<CatalogResult> => invoke('catalog:fetch-all'),
   fetchMyOwned: (): Promise<OwnedSnapshot> => invoke('catalog:fetch-owned'),
   /** 打开 Chromium 开发者工具(开发者面板用) */

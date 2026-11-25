@@ -76,6 +76,22 @@
           </el-button>
         </div>
       </div>
+      <div class="binding-row">
+        <span class="field-label hx-label">当前绑定</span>
+        <span class="field-value">{{ bindingLabel }}</span>
+        <el-button
+          class="hx-gold"
+          size="small"
+          :loading="rebinding"
+          :disabled="!canRebind"
+          @click="onRebind()"
+        >
+          更换绑定账号
+        </el-button>
+      </div>
+      <div v-if="accountMismatch" class="binding-hint">
+        游戏客户端现在是「{{ localAccountId }}」,跟绑着的不是同一个 —— 直接同步会被后端拒,点「更换绑定账号」改绑。
+      </div>
       <div v-if="lastSyncResult" class="sync-result">
         上次同步:新增 {{ lastSyncResult.added }} 款 · 更新 {{ lastSyncResult.updated }} 款 ·
         当前共 {{ lastSyncResult.totalOwned }} 款
@@ -96,7 +112,7 @@
 
 <script setup lang="ts">
 import { computed, onMounted, ref, shallowRef } from 'vue';
-import { ElNotification } from 'element-plus';
+import { ElMessageBox, ElNotification } from 'element-plus';
 import { storeToRefs } from 'pinia';
 import StatusDot from '../components/StatusDot.vue';
 import SkinOverviewDialog from '../components/SkinOverviewDialog.vue';
@@ -110,9 +126,12 @@ import type {
   MatchProfile,
   OwnedDataSource,
   SyncOutcome,
+  SyncPayload,
   SyncResult,
   TopChampion
 } from '../../../preload/index';
+import type { BindingInfo } from '../../../shared/binding';
+import { parseSyncError } from '../../../shared/syncErrors';
 import { positionCodeLabel } from '../../../shared/matchProfile';
 import { formatRankDisplay } from '../../../shared/rankLabels';
 
@@ -127,6 +146,14 @@ const lcuStatus = ref<LcuStatus>({ running: false });
 const lcuChecking = ref<boolean>(false);
 const fetchingSkins = ref<boolean>(false);
 const syncing = ref<boolean>(false);
+const rebinding = ref<boolean>(false);
+
+/**
+ * 当前绑的是哪个 LOL 账号。
+ *
+ * shallowRef: 这个对象整个来自 IPC,深度 reactive 的代理对象结构化克隆不了。
+ */
+const binding = shallowRef<BindingInfo | null>(null);
 
 const skinCount = ref<number>(0);
 const lastFetchError = ref<Error | null>(null);
@@ -187,6 +214,45 @@ const lcuTooltip = computed<string>(() => {
 
 const canSync = computed<boolean>(
   () => loggedIn.value && lcuStatus.value.running === true && skinCount.value > 0 && !syncing.value
+);
+
+/** 「当前绑定」那一行显示什么。 */
+const bindingLabel = computed<string>(() => {
+  const b = binding.value;
+  if (!b) return '—';
+  if (!b.bound) return '未绑定';
+  return b.boundAccount ?? '已绑定';
+});
+
+/** 本机客户端这个账号的 Riot ID(名字#标签)。 */
+const localAccountId = computed<string>(() => {
+  const summoner = lastFetchedSkins.value?.summoner;
+  if (!summoner) return '';
+  const tag = summoner.tagLine ? `#${summoner.tagLine}` : '';
+  return `${summoner.displayName}${tag}`;
+});
+
+/** 客户端这个账号是不是就是现在绑着的那个 —— 是的话没必要再改绑。 */
+const sameAsBound = computed<boolean>(() => {
+  const b = binding.value;
+  if (!b?.bound || !b.boundAccount) return false;
+  return b.boundAccount === localAccountId.value;
+});
+
+/**
+ * 客户端这个账号跟已绑定的不是一个 —— 同步会撞 409,先提醒一句。
+ *
+ * <p>绑定信息里没记账号名(老用户 / 没走过改绑)时不做判断,免得误报。
+ */
+const accountMismatch = computed<boolean>(() => {
+  const b = binding.value;
+  if (!b?.bound || !b.boundAccount) return false;
+  if (!localAccountId.value) return false;
+  return b.boundAccount !== localAccountId.value;
+});
+
+const canRebind = computed<boolean>(
+  () => canSync.value && !rebinding.value && !sameAsBound.value
 );
 
 /** 本命英雄的前几个名字,给界面上一行提示用。 */
@@ -331,20 +397,9 @@ async function onSync(options: { auto?: boolean } = {}): Promise<void> {
   }
   syncing.value = true;
   try {
-    const { summoner, ownedSkinIds, gameZone } = lastFetchedSkins.value;
-    const outcome: SyncOutcome = await window.api.sync({
-      puuid: summoner.puuid,
-      summonerName: summoner.displayName,
-      ownedSkinIds,
-      topChampions: topChampions.value,
-      // 段位 + 主玩位置 —— 后端拿来筛同区搭子
-      ranked: matchProfile.value.ranked,
-      positions: matchProfile.value.positions,
-      mode: isAuto ? 'auto' : 'manual',
-      // 昵称 / 召唤师ID / 大区一起上去 —— 后端顺手回填小程序,用户不用手填
-      summonerTag: summoner.tagLine,
-      gameZone
-    });
+    const outcome: SyncOutcome = await window.api.sync(
+      buildSyncPayload(lastFetchedSkins.value, isAuto ? 'auto' : 'manual')
+    );
 
     if (outcome.skipped) {
       pushLog('INFO', 'Sync skipped: 刚刚已同步过');
@@ -367,20 +422,134 @@ async function onSync(options: { auto?: boolean } = {}): Promise<void> {
         `Sync OK: added=${outcome.result.added} updated=${outcome.result.updated} totalOwned=${outcome.result.totalOwned}`
       );
     }
+    await refreshBinding();
   } catch (e: unknown) {
-    const msg = describeError(e);
-    pushLog('ERROR', `Sync failed: ${msg}`);
+    const { puidMismatch, message } = parseSyncError(e);
+    pushLog('ERROR', `Sync failed: ${message}`);
     // 自动同步是静默的:用户没主动要求,失败不弹窗打扰他
     if (!isAuto) {
-      notifyError('同步失败', msg);
+      if (puidMismatch) {
+        // 绑错了账号 —— 引导改绑,别只丢一句「请联系管理员」
+        await onRebind();
+        return;
+      }
+      notifyError('同步失败', message);
     }
   } finally {
     syncing.value = false;
   }
 }
 
+/** 同步 / 改绑的载荷 —— 两个接口一模一样。 */
+function buildSyncPayload(source: FetchSkinsResult, mode: 'auto' | 'manual' = 'manual'): SyncPayload {
+  const { summoner, ownedSkinIds, gameZone } = source;
+  return {
+    puuid: summoner.puuid,
+    summonerName: summoner.displayName,
+    ownedSkinIds,
+    topChampions: topChampions.value,
+    // 段位 + 主玩位置 —— 后端拿来筛同区搭子
+    ranked: matchProfile.value.ranked,
+    positions: matchProfile.value.positions,
+    mode,
+    // 昵称 / 召唤师ID / 大区一起上去 —— 后端顺手回填小程序,用户不用手填
+    summonerTag: summoner.tagLine,
+    gameZone
+  };
+}
+
+/** 拉一次绑定信息 —— 「当前绑的是哪个 LOL 账号」。 */
+async function refreshBinding(): Promise<void> {
+  if (!loggedIn.value) {
+    binding.value = null;
+    return;
+  }
+  try {
+    binding.value = await window.api.getBindingInfo();
+  } catch (e: unknown) {
+    // 拉不到不影响同步 —— 只是界面上看不到「当前绑定」
+    pushLog('WARN', `读取绑定信息失败: ${parseSyncError(e).message}`);
+  }
+}
+
+/** 改绑前的确认 —— 清数据是不可逆的,得让用户看清楚。 */
+async function confirmRebind(): Promise<boolean> {
+  const bound = binding.value?.boundAccount ?? '另一个 LOL 账号';
+  const current = localAccountId.value || '当前账号';
+  try {
+    await ElMessageBox.confirm(
+      `你的收藏册当前绑的是「${bound}」,游戏客户端现在是「${current}」。` +
+        `改绑会清空「${bound}」已同步的皮肤数据,并按「${current}」重新同步。`,
+      '更换绑定的 LOL 账号',
+      {
+        type: 'warning',
+        confirmButtonText: '确认改绑',
+        cancelButtonText: '取消'
+      }
+    );
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * 改绑 —— 绑错了 LOL 账号时换绑到另一个账号。
+ *
+ * <p>破坏性操作:旧账号的皮肤数据会被清掉,不可撤销。
+ */
+async function onRebind(): Promise<void> {
+  const fetched = lastFetchedSkins.value;
+  if (!fetched) {
+    ElNotification({
+      title: '还不能改绑',
+      message: '请先读取我的皮肤',
+      type: 'warning',
+      duration: 4000
+    });
+    return;
+  }
+  if (sameAsBound.value) {
+    ElNotification({
+      title: '不用改绑',
+      message: '当前绑的就是游戏客户端这个账号',
+      type: 'info',
+      duration: 4000
+    });
+    return;
+  }
+  if (!(await confirmRebind())) {
+    pushLog('INFO', 'Rebind cancelled by user');
+    return;
+  }
+
+  rebinding.value = true;
+  try {
+    const outcome: SyncOutcome = await window.api.rebind(buildSyncPayload(fetched));
+    if (outcome.result) {
+      lastSyncResult.value = outcome.result;
+      skinCount.value = outcome.result.totalOwned;
+    }
+    await refreshBinding();
+    pushLog('INFO', `Rebind OK: totalOwned=${outcome.result?.totalOwned ?? 0}`);
+    ElNotification({
+      title: '改绑完成',
+      message: `已改绑到 ${fetched.summoner.displayName},收藏册已按新账号重建`,
+      type: 'success',
+      duration: 5000
+    });
+  } catch (e: unknown) {
+    const { message } = parseSyncError(e);
+    pushLog('ERROR', `Rebind failed: ${message}`);
+    notifyError('改绑失败', message);
+  } finally {
+    rebinding.value = false;
+  }
+}
+
 onMounted(async () => {
   await auth.refresh();
+  await refreshBinding();
   // 挂载时的自动检查走浅检测 —— 每次开界面都扫全盘太重。
   // 用户手点按钮才是深检测。
   await onCheckLcu();
@@ -474,6 +643,26 @@ onMounted(async () => {
   margin-top: 12px;
   font-size: 12px;
   letter-spacing: 0.04em;
+  color: var(--hx-gold);
+}
+.binding-row {
+  margin-top: 14px;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+.binding-row .field-value {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+/* 绑着的跟客户端不是一个账号 —— 提醒用户改绑,别等同步被拒 */
+.binding-hint {
+  margin-top: 8px;
+  font-size: 12px;
+  line-height: 1.6;
   color: var(--hx-gold);
 }
 /* 版本号:平时几乎看不见,点它可以进开发者模式 */

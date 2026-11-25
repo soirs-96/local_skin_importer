@@ -406,7 +406,7 @@ describe('IPC wiring', () => {
     ]);
   });
 
-  it('registers all 38 ipc channels on call to registerIpcHandlers', () => {
+  it('registers all 40 ipc channels on call to registerIpcHandlers', () => {
     expect(mocks.ipcMainHandle.mock.calls.map(([channel]) => channel)).toEqual([
       'lcu:check-status',
       'lcu:fetch-skins',
@@ -414,6 +414,8 @@ describe('IPC wiring', () => {
       'auth:logout',
       'auth:get-status',
       'backend:sync',
+      'backend:rebind',
+      'backend:binding-info',
       'catalog:fetch-all',
       'catalog:fetch-owned',
       'dev:open-devtools',

@@ -2,7 +2,14 @@ import axios from 'axios';
 import { BrowserWindow, Notification, clipboard, ipcMain } from 'electron';
 import * as lcu from './lcu';
 import * as auth from './auth';
-import { syncOwnedSkins, shouldSkipSync, minIntervalFor } from './backend';
+import {
+  syncOwnedSkins,
+  rebindOwnedSkins,
+  fetchBindingInfo,
+  shouldSkipSync,
+  minIntervalFor,
+  PUID_MISMATCH_STATUS
+} from './backend';
 import { fetchRegionUsers } from './regionUsers';
 import { fetchCatalog, fetchMyOwned } from './catalog';
 import { buildSettlementView } from './match/settlement';
@@ -24,6 +31,7 @@ import { fetchLobbyPlayerProfile } from './lobby/profile';
 import * as devLogger from './devLogger';
 import { MATCH_STATE_CHANNEL } from '../shared/match';
 import type { TopChampion } from '../shared/match';
+import { PUID_MISMATCH_MARKER } from '../shared/syncErrors';
 import type { MatchProfile, PositionReport, RankedReport } from '../shared/matchProfile';
 import type { RegionUsersQuery } from '../shared/regionUsers';
 import { SETTLEMENT_CHANNEL } from '../shared/settlement';
@@ -159,6 +167,25 @@ function normalizeSyncError(e: unknown): NormalizedSyncError {
   }
   const err = new Error(String(e)) as NormalizedSyncError;
   err.name = 'UnknownError';
+  return err;
+}
+
+/**
+ * 同步报错往外抛之前先收拾一下。
+ *
+ * <p>「绑错了 LOL 账号」(后端 409)打个标记 —— 渲染进程凭这个标记弹改绑确认框。
+ * IPC 只传 message,error 上的 status 到不了渲染进程,所以标记得写进文案里。
+ * 其余错误原样抛,渲染进程拿到的就是后端那句中文。
+ */
+function toSyncError(e: unknown): NormalizedSyncError {
+  const err = normalizeSyncError(e);
+  if (err.status === PUID_MISMATCH_STATUS) {
+    const marked = new Error(`${PUID_MISMATCH_MARKER} ${err.message}`) as NormalizedSyncError;
+    marked.name = err.name;
+    marked.status = err.status;
+    marked.code = err.code;
+    return marked;
+  }
   return err;
 }
 
@@ -436,6 +463,49 @@ export function registerIpcHandlers(): void {
         lastSyncAt: now,
         result
       };
+    } catch (e) {
+      throw toSyncError(e);
+    }
+  });
+
+  /**
+   * 改绑 —— 绑错了 LOL 账号时换绑到另一个账号。
+   *
+   * <p>不套本地节流:本地 10 秒间隔是给普通同步用的,改绑是用户明确点出来的动作,
+   * 不能被上一次的同步时间挡掉(后端自己有 60 秒冷却兜底)。
+   */
+  ipcMain.handle('backend:rebind', async (_event, payload: SyncPayload) => {
+    try {
+      assertSyncPayload(payload);
+      const result = await rebindOwnedSkins(
+        payload.puuid,
+        payload.summonerName,
+        payload.ownedSkinIds,
+        payload.topChampions ?? [],
+        {
+          summonerTag: payload.summonerTag ?? '',
+          gameZone: payload.gameZone ?? '',
+          ranked: payload.ranked ?? [],
+          positions: payload.positions ?? []
+        }
+      );
+      const now = Date.now();
+      // 改绑成功就等于同步过一次 —— 时间戳要更新,不然下一次同步会被本地节流挡掉
+      writeSyncState({ lastSyncAt: now });
+      return {
+        skipped: false,
+        lastSyncAt: now,
+        result
+      };
+    } catch (e) {
+      throw toSyncError(e);
+    }
+  });
+
+  /** 当前绑的是哪个 LOL 账号 —— 界面用来显示「已绑定」并引导改绑。 */
+  ipcMain.handle('backend:binding-info', async () => {
+    try {
+      return await fetchBindingInfo();
     } catch (e) {
       throw normalizeSyncError(e);
     }

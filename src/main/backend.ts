@@ -2,6 +2,7 @@ import axios from 'axios';
 import { getStoredToken, clearStoredToken } from './auth';
 import type { TopChampion } from '../shared/match';
 import type { PositionReport, RankedReport } from '../shared/matchProfile';
+import type { BindingInfo } from '../shared/binding';
 
 const BACKEND_BASE_URL = 'http://101.34.210.254';
 const AXIOS_TIMEOUT_MS = 10_000;
@@ -13,6 +14,13 @@ export interface SyncResult {
   updated: number;
   totalOwned: number;
 }
+
+/**
+ * 后端把「绑错了 LOL 账号」当 409 抛上来 —— 桌面端据此引导用户改绑。
+ *
+ * <p>403 在这套后端里还表示「桌面客户端无权访问该接口」,不能拿来区分。
+ */
+export const PUID_MISMATCH_STATUS = 409;
 
 /** 后端 inventorySyncLimiter 是 10 秒最小间隔 + 60 秒内 5 次。 */
 export const MANUAL_SYNC_MIN_INTERVAL_MS = 10_000;
@@ -66,23 +74,20 @@ export interface SyncProfile {
   positions?: PositionReport[];
 }
 
-export async function syncOwnedSkins(
+/** 同步 / 改绑的请求体 —— 两个接口载荷完全一样。 */
+function buildSyncBody(
   puuid: string,
   summonerName: string,
   ownedSkinIds: number[],
-  topChampions: TopChampion[] = [],
-  profile: SyncProfile = {}
-): Promise<SyncResult> {
-  const token = getStoredToken();
-  if (!token) throw new Error('未登录:请先登录后再同步');
-
-  const url = `${BACKEND_BASE_URL}/api/skins/sync-user-skins`;
+  topChampions: TopChampion[],
+  profile: SyncProfile
+): Record<string, unknown> {
   // 本命英雄跟皮肤一起传 —— 后端一次请求就把两样都存了,
   // 收藏册的排序直接按这份名单来。
   // 昵称/召唤师ID/大区也一起传 —— 后端顺手回填小程序的用户资料。
   // 段位和位置也一起传 —— 后端靠这两样筛「分数差不多、位置对得上」的搭子。
   // 空数组表示「这次没读到」,后端保持库里的旧值不动。
-  const body = {
+  return {
     puuid,
     summonerName,
     ownedSkinIds,
@@ -92,23 +97,36 @@ export async function syncOwnedSkins(
     ranked: profile.ranked ?? [],
     positions: profile.positions ?? []
   };
+}
+
+/**
+ * 打后端。三个接口共用一套错误处理:
+ * 401 丢掉过期 token、4xx 原样抛(不重试)、网络错误重试 3 次。
+ */
+async function callBackend<T>(path: string, method: 'post' | 'get', body?: unknown): Promise<T> {
+  const token = getStoredToken();
+  if (!token) throw new Error('未登录:请先登录后再同步');
+
+  const url = `${BACKEND_BASE_URL}${path}`;
+  const headers = {
+    'Content-Type': 'application/json',
+    Authorization: `Bearer ${token}`
+  };
 
   for (let attempt = 0; attempt < MAX_ATTEMPTS; attempt++) {
     try {
-      const { data } = await axios.post<BackendEnvelope<SyncResult>>(url, body, {
-        timeout: AXIOS_TIMEOUT_MS,
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: `Bearer ${token}`
-        }
-      });
-      if (data.code !== 200 || !data.data) {
+      const resp =
+        method === 'post'
+          ? await axios.post<BackendEnvelope<T>>(url, body, { timeout: AXIOS_TIMEOUT_MS, headers })
+          : await axios.get<BackendEnvelope<T>>(url, { timeout: AXIOS_TIMEOUT_MS, headers });
+      const { data } = resp;
+      if (data.code !== 200 || data.data === undefined || data.data === null) {
         throw new Error(data.message ?? '同步失败');
       }
       return data.data;
     } catch (e) {
-      // 4xx/5xx — pass through, do not retry. Hoist the backend's Result.message
-      // out so the renderer doesn't just see "status code 403".
+      // 4xx/5xx — pass through, do not retry. 把后端的 Result.message 提上来,
+      // 渲染进程看到的是一句中文,不是 "status code 403"。
       // Note: we check `isAxiosError === true` directly because in tests we mock
       // `axios` and the `axios.isAxiosError` helper becomes a no-op mock function.
       const looksLikeAxiosError =
@@ -132,11 +150,11 @@ export async function syncOwnedSkins(
           throw expired;
         }
         const msg =
-          typeof backendMsg === 'string'
-            ? `${backendMsg} (HTTP ${status})`
+          typeof backendMsg === 'string' && backendMsg.trim() !== ''
+            ? backendMsg
             : axiosErr.message;
         const err = new Error(msg) as Error & { status?: number; code?: string };
-        err.name = axiosErr.name;
+        err.name = 'BackendError';
         err.status = status;
         err.code = axiosErr.code;
         throw err;
@@ -152,4 +170,43 @@ export async function syncOwnedSkins(
     }
   }
   throw new Error('unreachable: retry loop exited without resolving or throwing');
+}
+
+export async function syncOwnedSkins(
+  puuid: string,
+  summonerName: string,
+  ownedSkinIds: number[],
+  topChampions: TopChampion[] = [],
+  profile: SyncProfile = {}
+): Promise<SyncResult> {
+  return callBackend<SyncResult>(
+    '/api/skins/sync-user-skins',
+    'post',
+    buildSyncBody(puuid, summonerName, ownedSkinIds, topChampions, profile)
+  );
+}
+
+/**
+ * 改绑 —— 绑错了 LOL 账号时换绑到另一个账号。
+ *
+ * <p>破坏性操作:后端会清掉旧账号已同步的皮肤数据(皮肤/本命英雄/段位/位置),
+ * 不可撤销。
+ */
+export async function rebindOwnedSkins(
+  puuid: string,
+  summonerName: string,
+  ownedSkinIds: number[],
+  topChampions: TopChampion[] = [],
+  profile: SyncProfile = {}
+): Promise<SyncResult> {
+  return callBackend<SyncResult>(
+    '/api/skins/rebind-user-skins',
+    'post',
+    buildSyncBody(puuid, summonerName, ownedSkinIds, topChampions, profile)
+  );
+}
+
+/** 当前绑定信息 —— 界面显示「现在绑的是哪个 LOL 账号」。 */
+export async function fetchBindingInfo(): Promise<BindingInfo> {
+  return callBackend<BindingInfo>('/api/skins/my-binding', 'get');
 }
